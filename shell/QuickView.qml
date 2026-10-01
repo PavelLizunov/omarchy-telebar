@@ -37,7 +37,7 @@ Item {
   // Text that reads on this ground, as in the window: the theme's text colour that stands out more, and the
   // accent moved toward it until it reads.
   readonly property color text: quick.ink(Model.bestTextColor(quick.background, [quick.foreground, Color.foreground]))
-  readonly property color muted: Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.62)
+   readonly property color muted: quick.ink(Model.readableColor(Model.mixColors(quick.background, quick.text, 0.62), quick.background, quick.text, 4.5))
   readonly property color accentText: quick.ink(Model.readableColor(quick.accent, quick.background, quick.text, 4.5))
   readonly property color onAccent: quick.ink(Model.inkOnFill(quick.accent, [quick.text, quick.background], 4.5))
   readonly property string linkHex: Model.hexOf(quick.accentText)
@@ -87,7 +87,9 @@ Item {
   property var history: []
   property real historyChatId: 0
   property int historySerial: 0
+  property var readCursors: ({})
   property bool sending: false
+  property int sendSerial: 0
   property string status: ""
   property real nowMs: Date.now()
   property bool stickersOpen: false
@@ -153,6 +155,9 @@ Item {
   // closed in, with the words not yet sent, when that was within the hour; otherwise on finding a chat. A
   // `messageId` with the chat opens that message's photo or video over the whole screen once it has loaded.
   function reset(chatId, messageId) {
+    attachPicker.visible = false
+    quick.readCursors = ({})
+    quick.sendSerial++
     quick.nowMs = Date.now()
     quick.status = ""
     quick.sending = false
@@ -186,6 +191,12 @@ Item {
 
   // It is hidden: a recording half made is thrown away, what is playing goes on, and where it was is kept.
   function leave() {
+    attachPicker.visible = false
+    historyDelay.stop()
+    readDelay.stop()
+    quick.historySerial++
+    quick.readCursors = ({})
+    quick.sendSerial++
     if (quick.recordingHere) quick.stopRecording(false)
     quick.viewingId = 0
     if (quick.service) {
@@ -211,6 +222,9 @@ Item {
 
   function reply(chatId) {
     if (!chatId) return
+    if (chatId !== quick.replyChatId) { quick.historySerial++; quick.readCursors = ({}) }
+    if (chatId !== quick.replyChatId) attachPicker.visible = false
+    if (chatId !== quick.replyChatId) { quick.sendSerial++; quick.sending = false }
     if (chatId !== quick.replyChatId) quick.attachments = []   // files pasted for another chat stay out of this one
     var index = Model.indexOfChat(quick.results, chatId)
     if (index >= 0) {
@@ -240,6 +254,8 @@ Item {
       composer.forceActiveFocus()
       return
     }
+    quick.sendSerial++
+    quick.sending = false
     quick.replyChatId = 0
     quick.status = ""
     search.forceActiveFocus()
@@ -254,13 +270,17 @@ Item {
     }
     if (text.trim() === "") return
     var chat = quick.replyChat   // before sending: afterwards its newest message is yours
+    var serial = ++quick.sendSerial
+    var account = quick.service.activeAccount
     quick.sending = true
     quick.service.sendText(quick.replyChatId, text, function (answer) {
+      if (serial !== quick.sendSerial || account !== quick.service.activeAccount) return
       quick.sending = false
       if (answer.ok) {
         quick.markRead(chat)
         composer.text = ""
-        quick.dismissRequested()
+        quick.status = ""
+        composer.forceActiveFocus()
       } else {
         quick.status = answer.error || "Could not send"
         composer.forceActiveFocus()
@@ -269,6 +289,25 @@ Item {
   }
 
   // ---------------------------------------------------------------- files
+
+  function attach() {
+    if (!quick.replyChatId || !quick.ready || quick.recordingHere || quick.sending) return
+    attachPicker.open()
+  }
+  FilePicker {
+    id: attachPicker
+    objectName: "quick-file-picker"
+    app: ({ background: quick.background, foreground: quick.text, muted: quick.muted,
+      accent: quick.accent, urgent: quick.urgent, selected: quick.selected, onAccent: quick.onAccent,
+      border: Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.2), fontFamily: quick.fontFamily })
+    multiple: true
+    title: "Attach photos or files"
+    onAccepted: {
+      var paths = selectedFiles.map(function (url) { return decodeURIComponent(String(url).replace(/^file:\/\//, "")) })
+      quick.addAttachments(paths, true)
+    }
+    onRejected: composer.forceActiveFocus()
+  }
 
   // Ctrl+V: files a file manager copied, or a copied picture, wait above the message box to go with the next Enter;
   // with neither on the clipboard the text is pasted. Ctrl+Shift+V takes them as files, sent as they are.
@@ -324,16 +363,19 @@ Item {
       return
     }
     var chat = quick.replyChat   // before sending: afterwards its newest message is yours
+    var serial = ++quick.sendSerial
+    var account = quick.service.activeAccount
     quick.sending = true
     quick.status = ""
     quick.service.request("message.sendFiles", { chatId: quick.replyChatId, paths: quick.attachments.map(function (a) { return a.path }),
                                                   asMedia: quick.attachAsMedia, caption: caption }, function (answer) {
+      if (serial !== quick.sendSerial || account !== quick.service.activeAccount) return
       quick.sending = false
       if (answer.ok) {
         quick.markRead(chat)
         quick.attachments = []
         composer.text = ""
-        quick.dismissRequested()
+        composer.forceActiveFocus()
       } else {
         quick.status = answer.error || "Could not send the files"
         composer.forceActiveFocus()
@@ -353,17 +395,21 @@ Item {
   }
 
   function stopRecording(send) {
-    if (!quick.recordingHere) return
+    if (!quick.recordingHere || quick.sending) return
     var video = quick.recording.state === "video"
     var chat = quick.replyChat
+    var serial = ++quick.sendSerial
+    var account = quick.service.activeAccount
     if (send) quick.sending = true
     quick.service.request(video ? "videonote.stop" : "voice.stop", { send: send }, function (answer) {
+      if (serial !== quick.sendSerial || account !== quick.service.activeAccount) return
       quick.sending = false
       if (!answer.ok) {
         quick.status = answer.error || "Could not send it"
       } else if (send) {
         quick.markRead(chat)
-        quick.dismissRequested()
+        quick.status = ""
+        Qt.callLater(function () { composer.forceActiveFocus() })
       }
     })
   }
@@ -434,9 +480,12 @@ Item {
   function sendSticker(sticker) {
     if (!sticker || !sticker.file || !quick.replyChatId || quick.sending) return
     var chat = quick.replyChat
+    var serial = ++quick.sendSerial
+    var account = quick.service.activeAccount
     quick.sending = true
     quick.service.request("message.sendSticker", { chatId: quick.replyChatId, fileId: sticker.file.id, width: sticker.width || 0,
                                                    height: sticker.height || 0, emoji: sticker.emoji || "" }, function (answer) {
+      if (serial !== quick.sendSerial || account !== quick.service.activeAccount) return
       quick.sending = false
       if (answer.ok) {
         quick.markRead(chat)
@@ -453,7 +502,40 @@ Item {
   // Answering a chat means you have read it, as in the window: what was unread in it is marked read.
   function markRead(chat) {
     if (!quick.ready) return
+    if (chat && chat.forum) { readDelay.restart(); return }
     Model.readRequests(chat).forEach(function (r) { quick.service.request(r.cmd, r.args, function () {}) })
+  }
+
+  // Read only incoming rows intersecting the viewport, grouped by forum topic.
+  // One-shot coalescing avoids a request for every layout/scroll notification.
+  Timer { id: readDelay; interval: 60; onTriggered: quick.markViewedRead() }
+  function markViewedRead() {
+    if (!quick.opened || !quick.visible || !quick.ready || !quick.historyChatId || quick.historyChatId !== quick.shownChatId) return
+    var groups = {}
+    var rows = messageList.contentItem.children
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i]
+      if (!row || row.y + row.height <= messageList.contentY || row.y >= messageList.contentY + messageList.height) continue
+      var message = row.message
+      if (!message || message.outgoing || message.chatId !== quick.shownChatId || !(message.id > 0)) continue
+      var topic = message.topicId || 0
+      if (message.id <= (quick.readCursors[topic] || 0)) continue
+      if (!groups[topic]) groups[topic] = []
+      groups[topic].push(message.id)
+    }
+    var serial = quick.historySerial
+    var account = quick.service.activeAccount
+    Object.keys(groups).forEach(function (key) {
+      var ids = groups[key]
+      var cursor = Math.max.apply(null, ids)
+      quick.readCursors[key] = cursor
+      var args = { chatId: quick.shownChatId, messageIds: ids }
+      if (Number(key)) args.topicId = Number(key)
+      quick.service.request("chat.read", args, function (answer) {
+        if (!answer.ok && serial === quick.historySerial && account === quick.service.activeAccount && quick.readCursors[key] === cursor)
+          delete quick.readCursors[key]
+      })
+    })
   }
 
   // A link in a message, as the window treats it: the web opens in your browser and Telegram links in Omagram's
@@ -620,6 +702,7 @@ Item {
     }
     if (chatId !== quick.historyChatId) {
       quick.history = []
+      quick.readCursors = ({})
       quick.historyComplete = false
     }
     quick.fetchHistory(chatId, 0, serial)
@@ -628,8 +711,9 @@ Item {
   // TDLib answers the first page from its local cache, which can hold a single message; one more page from the
   // oldest message fills the pane.
   function fetchHistory(chatId, fromMessageId, serial) {
+    var account = quick.service.activeAccount
     quick.service.request("chat.history", { chatId: chatId, fromMessageId: fromMessageId, limit: 20 }, function (answer) {
-      if (serial !== quick.historySerial) return   // a newer chat was chosen meanwhile
+      if (serial !== quick.historySerial || !quick.opened || chatId !== quick.shownChatId || account !== quick.service.activeAccount) return
       quick.historyChatId = chatId
       var incoming = answer.ok ? (answer.result.messages || []) : []
       var before = fromMessageId ? quick.history.length : 0
@@ -653,9 +737,10 @@ Item {
     var chatId = quick.historyChatId
     if (!chatId || quick.loadingOlder || quick.historyComplete || quick.history.length === 0 || !quick.ready) return
     var serial = quick.historySerial
+    var account = quick.service.activeAccount
     quick.loadingOlder = true
     quick.service.request("chat.history", { chatId: chatId, fromMessageId: Model.oldestId(quick.history), limit: 30 }, function (answer) {
-      if (serial !== quick.historySerial) return   // another chat since: loadHistory put the flag down
+      if (serial !== quick.historySerial || !quick.opened || chatId !== quick.shownChatId || account !== quick.service.activeAccount) return
       quick.loadingOlder = false
       if (!answer.ok) return
       var before = quick.history.length
@@ -673,11 +758,29 @@ Item {
   // Rows by message id, edited in place as in the window's chat: a new array as the model rebuilt every row.
   ListModel { id: historyRows }
   property var historyIds: []
-  onHistoryChanged: quick.historyIds = Model.syncRows(historyRows, quick.historyIds, quick.history)
+  onHistoryChanged: {
+    quick.historyIds = Model.syncRows(historyRows, quick.historyIds, quick.history)
+    readDelay.restart()
+  }
 
   Connections {
     target: quick.service
     ignoreUnknownSignals: true
+
+    function onAccountChanging() {
+      quick.leave()
+    }
+
+    function onActiveAccountChanged() {
+      quick.history = []
+      quick.historyChatId = 0
+      quick.historySerial++
+      quick.loadingOlder = false
+      quick.historyComplete = false
+      quick.stickers = []
+      quick.stickerCursor = 0
+      quick.reset(0, 0)
+    }
 
     function onMessageEvent(name, e) {
       if (!quick.opened || !quick.historyChatId) return
@@ -793,7 +896,7 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           width: openOmagramLabel.implicitWidth + Style.space(14)
           height: openOmagramLabel.implicitHeight + Style.space(8)
-          radius: height / 2
+          radius: Style.cornerRadius
           color: quick.background
           border.width: 1
           border.color: Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.16)
@@ -943,12 +1046,11 @@ Item {
         spacing: Style.space(8)
 
         // md-arrow-left U+F004D: back to the chats, in the panel
-        Text {
+        Icon {
           visible: quick.compact
-          text: String.fromCodePoint(0xF004D)
+          name: "back"
           color: backArea.containsMouse ? quick.text : quick.muted
-          font.family: Style.font.family
-          font.pixelSize: Style.font.body
+          size: Style.font.body
 
           MouseArea {
             id: backArea
@@ -970,20 +1072,18 @@ Item {
           font.bold: true
         }
         // md-bell-sleep U+F00A0: the chat sends silently
-        Text {
+        Icon {
           visible: !!quick.shownChat && quick.shownChat.silent === true
-          text: String.fromCodePoint(0xF00A0)
+          name: "bellSleep"
           color: quick.muted
-          font.family: Style.font.family
-          font.pixelSize: Style.font.bodySmall
+          size: Style.font.bodySmall
         }
         // md-open-in-new U+F03CC
-        Text {
+        Icon {
           visible: quick.shownChatId !== 0
-          text: String.fromCodePoint(0xF03CC)
+          name: "window"
           color: openArea.containsMouse ? quick.text : quick.muted
-          font.family: Style.font.family
-          font.pixelSize: Style.font.body
+          size: Style.font.body
 
           MouseArea {
             id: openArea
@@ -1020,11 +1120,15 @@ Item {
           // scrolled up; near its top, older messages come.
           property bool followsEnd: true
           onContentYChanged: {
+            readDelay.restart()
             messageList.followsEnd = messageList.atYEnd
             if (messageList.moving && messageList.contentY <= messageList.originY + Style.space(200) && messageList.count > 0) quick.loadOlder()
           }
           onAtYBeginningChanged: if (atYBeginning && count > 0 && moving) quick.loadOlder()
-          onHeightChanged: if (messageList.followsEnd) messageList.positionViewAtEnd()
+          onHeightChanged: {
+            if (messageList.followsEnd) messageList.positionViewAtEnd()
+            readDelay.restart()
+          }
 
           delegate: Column {
             id: line
@@ -1039,30 +1143,64 @@ Item {
               quick.fetchPicture(line.kind, line.media)
             }
             readonly property var message: line.found || line.kept || Model.NO_MESSAGE
+            readonly property color ground: quick.ink(Model.mixColors(quick.background, quick.text, line.message.outgoing ? 0.12 : 0.065))
+            readonly property color metadataColor: quick.ink(Model.readableColor(quick.muted, line.ground, quick.text, 4.5))
             readonly property var content: line.message.content || ({})
             readonly property string kind: line.content.kind || ""
             readonly property var media: line.content.media || null
             readonly property bool drawn: ["sticker", "voice", "videoNote", "photo", "video", "gif"].indexOf(line.kind) >= 0
             onMediaChanged: quick.fetchPicture(line.kind, line.media)
             width: ListView.view.width
-            spacing: Style.space(3)
+            spacing: Style.space(6)
+            topPadding: Style.space(8)
+            bottomPadding: Style.space(8)
 
-            Text {
-              width: parent.width
+            Rectangle {
+              parent: line.parent
+              objectName: "quick-message-" + line.mid
+              z: -1
+              x: line.x
+              y: line.y
+              width: line.width
+              height: line.height
+              radius: Style.cornerRadius
+              color: Qt.rgba(quick.text.r, quick.text.g, quick.text.b, line.message.outgoing ? 0.12 : 0.065)
+            }
+
+            RowLayout {
+              x: Style.space(8)
+              width: parent.width - Style.space(16)
+              spacing: Style.space(8)
+              Text {
+              Layout.fillWidth: true
               text: (line.message.outgoing ? "You" : (line.message.senderName || (quick.shownChat ? quick.shownChat.title : "")))
                     + "  ·  " + Model.clock(line.message.date)
               textFormat: Text.PlainText
               elide: Text.ElideRight
-              color: quick.muted
+              color: line.metadataColor
               font.family: quick.fontFamily
               font.pixelSize: Style.font.caption
               font.bold: !line.message.outgoing
+              }
+              Text {
+                objectName: "quick-receipt-" + line.mid
+                readonly property string receipt: Model.receipt(line.message, quick.shownChat)
+                visible: receipt !== ""
+                text: ({ read: "✓✓", sent: "✓", sending: "Sending…", failed: "Failed" })[receipt] || ""
+                textFormat: Text.PlainText
+                color: quick.ink(Model.readableColor(receipt === "failed" ? quick.urgent : receipt === "read" ? quick.accentText : line.metadataColor, line.ground, quick.text, 4.5))
+                font.family: quick.fontFamily
+                font.pixelSize: Style.font.caption
+                Accessible.role: Accessible.StaticText
+                Accessible.name: ({ read: "Read", sent: "Sent", sending: "Sending", failed: "Send failed" })[receipt] || ""
+              }
             }
 
             // Text and captions with their formatting and links; any other kind as its one-line description.
             Item {
               visible: bodyText.text !== ""
-              width: parent.width
+              x: Style.space(8)
+              width: parent.width - Style.space(16)
               height: visible ? Math.min(bodyText.implicitHeight, Math.ceil(bodyMetrics.lineSpacing * 6)) : 0
               clip: true
 
@@ -1074,6 +1212,8 @@ Item {
                                     : (line.drawn ? "" : Model.previewOf(line.message))
                 textFormat: bodyText.rich ? Text.RichText : Text.PlainText
                 wrapMode: Text.Wrap
+                lineHeight: 1.2
+                lineHeightMode: Text.ProportionalHeight
                 color: quick.text
                 font.family: quick.fontFamily
                 font.pixelSize: Style.font.bodySmall
@@ -1086,6 +1226,7 @@ Item {
             // A sticker, small; bigger under the pointer.
             Item {
               visible: line.kind === "sticker"
+              x: Style.space(8)
               width: Style.space(72)
               height: visible ? Style.space(72) : 0
 
@@ -1120,9 +1261,10 @@ Item {
             // A click opens it over the whole screen.
             Item {
               id: shot
+              x: Style.space(8)
               readonly property bool wanted: ["photo", "video", "gif"].indexOf(line.kind) >= 0 && !!line.media
               readonly property var box: shot.wanted
-                ? Model.fitSize(line.media.width || 320, line.media.height || 240, Math.min(line.width, Style.space(220)), Style.space(128))
+                ? Model.fitSize(line.media.width || 320, line.media.height || 240, Math.min(line.width - Style.space(16), Style.space(220)), Style.space(128))
                 : ({ width: 0, height: 0 })
               visible: shot.wanted
               width: shot.box.width
@@ -1180,10 +1322,10 @@ Item {
                 Text {
                   id: shotBadge
                   anchors.centerIn: parent
-                  text: line.kind === "gif" ? "GIF" : String.fromCodePoint(0xF040A) + " " + quick.duration(line.media ? line.media.duration : 0)
+                  text: line.kind === "gif" ? "GIF" : quick.duration(line.media ? line.media.duration : 0)
                   textFormat: Text.PlainText
                   color: "white"
-                  font.family: Style.font.family
+                  font.family: quick.fontFamily
                   font.pixelSize: Style.font.caption
                 }
               }
@@ -1198,9 +1340,10 @@ Item {
             // A voice or round video message: listen to it here.
             Rectangle {
               id: listen
+              x: Style.space(8)
               readonly property bool playingThis: !!line.media && !!line.media.file && quick.playing.fileId === line.media.file.id
               visible: line.kind === "voice" || line.kind === "videoNote"
-              width: Math.min(parent.width, Style.space(280))
+              width: Math.min(parent.width - Style.space(16), Style.space(280))
               height: visible ? Style.space(line.kind === "videoNote" ? 64 : 42) : 0
               radius: Style.cornerRadius
               color: Qt.rgba(quick.text.r, quick.text.g, quick.text.b, listenArea.containsMouse ? 0.1 : 0.06)
@@ -1249,12 +1392,11 @@ Item {
                     border.color: Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.3)
 
                     // md-pause U+F03E4, md-play U+F040A
-                    Text {
+                    Icon {
                       anchors.centerIn: parent
-                      text: String.fromCodePoint(listen.playingThis ? 0xF03E4 : 0xF040A)
+                      name: listen.playingThis ? "pause" : "play"
                       color: listen.playingThis ? quick.onAccent : quick.text
-                      font.family: Style.font.family
-                      font.pixelSize: Style.font.bodySmall
+                      size: Style.font.bodySmall
                     }
                   }
                 }
@@ -1664,13 +1806,12 @@ Item {
               fillMode: Image.PreserveAspectCrop
             }
             // What has no picture shows what it is: md-video U+F0567, md-music-note U+F0387, md-file-outline U+F0224
-            Text {
+            Icon {
               anchors.centerIn: parent
               visible: !attachmentPicture.visible
-              text: String.fromCodePoint(attachment.modelData.kind === "video" ? 0xF0567 : (attachment.modelData.kind === "audio" ? 0xF0387 : 0xF0224))
+              name: attachment.modelData.kind === "video" ? "video" : (attachment.modelData.kind === "audio" ? "music" : "file")
               color: quick.muted
-              font.family: Style.font.family
-              font.pixelSize: Style.font.body
+              size: Style.font.body
             }
             // md-close U+F0156: leave this one out
             Rectangle {
@@ -1682,12 +1823,11 @@ Item {
               radius: width / 2
               color: Qt.rgba(0, 0, 0, removeArea.containsMouse ? 0.8 : 0.55)
 
-              Text {
+              Icon {
                 anchors.centerIn: parent
-                text: String.fromCodePoint(0xF0156)
+                name: "close"
                 color: "white"
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
+                size: Style.font.caption
               }
               MouseArea {
                 id: removeArea
@@ -1706,13 +1846,16 @@ Item {
           anchors.right: parent.right
           anchors.rightMargin: Style.space(8)
           anchors.verticalCenter: parent.verticalCenter
-          width: modeLabel.implicitWidth + Style.space(16)
+          width: Math.min(modeLabel.implicitWidth + Style.space(16), parent.width * 0.55)
           height: Style.space(26)
           radius: Style.cornerRadius
           color: Qt.rgba(quick.text.r, quick.text.g, quick.text.b, modeArea.containsMouse ? 0.16 : 0.08)
 
           Text {
             id: modeLabel
+            width: parent.width - Style.space(16)
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
             anchors.centerIn: parent
             text: quick.attachAsMedia ? "As photos and videos" : "As files"
             textFormat: Text.PlainText
@@ -1737,20 +1880,35 @@ Item {
 
       // ---------------------------------------------- composer
       Rectangle {
+        id: composerBox
+        objectName: "quick-composer-box"
+        readonly property bool stackedTools: width < Style.space(360)
         Layout.fillWidth: true
-        implicitHeight: Math.min(Style.space(120), Math.max(composer.contentHeight, Style.space(20)) + Style.space(16))
+        implicitHeight: Math.max(
+          Math.min(Style.space(120), Math.max(composer.contentHeight, Style.space(20)) + Style.space(16)),
+          !stackedTools && tools.visible ? tools.implicitHeight + Style.space(16) : 0)
+          + (stackedTools && tools.visible ? tools.implicitHeight + Style.space(6) : 0)
         radius: Style.cornerRadius
         color: "transparent"
         border.width: 1
         border.color: composer.activeFocus ? quick.accent : Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.2)
 
-        TextEdit {
-          id: composer
+        Flickable {
+          id: composerScroll
           anchors.left: parent.left
-          anchors.right: tools.visible ? tools.left : parent.right
+          anchors.right: tools.visible && !parent.stackedTools ? tools.left : parent.right
           anchors.top: parent.top
           anchors.bottom: parent.bottom
           anchors.margins: Style.space(8)
+          anchors.bottomMargin: parent.stackedTools && tools.visible ? tools.height + Style.space(14) : Style.space(8)
+          contentHeight: composer.contentHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+
+        TextEdit {
+          id: composer
+          objectName: "quick-composer"
+          width: composerScroll.width
           wrapMode: TextEdit.Wrap
           textFormat: TextEdit.PlainText
           color: quick.text
@@ -1758,6 +1916,11 @@ Item {
           font.family: quick.fontFamily
           font.pixelSize: Style.font.bodySmall
           readOnly: quick.sending || quick.recordingHere
+          onCursorRectangleChanged: {
+            if (cursorRectangle.y < composerScroll.contentY) composerScroll.contentY = cursorRectangle.y
+            else if (cursorRectangle.y + cursorRectangle.height > composerScroll.contentY + composerScroll.height)
+              composerScroll.contentY = cursorRectangle.y + cursorRectangle.height - composerScroll.height
+          }
 
           Keys.onPressed: function (event) {
             function is(id) { return Keymap.matchesInText(quick.keys, id, event) }
@@ -1792,6 +1955,7 @@ Item {
             font: composer.font
           }
         }
+        }
 
         // md-sticker-emoji U+F0785, md-microphone U+F036C, md-video U+F0567
         Row {
@@ -1799,35 +1963,45 @@ Item {
           visible: quick.replyChatId !== 0
           anchors.right: parent.right
           anchors.rightMargin: Style.space(6)
-          anchors.verticalCenter: parent.verticalCenter
+          y: composerBox.stackedTools ? composerBox.height - implicitHeight - Style.space(4)
+                                     : (composerBox.height - implicitHeight) / 2
 
           Repeater {
-            model: [{ glyph: 0xF0785, action: "stickers", name: "Stickers", key: "quickMessage.stickers" },
+            model: [{ glyph: 0xF03E2, action: "attach", name: "Attach photos or files", key: "" },
+                    { glyph: 0xF0785, action: "stickers", name: "Stickers", key: "quickMessage.stickers" },
                     { glyph: 0xF036C, action: "voice", name: "Voice message", key: "quickMessage.voice" },
                     { glyph: 0xF0567, action: "video", name: "Round video message", key: "quickMessage.videoNote" }]
 
             delegate: Item {
               id: tool
               required property var modelData
+              objectName: "quick-tool-" + modelData.action
+              activeFocusOnTab: true
+              Accessible.role: Accessible.Button
+              Accessible.name: modelData.name
               width: Style.space(30)
               height: Style.space(30)
+              function activate() {
+                if (modelData.action === "attach") quick.attach()
+                else if (modelData.action === "stickers") quick.openStickers()
+                else quick.startRecording(modelData.action)
+              }
+              Keys.onReturnPressed: activate()
+              Keys.onSpacePressed: activate()
+              Rectangle { anchors.fill: parent; color: "transparent"; radius: Style.cornerRadius; border.width: parent.activeFocus ? 1 : 0; border.color: quick.accent }
 
-              Text {
+              Icon {
                 anchors.centerIn: parent
-                text: String.fromCodePoint(tool.modelData.glyph)
+                glyph: tool.modelData.glyph
                 color: toolArea.containsMouse || (tool.modelData.action === "stickers" && quick.stickersOpen) ? quick.text : quick.muted
-                font.family: Style.font.family
-                font.pixelSize: Style.font.body
+                size: Style.font.body
               }
               MouseArea {
                 id: toolArea
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                  if (tool.modelData.action === "stickers") quick.openStickers()
-                  else quick.startRecording(tool.modelData.action)
-                }
+                onClicked: tool.activate()
                 onContainsMouseChanged: quick.toolHint = containsMouse
                   ? [tool.modelData.name, quick.keyText(tool.modelData.key)].filter(function (s) { return s !== "" }).join("  ·  ") : ""
               }
@@ -1836,6 +2010,8 @@ Item {
         }
 
         MouseArea {
+          // The text editor must receive selection, caret and scroll input itself.
+          visible: quick.replyChatId === 0
           anchors.left: parent.left
           anchors.right: tools.visible ? tools.left : parent.right
           anchors.top: parent.top

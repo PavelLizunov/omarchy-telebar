@@ -65,7 +65,7 @@ BINDS_MAX = 4 * 1024 * 1024
 def empty():
     return {"shortcuts": {}, "globalShortcuts": {}, "playbackRate": 1, "autoDownload": dict(DOWNLOADS_DEFAULT),
             "reactionsSeen": True, "emoji": {"tone": 0, "recents": {}}, "sounds": {"style": SOUND_DEFAULT, "variants": {}},
-            "quiet": False}
+            "quiet": False, "showStories": True}
 
 
 # ---------------------------------------------------------------- key combinations for Hyprland
@@ -176,6 +176,11 @@ def check(value, strict=True):
             continue
         out["autoDownload"][key] = v
     reactions_seen = value.get("reactionsSeen", True)   # reactions to your messages count as seen when the chat opens
+    show_stories = value.get("showStories", True)
+    if not isinstance(show_stories, bool):
+        bad("showStories is true or false")
+    else:
+        out["showStories"] = show_stories
     if not isinstance(reactions_seen, bool):
         bad("reactionsSeen is true or false")
     else:
@@ -185,6 +190,12 @@ def check(value, strict=True):
         bad("quiet is true or false")
     else:
         out["quiet"] = quiet
+    if "chatListWidth" in value:
+        width = value["chatListWidth"]
+        if isinstance(width, bool) or not isinstance(width, int) or not 72 <= width <= 1200:
+            bad("chatListWidth is a whole number from 72 to 1200")
+        else:
+            out["chatListWidth"] = width
     emoji = value.get("emoji", {})   # the emoji panel: the skin tone (0 none, 1-5) and what you use most
     if not isinstance(emoji, dict):
         bad("emoji must be an object")

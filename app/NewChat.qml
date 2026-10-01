@@ -308,12 +308,11 @@ FocusScope {
               radius: width / 2
               color: Qt.rgba(dialog.app.accent.r, dialog.app.accent.g, dialog.app.accent.b, 0.22)
               // md-account-group-outline U+F0B58, md-bullhorn-outline U+F0B23, md-at U+F0065
-              Text {
+              Icon {
                 anchors.centerIn: parent
-                text: String.fromCodePoint(entry.modelData.id === "group" ? 0xF0B58 : (entry.modelData.id === "channel" ? 0xF0B23 : 0xF0065))
+                name: entry.modelData.id === "group" ? "people" : (entry.modelData.id === "channel" ? "channel" : "at")
                 color: dialog.app.foreground
-                font.family: dialog.app.glyphFamily
-                font.pixelSize: Style.font.title
+                size: Style.font.title
               }
             }
             Avatar {
@@ -349,12 +348,11 @@ FocusScope {
               }
             }
             // md-check-circle-outline U+F05E1 when chosen for the group
-            Text {
-              visible: dialog.mode === "members"
-              text: entry.modelData.selected ? String.fromCodePoint(0xF05E1) : ""
+            Icon {
+              visible: dialog.mode === "members" && entry.modelData.selected
+              name: "checkCircle"
               color: dialog.app.accentText
-              font.family: dialog.app.glyphFamily
-              font.pixelSize: Style.font.title
+              size: Style.font.title
             }
           }
           MouseArea {

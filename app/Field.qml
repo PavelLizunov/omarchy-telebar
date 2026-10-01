@@ -29,6 +29,8 @@ FocusScope {
 
     Text {
       visible: field.label !== ""
+      width: parent.width
+      wrapMode: Text.Wrap
       text: field.label
       textFormat: Text.PlainText
       color: field.app.muted
@@ -62,6 +64,8 @@ FocusScope {
         onAccepted: field.accepted()
 
         Text {
+          width: parent.width
+          elide: Text.ElideRight
           anchors.verticalCenter: parent.verticalCenter
           visible: input.text === ""
           text: field.placeholder

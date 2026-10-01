@@ -37,8 +37,104 @@ FILES = DATA / "files"
 # recordings were made before they moved to SENT.
 SENT = DATA / "sent"
 REC = pathlib.Path(safe.runtime_dir()) / "omagram" / "rec"
-MEDIA_ROOTS = ((str(FILES),) + tuple(str(DATABASE / name) for name in ("stickers", "thumbnails", "profile_photos", "wallpapers"))
+MEDIA_ROOTS = ((str(FILES),) + tuple(str(DATABASE / name) for name in ("stickers", "thumbnails", "profile_photos", "wallpapers", "stories"))
                + (str(SENT), str(REC)))
+
+DEFAULT_ACCOUNT_ID = "default"
+ACCOUNTS_DIR = DATA / "accounts"
+ACCOUNTS_FILE = DATA / "accounts.json"
+ACCOUNT_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+
+
+def valid_account_id(account_id):
+    return (isinstance(account_id, str) and account_id not in (".", "..")
+            and ACCOUNT_ID_RE.fullmatch(account_id) is not None and ".." not in account_id)
+
+
+def account_paths(account_id=DEFAULT_ACCOUNT_ID):
+    """Paths for a given account: default account preserves historical paths directly in DATA."""
+    if not valid_account_id(account_id):
+        raise safe.UnsafeError("invalid account id")
+    if account_id == DEFAULT_ACCOUNT_ID:
+        return {
+            "id": DEFAULT_ACCOUNT_ID,
+            "root": DATA,
+            "database": DATABASE,
+            "files": FILES,
+            "sent": SENT,
+        }
+    acc_root = ACCOUNTS_DIR / account_id
+    return {
+        "id": account_id,
+        "root": acc_root,
+        "database": acc_root / "database",
+        "files": acc_root / "files",
+        "sent": acc_root / "sent",
+    }
+
+
+def media_roots_for(account_id=DEFAULT_ACCOUNT_ID):
+    p = account_paths(account_id)
+    db = p["database"]
+    files = p["files"]
+    sent = p["sent"]
+    return ((str(files),) + tuple(str(db / name) for name in ("stickers", "thumbnails", "profile_photos", "wallpapers", "stories"))
+            + (str(sent), str(REC)))
+
+
+def all_database_dirs():
+    """Every database directory across all accounts (for upload and protection checks)."""
+    dirs = [str(DATABASE)]
+    data = load_accounts()
+    for acc in data.get("accounts", []):
+        aid = acc.get("id")
+        if aid and aid != DEFAULT_ACCOUNT_ID:
+            db_dir = str(account_paths(aid)["database"])
+            if db_dir not in dirs:
+                dirs.append(db_dir)
+    return tuple(dirs)
+
+
+def load_accounts():
+    default_data = {
+        "active": DEFAULT_ACCOUNT_ID,
+        "accounts": [
+            {"id": DEFAULT_ACCOUNT_ID, "name": "Account 1", "phone": "", "meId": 0}
+        ]
+    }
+    data = safe.read_json(ACCOUNTS_FILE, 64 * 1024, default=None, max_depth=6, max_items=256, max_string=1024)
+    if not isinstance(data, dict):
+        return default_data
+    accounts = data.get("accounts")
+    if not isinstance(accounts, list) or not accounts:
+        return default_data
+    valid_accounts = []
+    seen = set()
+    for a in accounts[:10]:
+        if isinstance(a, dict) and valid_account_id(a.get("id")) and a["id"] not in seen:
+            seen.add(a["id"])
+            me_id = a.get("meId", 0)
+            if isinstance(me_id, bool) or not isinstance(me_id, int) or not 0 <= me_id < 2 ** 53:
+                me_id = 0
+            valid_accounts.append({
+                "id": a["id"],
+                "name": (a.get("name") if isinstance(a.get("name"), str) else a["id"])[:80],
+                "phone": (a.get("phone") if isinstance(a.get("phone"), str) else "")[:32],
+                "meId": me_id
+            })
+    if not valid_accounts:
+        return default_data
+    active = data.get("active")
+    ids = [a["id"] for a in valid_accounts]
+    if active not in ids:
+        active = ids[0]
+    return {"active": active, "accounts": valid_accounts}
+
+
+def save_accounts(data):
+    safe.ensure_dir(DATA, 0o700)
+    safe.write_json(ACCOUNTS_FILE, data, mode=0o600)
+
 
 KEYRING_SERVICE = "omagram"
 KEYRING_TIMEOUT = 60        # an unlock prompt from the keyring daemon may be on screen
@@ -102,6 +198,14 @@ class TdClient:
         """A fresh client id in the same library, e.g. after logging out."""
         self.client_id = self.lib.td_create_client_id()
         return self.client_id
+
+    def create_client(self):
+        """Create an additional independent client id in this library for multi-account."""
+        return self.lib.td_create_client_id()
+
+    def send_client(self, client_id, query):
+        """Send a query to a specific client id."""
+        self.lib.td_send(client_id, json.dumps(query, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
     def execute(self, query):
         raw = self.lib.td_execute(json.dumps(query, separators=(",", ":")).encode("utf-8"))
@@ -191,8 +295,10 @@ def _valid_key(value):
         return False
 
 
-def database_exists(directory=None):
-    directory = pathlib.Path(directory or DATABASE)
+def database_exists(directory=None, account_id=DEFAULT_ACCOUNT_ID):
+    if directory is None:
+        directory = DATABASE if account_id == DEFAULT_ACCOUNT_ID else account_paths(account_id)["database"]
+    directory = pathlib.Path(directory)
     try:
         with os.scandir(directory) as entries:
             return any(entries)
@@ -200,19 +306,22 @@ def database_exists(directory=None):
         return False
 
 
-def database_key():
+def database_key(account_id=DEFAULT_ACCOUNT_ID):
     """The database encryption key, created on first use. A key is only ever created when
     there is no database yet: making a new one for an existing database would lock the
     cached chats away for good, so a missing key with a database present is an error."""
-    found, value = keyring_get("database_key")
+    key_name = "database_key" if account_id == DEFAULT_ACCOUNT_ID else f"database_key_{account_id}"
+    label = "Omagram database key" if account_id == DEFAULT_ACCOUNT_ID else f"Omagram database key ({account_id})"
+    found, value = keyring_get(key_name)
     if found:
         if not _valid_key(value):
             raise TdUnavailable("the database key in the keyring is malformed")
         return value
-    if database_exists():
+    db_dir = DATABASE if account_id == DEFAULT_ACCOUNT_ID else account_paths(account_id)["database"]
+    if database_exists(db_dir):
         raise TdUnavailable("the database key is missing from the keyring")
     value = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
-    if not keyring_set("database_key", "Omagram database key", value):
+    if not keyring_set(key_name, label, value):
         raise TdUnavailable("the database key could not be stored in the keyring")
     return value
 
@@ -223,14 +332,15 @@ def language_code():
     return code if re.fullmatch(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?", code) else "en"
 
 
-def tdlib_parameters(api_id, api_hash, db_key, version):
-    for directory in (DATA, DATABASE, FILES):
+def tdlib_parameters(api_id, api_hash, db_key, version, account_id=DEFAULT_ACCOUNT_ID):
+    p = account_paths(account_id)
+    for directory in (p["root"], p["database"], p["files"], p["sent"]):
         safe.ensure_dir(directory, 0o700)
     return {
         "@type": "setTdlibParameters",
         "use_test_dc": False,
-        "database_directory": str(DATABASE),
-        "files_directory": str(FILES),
+        "database_directory": str(p["database"]),
+        "files_directory": str(p["files"]),
         "database_encryption_key": db_key,
         "use_file_database": True,
         "use_chat_info_database": True,

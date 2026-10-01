@@ -1,0 +1,17 @@
+const fs = require("node:fs"), vm = require("node:vm"), assert = require("node:assert/strict");
+const source = fs.readFileSync(__dirname + "/../app/Model.js", "utf8").replace(/^\.pragma library\s*/m, "");
+const ctx = vm.createContext({});
+vm.runInContext(source, ctx);
+const chats = Array.from({ length: 435 }, (_, id) => ({ id: id + 1, positions: { main: { order: String(435 - id) } } }));
+const updates = chats.map(c => ({ ...c, title: "changed" }));
+const sequential = updates.reduce((list, c) => ctx.upsertChat(list, c, "main"), chats);
+const batched = ctx.mergeChatUpdates(chats, updates, "main");
+assert.equal(JSON.stringify(batched), JSON.stringify(sequential));
+assert.equal(ctx.mergeChatUpdates(chats, [{ ...chats[0], title: "first" }, { ...chats[0], title: "last" }], "")[0].title, "last");
+const { performance } = require("node:perf_hooks");
+const start = performance.now();
+updates.reduce((list, c) => ctx.upsertChat(list, c, "main"), chats);
+const middle = performance.now();
+ctx.mergeChatUpdates(chats, updates, "main");
+console.log("Synthetic 435 chat updates ms — per-event:", (middle - start).toFixed(2), "batched:", (performance.now() - middle).toFixed(2));
+console.log("Batch correctness passed; desktop timing must be measured separately");

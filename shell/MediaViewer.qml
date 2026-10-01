@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import qs.Commons
+import "../app" as App
 import "../app/Model.js" as Model
 import "../app/Keymap.js" as Keymap
 
@@ -15,6 +16,7 @@ FocusScope {
   property real messageId: 0
   property real waitingFileId: 0      // a video fetched to play the moment it is here
   property string error: ""
+  property alias actions: actions
 
   signal closed()
   signal played()                     // a video went to the video player: the quick view gets out of its way
@@ -84,7 +86,8 @@ FocusScope {
 
   Keys.onPressed: function (event) {
     function is(id) { return Keymap.matches(viewer.keys, id, event) }
-    if (is("quickMedia.close")) viewer.closed()
+    if (event.key === Qt.Key_Menu || (event.key === Qt.Key_F10 && event.modifiers === Qt.ShiftModifier)) actions.openMenu(viewer.width / 2, viewer.height / 2)
+    else if (is("quickMedia.close")) viewer.closed()
     else if (is("quickMedia.previous")) viewer.step(-1)
     else if (is("quickMedia.next")) viewer.step(1)
     else if (is("quickMedia.play")) viewer.play()
@@ -132,6 +135,10 @@ FocusScope {
       id: picture
       anchors.fill: parent
       asynchronous: true
+      cache: false
+      sourceSize.width: Math.min(4096, Math.ceil(viewer.width * 1.5 / 256) * 256)
+      sourceSize.height: Math.min(4096, Math.ceil(viewer.height * 1.5 / 256) * 256)
+      autoTransform: true
       fillMode: Image.PreserveAspectFit
       source: !viewer.media || !viewer.host ? ""
             : (viewer.kind === "photo" ? viewer.host.urlOf(viewer.media.file) : viewer.host.urlOf(viewer.host.stillThumb(viewer.media)))
@@ -149,13 +156,12 @@ FocusScope {
       border.color: Qt.rgba(1, 1, 1, 0.85)
 
       // md-play U+F040A
-      Text {
+      App.Icon {
         anchors.centerIn: parent
         anchors.horizontalCenterOffset: Style.space(3)
-        text: String.fromCodePoint(0xF040A)
+        name: "play"
         color: "white"
-        font.family: Style.font.family
-        font.pixelSize: Style.space(44)
+        size: Style.space(44)
       }
       MouseArea {
         id: playArea
@@ -188,11 +194,10 @@ FocusScope {
       font.pixelSize: Style.font.body
     }
     // md-open-in-new U+F03CC: the chat, in the window
-    Text {
-      text: String.fromCodePoint(0xF03CC)
+    App.Icon {
+      name: "window"
       color: openArea.containsMouse ? "white" : Qt.rgba(1, 1, 1, 0.65)
-      font.family: Style.font.family
-      font.pixelSize: Style.font.title
+      size: Style.font.title
 
       MouseArea {
         id: openArea
@@ -234,6 +239,7 @@ FocusScope {
         if (!viewer.current || !viewer.host) return ""
         var parts = [(viewer.index + 1) + " of " + viewer.items.length]
         if (viewer.video) parts.push((viewer.kind === "gif" ? "GIF" : "Video") + " " + viewer.host.duration(viewer.media.duration))
+        if (actions.status) parts.push(actions.status)
         if (viewer.error) parts.push(viewer.error)
         else if (viewer.waitingFileId && viewer.file) parts.push("getting it ready " + Math.round(Model.progress(viewer.file) * 100) + "%")
         else if (viewer.kind === "photo" && viewer.file && viewer.file.active) parts.push("loading " + Math.round(Model.progress(viewer.file) * 100) + "%")
@@ -246,5 +252,27 @@ FocusScope {
       font.family: viewer.fontFamily
       font.pixelSize: Style.font.caption
     }
+  }
+
+  // ContextMenu expects the window's theme/shortcut contract, adapted to the quick host.
+  QtObject {
+    id: menuTheme
+    readonly property var shortcuts: viewer.keys
+    readonly property string fontFamily: viewer.fontFamily
+    readonly property color background: viewer.host ? viewer.host.background : Color.menu.background
+    readonly property color foreground: viewer.host ? viewer.host.foreground : Color.menu.text
+    readonly property color selected: viewer.host ? viewer.host.selected : Color.menu.selectedBackground
+    readonly property color accent: viewer.host ? viewer.host.accent : Color.accent
+    readonly property color urgent: viewer.host ? viewer.host.urgent : Color.urgent
+  }
+  App.PhotoActions {
+    id: actions
+    anchors.fill: parent
+    visible: viewer.kind === "photo"
+    app: menuTheme
+    client: viewer.host ? viewer.host.service : null
+    message: viewer.current
+    file: viewer.file
+    onDownloadRequested: function (fileId) { viewer.host.fetchNow(viewer.media.file) }
   }
 }

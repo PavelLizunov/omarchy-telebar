@@ -44,7 +44,14 @@ Item {
     try { payload = JSON.parse(payloadJson || "{}") || {} } catch (e) { payload = {} }
     overlay.findService()
     overlay.opened = true
-    view.reset(payload.chatId, payload.messageId)
+    if (payload.account && overlay.service && payload.account !== overlay.service.activeAccount) {
+      overlay.service.request("account.switch", { accountId: payload.account }, function (answer) {
+        if (answer.ok) {
+          overlay.service.applyAccountSnapshot(answer.result)
+          view.reset(payload.chatId, payload.messageId)
+        }
+      })
+    } else view.reset(payload.chatId, payload.messageId)
   }
 
   function close() {

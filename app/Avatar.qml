@@ -42,12 +42,20 @@ Item {
     Text {
       anchors.centerIn: parent
       // md-bookmark U+F00C0
-      text: avatar.saved ? String.fromCodePoint(0xF00C0) : Model.initials(avatar.chat ? avatar.chat.title : "")
+      visible: !avatar.saved
+      text: Model.initials(avatar.chat ? avatar.chat.title : "")
       textFormat: Text.PlainText
       color: avatar.app.foreground
-      font.family: avatar.saved ? (avatar.app.glyphFamily || Style.font.family) : avatar.app.fontFamily
+      font.family: avatar.app.fontFamily
       font.pixelSize: Math.round(avatar.size * (avatar.saved ? 0.46 : 0.36))
       font.bold: !avatar.saved
+    }
+    Icon {
+      anchors.centerIn: parent
+      visible: avatar.saved
+      name: "bookmark"
+      color: avatar.app.foreground
+      size: avatar.size * 0.46
     }
   }
 

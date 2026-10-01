@@ -181,6 +181,7 @@ test("sizes, durations, fitting, auto-download, progress", () => {
   eq(X.fitSize(512, 512, 180, 180), { width: 180, height: 180 })
   eq(X.fitSize(100, 50, 360, 360), { width: 100, height: 50 })
   eq(X.fitSize(0, 0, 360, 360), { width: 360, height: 270 })
+  eq(X.fitSize(0, 0, 360, 100), { width: 133, height: 100 }, "unknown media still obeys both bounds")
   assert.strictEqual(X.autoDownload("sticker", 400000), true)
   assert.strictEqual(X.autoDownload("sticker", 999999999), false)
   assert.strictEqual(X.autoDownload("voice", X.AUTO_DOWNLOAD_MAX + 1), false)
@@ -250,6 +251,9 @@ test("status, typing and read ticks in words", () => {
   actions = M.withAction(actions, { chatId: 42, senderId: 8, action: "cancel" }, now)
   assert.strictEqual(M.actionText(M.activeActions(actions, 42, now + 1000), false), "Ann is typing…")
   assert.strictEqual(M.actionText(M.activeActions(actions, 42, now + 60000), false), "", "actions expire")
+  eq(M.withAction(actions, null, now + 60000), {}, "expired actions must release the ticking clock")
+  eq(M.withAction(actions, { chatId: 42, senderId: 7, action: "cancel" }, now + 1000), {},
+     "cancelling the last action must remove the empty chat bucket")
   assert.strictEqual(M.receipt(msg(5, { outgoing: true }), { lastReadOutbox: 5 }), "read")
   assert.strictEqual(M.receipt(msg(6, { outgoing: true }), { lastReadOutbox: 5 }), "sent")
   assert.strictEqual(M.receipt(msg(6, { outgoing: true, sending: "pending" }), {}), "sending")
@@ -660,7 +664,10 @@ test("going to a date, and who reacted or has seen a message", () => {
   eq(["today", "Yesterday", "2026-09-01", "01.09.2026", "1.9", "25.12", "1 Sep", "Sept 1", "1 September", "31.02.2026", "2027-01-01", "1 sepx", "soon", ""]
        .map(t => M.parseDay(t, now)),
      [day(2026, 8, 13), day(2026, 8, 12), day(2026, 8, 1), day(2026, 8, 1), day(2026, 8, 1), day(2025, 11, 25), day(2026, 8, 1), day(2026, 8, 1),
-      day(2026, 8, 1), null, null, null, null, null])
+       day(2026, 8, 1), null, null, null, null, null])
+  assert.strictEqual(M.parseDay("29.2", new Date(2024, 0, 15).getTime()), null,
+                     "a future leap day must not roll into March of a non-leap year")
+  assert.strictEqual(M.parseDay("29.2", new Date(2024, 2, 1).getTime()), day(2024, 1, 29))
   const message = (extra) => Object.assign({ id: 3, chatId: 1, content: { kind: "text", text: "hi", entities: [] }, reactions: [] }, extra)
   const people = (m, p) => M.messageMenu(m, p, false, { kind: "group" }).map(i => i.id).filter(id => id === "reactions" || id === "viewers")
   eq([people(message({ canSeeReactions: true, reactions: [{ emoji: "❤", count: 1 }] }), { canGetViewers: true }),

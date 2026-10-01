@@ -45,6 +45,7 @@ class FakeTd:
     def __init__(self):
         self.client_id = 1
         self.sent = []
+        self.sent_clients = []
         self.daemon = None
         self.new_clients = 0
 
@@ -84,6 +85,21 @@ class FakeTd:
         self.client_id += 1
         return self.client_id
 
+    def create_client(self):
+        self.new_clients += 1
+        return self.new_clients + 1
+
+    def send_client(self, client_id, query):
+        self.sent_clients.append((client_id, query.get("@type")))
+        if query.get("@type") == "close":
+            self.sent.append(query)
+            event = auth_update("authorizationStateClosed")
+            event["@client_id"] = client_id
+            self.daemon.events.put(event)
+            self.daemon.wake()
+        else:
+            self.send(query)
+
     def sent_types(self):
         return [q.get("@type") for q in self.sent]
 
@@ -94,6 +110,13 @@ class FakeKeyring:
     def __init__(self):
         self.credentials = None
         self.saved = []
+        self.accounts = {"active": "default", "accounts": [{"id": "default", "name": "Account 1", "phone": "", "meId": 0}]}
+
+    def load_accounts(self):
+        return json.loads(json.dumps(self.accounts))
+
+    def save_accounts(self, data):
+        self.accounts = json.loads(json.dumps(data))
 
     def load_credentials(self):
         return self.credentials
@@ -120,6 +143,13 @@ class Harness(unittest.TestCase):
         os.chmod(self.root, 0o700)
         self.addCleanup(shutil.rmtree, self.root, True)
         self.d = load_daemon()
+        for name, value in (("DATA", self.root / "data"), ("ACCOUNTS_DIR", self.root / "data/accounts"),
+                            ("ACCOUNTS_FILE", self.root / "data/accounts.json"),
+                            ("DATABASE", self.root / "data/database"), ("FILES", self.root / "data/files"),
+                            ("SENT", self.root / "sent"), ("REC", self.root / "rec")):
+            patch = mock.patch.object(td, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
         for name, value in (("RUN", self.root), ("SOCKET", self.root / "omagram.sock"),
                             ("LOCK", self.root / "omagram.lock"), ("CLOSE_TIMEOUT", 2.0), ("NOTIFY_IMAGES", self.root / "notify"),
                             ("SOUNDS", self.root / "sounds"), ("OMARCHY_NOTIFICATIONS", self.root / "omarchy-notifications.json")):
@@ -304,6 +334,7 @@ class Service(Harness):
         self.assertEqual((auth["state"], auth["link"]), ("qr", link))
         if not safe.has_tool("qrencode"):
             self.skipTest("qrencode is not installed")
+        auth = self.read(conn, lambda v: v.get("event") == "auth" and v["auth"].get("image"))["auth"]
         self.assertTrue(auth["image"].startswith("data:image/png;base64,"))
         if safe.has_tool("zbarimg"):
             png = self.root / "qr.png"
@@ -1090,6 +1121,7 @@ class MessageActions(Harness):
         files.mkdir(mode=0o700)
         document = files / "report.pdf"
         document.write_bytes(b"%PDF-1.7 data")
+        self.daemon.state.files_root = (str(files),)
         downloads = self.root / "Downloads"
         spawned = []
         for target, value in ((self.d.td, ("MEDIA_ROOTS", (str(files),))), (self.d, ("DOWNLOADS", downloads))):
@@ -1116,6 +1148,77 @@ class MessageActions(Harness):
                          (str(self.d.media.REC), b"\x89PNG image", 0o600))
         with mock.patch.object(self.d, "clipboard_types", lambda: ["text/plain"]):
             self.assertEqual(self.request(self.conn, 76, "clipboard.image")["result"], {"path": ""})
+
+    def test_viewer_photo_exports(self):
+        files = self.root / "photos"
+        files.mkdir(mode=0o700)
+        path = files / "original.jpg"
+        self.daemon.state.files_root = (str(files),)
+        with mock.patch.object(self.d.td, "MEDIA_ROOTS", (str(files),)), \
+             mock.patch.object(self.d, "DOWNLOADS", self.root / "Downloads"), \
+             mock.patch.object(self.d.safe, "run") as run:
+            run.return_value = self.d.safe.Result(0, b"", b"", False, False)
+
+            def export(rid, cmd="file.copyImage", allowed=True, message_file=5, local=None):
+                args = {"fileId": 5, "chatId": 42, "messageId": 7, "fileName": "photo.jpg"}
+                self.send(self.conn, {"id": rid, "cmd": cmd, "args": args})
+                def answer(kind, event):
+                    self.wait(lambda: any(q.get("@type") == kind and q.get("@extra") not in replied for q in self.fake.sent))
+                    q = [q for q in self.fake.sent if q.get("@type") == kind and q.get("@extra") not in replied][-1]
+                    replied.add(q["@extra"])
+                    self.td_event(dict(event, **{"@extra": q["@extra"], "@client_id": 1}))
+                    return q
+                answer("getFile", {"@type": "file", "id": 5, "local": local or {"path": str(path), "is_downloading_completed": True}})
+                if local is None:
+                    answer("getMessage", {"@type": "message", "chat_id": 42, "id": 7,
+                                          "content": {"@type": "messagePhoto", "photo": {"@type": "photo", "sizes": [
+                                              {"@type": "photoSize", "width": 960, "height": 640, "photo": {"@type": "file", "id": message_file}}]}}})
+                    if message_file == 5:
+                        answer("getMessageProperties", {"@type": "messageProperties", "can_be_saved": allowed})
+                return self.read(self.conn, lambda v: v.get("id") == rid)
+
+            replied = {q.get("@extra") for q in self.fake.sent}
+            for rid, data, mime in ((180, b"\xff\xd8\xfforiginal JPEG bytes", "image/jpeg"),
+                                    (181, b"\x89PNG\r\n\x1a\noriginal PNG bytes", "image/png"),
+                                    (182, b"RIFF\x04\x00\x00\x00WEBPdata", "image/webp")):
+                path.write_bytes(data)
+                self.assertTrue(export(rid)["ok"])
+                argv = run.call_args.args[0]
+                self.assertEqual(argv, [str(self.d.safe.tool("wl-copy")), "--type", mime])
+                self.assertEqual(run.call_args.kwargs["input"], data, "copy original image bytes, not a file URI")
+                self.assertEqual(run.call_args.kwargs["timeout"], self.d.HELPER_TIMEOUT)
+            run.reset_mock()
+            for rid, options in ((183, {"allowed": False}), (184, {"message_file": 6}),
+                                 (185, {"local": {"path": str(path), "is_downloading_completed": False}}),
+                                 (186, {"local": {"path": "/etc/passwd", "is_downloading_completed": True}})):
+                self.assertFalse(export(rid, **options)["ok"])
+            run.assert_not_called()
+            path.write_bytes(b"not an image")
+            self.assertFalse(export(187)["ok"])
+            path.write_bytes(b"\xff\xd8\xff" + b"x" * self.d.CLIPBOARD_MAX)
+            self.assertFalse(export(188)["ok"], "bounded image size")
+            path.unlink()
+            target = files / "target.jpg"
+            target.write_bytes(b"\xff\xd8\xffdata")
+            path.symlink_to(target)
+            self.assertFalse(export(189)["ok"], "no symlink reads")
+            path.unlink()
+            path.write_bytes(b"\xff\xd8\xffdata")
+            run.assert_not_called()
+            run.return_value = self.d.safe.Result(1, b"", b"unavailable", False, False)
+            self.assertFalse(export(190)["ok"], "clipboard failure is not success")
+            run.reset_mock()
+            self.daemon.jobs = self.d.JOBS_MAX
+            try:
+                self.assertFalse(export(191)["ok"], "admission limit")
+            finally:
+                self.daemon.jobs = 0
+            run.assert_not_called()
+            self.assertFalse(export(192, cmd="file.save", allowed=False)["ok"])
+            self.assertFalse((self.root / "Downloads").exists(), "protected photo must not be saved")
+            self.assertTrue(export(193, cmd="file.save")["ok"])
+            self.assertTrue(export(194, cmd="file.save")["ok"])
+            self.assertEqual((self.root / "Downloads/photo (2).jpg").read_bytes(), path.read_bytes())
 
     def test_pasting_copied_files_or_a_picture(self):
         picked = self.root / "picked"
@@ -2010,13 +2113,15 @@ class Settings(Harness):
         answer = self.request(self.conn, 1, "app.quit")
         self.assertTrue(answer["ok"], answer)
         self.assertEqual(self.read(other, lambda v: v.get("event") == "quit")["event"], "quit")
+        self.thread.join(7)
+        self.assertFalse(self.thread.is_alive(), "Quit must close the daemon, not only its windows")
 
     def test_settings_come_with_hello_and_are_saved_and_shared(self):
         hello = self.request(self.conn, 1, "hello")["result"]
         self.assertEqual(hello["settings"], {"shortcuts": {}, "globalShortcuts": {}, "playbackRate": 1,
                                              "autoDownload": {"photos": True, "gifs": True, "videos": 0, "files": 0},
                                              "reactionsSeen": True, "emoji": {"tone": 0, "recents": {}},
-                                             "sounds": {"style": "drop", "variants": {}}, "quiet": False})
+                                              "sounds": {"style": "drop", "variants": {}}, "quiet": False, "showStories": True})
         self.assertEqual(hello["globalStatus"]["global.quickReply"], "off")
         other = self.connect()
         answer = self.request(self.conn, 2, "settings.set", settings={"shortcuts": {"window.voice": ["Ctrl+Alt+V"]}})
@@ -2062,7 +2167,13 @@ class Settings(Harness):
         self.assertEqual(self.request(self.conn, 62, "sounds.another", userId=500)["result"]["settings"]["sounds"]["variants"], {"500": 1})
         self.assertTrue(self.request(self.conn, 63, "settings.set", settings={"shortcuts": {}})["ok"])
         self.assertEqual(json.loads(self.d.prefs.SETTINGS.read_text())["sounds"], {"style": "knock", "variants": {"500": 1}},
-                         "the shortcuts page leaves it alone")
+                          "the shortcuts page leaves it alone")
+        answer = self.request(self.conn, 64, "settings.set", settings={"showStories": False})
+        self.assertIs(answer["result"]["settings"]["showStories"], False)
+        self.assertEqual(answer["result"]["settings"]["shortcuts"], {})
+        self.assertTrue(self.request(self.conn, 65, "settings.set", settings={"shortcuts": {"window.voice": ["Ctrl+R"]}})["ok"])
+        self.assertIs(json.loads(self.d.prefs.SETTINGS.read_text())["showStories"], False)
+        self.assertFalse(self.request(self.conn, 66, "settings.set", settings={"showStories": "false"})["ok"])
 
     def test_global_shortcuts_are_registered_and_registered_again(self):
         answer = self.request(self.conn, 5, "settings.set",
@@ -2235,7 +2346,7 @@ class Notifications(Harness):
         self.wait(self.launched_window)
         self.settle()
         _, target = self.window()
-        self.assertEqual(target, {"chatId": 42, "reply": False})
+        self.assertEqual(target, {"chatId": 42, "reply": False, "account": "default"})
         self.assertIsNone(self.window()[1])   # handed over once
 
     def test_reply_summons_the_quick_reply_overlay(self):
@@ -2244,12 +2355,13 @@ class Notifications(Harness):
         self.click("reply")
         self.wait(lambda: self.spawned)
         argv, fallback = self.spawned[0]
-        self.assertEqual(argv, [self.d.OMARCHY_SHELL, "shell", "summon", "reidenxerx.omagram", '{"chatId": 42}'])
+        self.assertEqual(argv[:4], [self.d.OMARCHY_SHELL, "shell", "summon", "reidenxerx.omagram"])
+        self.assertEqual(json.loads(argv[4]), {"chatId": 42, "account": "default"})
         self.assertIsNone(self.daemon.pending_open)
         self.assertEqual(self.launched_window(), [])
         fallback()   # what a failed summon does: the window, composer focused
         _, target = self.window()
-        self.assertEqual(target, {"chatId": 42, "reply": True})
+        self.assertEqual(target, {"chatId": 42, "reply": True, "account": "default"})
         self.assertEqual(len(self.launched_window()), 1)
 
     def test_a_helper_that_fails_or_cannot_start_falls_back(self):
@@ -2364,6 +2476,270 @@ class Startup(unittest.TestCase):
             self.assertNotIn("0123456789abcdef0123456789abcdef", " ".join(argv))
             self.assertNotIn("123456", [a for a in argv if not a.startswith("--label")])
         self.assertEqual([kw["input"] for _, kw in calls], ["123456", "0123456789abcdef0123456789abcdef"])
+
+
+class MultiAccountTests(Harness):
+    def test_bundled_bridge_enable_disable_restores_previous_proxy(self):
+        conn = self.connect()
+        class FakeBridge:
+            metadata = {}
+            port = 1443
+            secret = "01" * 16
+            stopped = False
+            proc = None
+            def start(self): return self.port
+            def stop(self): self.stopped = True
+            def save(self): pass
+            def status(self, aid): return {"running": not self.stopped, "enabled": aid in self.metadata}
+        self.daemon.bridge = FakeBridge()
+        self.send(conn, {"id": 870, "cmd": "bridge.set", "args": {"enabled": True}})
+        query = self.last_query("getProxies")
+        self.answer(query, {"@type": "addedProxies", "proxies": [{"id": 7, "is_enabled": True}]})
+        added = self.last_query("addProxy")
+        self.assertEqual(added["proxy"]["server"], "127.0.0.1")
+        self.assertEqual(added["proxy"]["type"]["secret"], "dd" + "01" * 16)
+        self.answer(added, {"@type": "addedProxy", "id": 8})
+        self.assertTrue(self.read(conn, lambda m: m.get("id") == 870)["ok"])
+        self.assertEqual(self.daemon.bridge.metadata["default"], {"proxy_id": 8, "previous_id": 7})
+        before = self.sent_count("getProxies")
+        self.send(conn, {"id": 871, "cmd": "bridge.set", "args": {"enabled": False}})
+        query = self.next_query("getProxies", before)
+        self.answer(query, {"@type": "addedProxies", "proxies": [{"id": 7}, {"id": 8, "is_enabled": True}]})
+        enabled = self.last_query("enableProxy")
+        self.assertEqual(enabled["proxy_id"], 7)
+        self.answer(enabled, {"@type": "ok"})
+        self.assertTrue(self.read(conn, lambda m: m.get("id") == 871)["ok"])
+        self.assertEqual(self.daemon.bridge.metadata, {})
+
+    def test_diagnostics_report_filters_strings_and_rate_limits(self):
+        conn = self.connect()
+        result = self.request(conn, 830, "diagnostics.ui", pending=4, width=800,
+                              text="PRIVATE MESSAGE", password="SECRET", oldest_ms="SECRET", window=True)
+        self.assertTrue(result["ok"])
+        status = self.request(conn, 831, "diagnostics.status")["result"]
+        rows = [row for row in status["ui"] if row["metrics"]]
+        self.assertEqual(rows[0]["metrics"], {"pending": 4, "width": 800})
+        self.assertNotIn("SECRET", json.dumps(status))
+        self.assertFalse(self.request(conn, 832, "diagnostics.ui", pending=1)["ok"])
+
+    def test_shortcuts_save_preserves_resized_chat_list(self):
+        conn = self.connect()
+        result = self.request(conn, 820, "settings.chatListWidth", width=240)
+        self.assertTrue(result["ok"])
+        result = self.request(conn, 821, "settings.set", settings={"shortcuts": {}, "globalShortcuts": {}})
+        self.assertEqual(result["result"]["settings"]["chatListWidth"], 240)
+        self.assertEqual(self.d.prefs.load()["chatListWidth"], 240)
+
+    def test_clipboard_owner_cannot_block_service_hello(self):
+        conn = self.connect()
+        probe = self.connect()
+        self.sign_in(conn)
+        started, release = threading.Event(), threading.Event()
+
+        def clipboard():
+            started.set()
+            release.wait(2)
+            return []
+
+        with mock.patch.object(self.d, "clipboard_types", clipboard):
+            self.send(conn, {"id": 810, "cmd": "clipboard.image", "args": {}})
+            self.assertTrue(started.wait(1))
+            probe.sock.settimeout(0.3)
+            try:
+                self.assertTrue(self.request(probe, 811, "hello")["ok"])
+            finally:
+                release.set()
+            self.assertTrue(self.read(conn, lambda m: m.get("id") == 810)["ok"])
+
+    def add_second(self, conn):
+        result = self.request(conn, 800, "account.add", name="Work")
+        return result["result"]["account"]["id"]
+
+    def test_unknown_account_does_not_route_to_active_account(self):
+        conn = self.connect()
+        result = self.request(conn, 801, "auth.qr", account="does-not-exist")
+        self.assertFalse(result["ok"])
+        self.assertNotIn("requestQrCodeAuthentication", self.fake.sent_types())
+
+    def test_unknown_td_client_and_cross_account_response_are_ignored(self):
+        conn = self.connect()
+        aid = self.add_second(conn)
+        before = self.daemon.accounts[aid].auth.copy()
+        event = auth_update("authorizationStateWaitPassword")
+        event["@client_id"] = 999
+        self.td_event(event)
+        self.request(conn, 802, "hello")
+        self.assertEqual(self.daemon.accounts[aid].auth, before)
+        self.send(conn, {"id": 803, "cmd": "auth.qr", "account": "default", "args": {}})
+        query = self.last_query("requestQrCodeAuthentication")
+        self.td_event({"@type": "ok", "@extra": query["@extra"], "@client_id": self.daemon.accounts[aid].client_id})
+        self.request(conn, 804, "hello")
+        self.assertIn(query["@extra"], self.daemon.pending)
+        self.answer(query, {"@type": "ok"})
+        self.assertTrue(self.read(conn, lambda m: m.get("id") == 803)["ok"])
+
+    def test_background_completion_keeps_original_account(self):
+        conn = self.connect()
+        aid = self.add_second(conn)
+        original = self.daemon.accounts["default"]
+        finished = threading.Event()
+        observed = []
+        self.daemon.current_session = original
+        self.daemon.background(lambda: finished.wait(2), lambda result, error: observed.append(self.daemon.session_for().id))
+        self.daemon.current_session = None
+        finished.set()
+        self.wait(lambda: bool(observed))
+        self.assertEqual(observed, ["default"])
+        self.assertEqual(self.daemon.active_id, aid)
+
+    def test_logout_waits_for_tdlib_and_does_not_erase_local_data(self):
+        conn = self.connect()
+        aid = self.add_second(conn)
+        directory = td.account_paths(aid)["database"]
+        directory.mkdir(parents=True)
+        marker = directory / "td.binlog"
+        marker.write_bytes(b"keep this session until TDLib closes it")
+        self.send(conn, {"id": 805, "cmd": "account.logout", "args": {"accountId": aid}})
+        query = self.last_query("logOut")
+        self.assertTrue(marker.exists())
+        self.assertIn(aid, self.daemon.accounts)
+        self.td_event({"@type": "error", "message": "offline", "code": 500,
+                       "@extra": query["@extra"], "@client_id": self.daemon.accounts[aid].client_id})
+        self.assertFalse(self.read(conn, lambda m: m.get("id") == 805)["ok"])
+        self.assertEqual(marker.read_bytes(), b"keep this session until TDLib closes it")
+
+    def test_same_chat_notifications_have_distinct_account_keys(self):
+        conn = self.connect()
+        aid = self.add_second(conn)
+        keys = [self.daemon.notification_key(self.daemon.accounts[a], 42) for a in ("default", aid)]
+        notifier = self.daemon.notifier
+        for key in keys:
+            self.assertTrue(notifier.show(key, "sender", "body"))
+        self.assertEqual(len(notifier.by_chat), 2)
+        notifier.focus(keys[0])
+        self.assertIn(keys[1], notifier.by_chat)
+
+    def test_notification_read_uses_originating_account(self):
+        conn = self.connect()
+        aid = self.add_second(conn)
+        first = self.daemon.accounts["default"]
+        second = self.daemon.accounts[aid]
+        first_key = self.daemon.notification_key(first, 42)
+        second_key = self.daemon.notification_key(second, 42)
+        self.daemon.notified[first_key] = 100
+        self.daemon.notified[second_key] = 200
+        self.daemon.on_notification_action(first_key, "read")
+        self.assertEqual(self.fake.sent[-1]["message_ids"], [100])
+        self.assertEqual(self.fake.sent_clients[-1], (first.client_id, "viewMessages"))
+        self.daemon.on_notification_action(second_key, "read")
+        self.assertEqual(self.fake.sent[-1]["message_ids"], [200])
+        self.assertEqual(self.fake.sent_clients[-1], (second.client_id, "viewMessages"))
+
+    def test_account_paths_reject_traversal_and_dot_directory(self):
+        for aid in (".", "..", "../other", "/tmp", "", None, 12):
+            with self.assertRaises(safe.UnsafeError):
+                td.account_paths(aid)
+        self.assertEqual(td.account_paths("default")["database"], td.DATABASE)
+        self.assertEqual(td.account_paths("work")["database"], td.ACCOUNTS_DIR / "work/database")
+
+    def test_story_media_path_is_allowed_but_database_files_are_not(self):
+        import omagram_state as state
+        for aid in ("default", "work"):
+            database = td.account_paths(aid)["database"]
+            roots = td.media_roots_for(aid)
+            story = str(database / "stories/story.jpg")
+            self.assertEqual(state.local_path(story, roots), story)
+            self.assertEqual(state.local_path(str(database / "db.sqlite"), roots), "")
+            self.assertEqual(state.local_path(str(database / "stories/../db.sqlite"), roots), "")
+
+    def test_auth_progress_is_scoped_to_second_account(self):
+        conn = self.connect()
+        aid = self.add_second(conn)
+        cid = self.daemon.accounts[aid].client_id
+        for state, expected in (("authorizationStateWaitPhoneNumber", "phone"),
+                                ("authorizationStateWaitPassword", "password"),
+                                ("authorizationStateReady", "ready")):
+            event = auth_update(state)
+            event["@client_id"] = cid
+            self.td_event(event)
+            update = self.read(conn, lambda m: m.get("event") == "auth" and m.get("account") == aid)
+            self.assertEqual(update["auth"]["state"], expected)
+        self.assertNotEqual(self.daemon.accounts["default"].auth["state"], "ready")
+
+    def test_shutdown_closes_both_tdlib_clients(self):
+        conn = self.connect()
+        aid = self.add_second(conn)
+        ids = {self.daemon.accounts[a].client_id for a in ("default", aid)}
+        self.daemon.stop()
+        self.thread.join(5)
+        self.assertFalse(self.thread.is_alive())
+        self.assertEqual({cid for cid, kind in self.fake.sent_clients if kind == "close"}, ids)
+
+    def test_recording_cannot_be_sent_from_another_account(self):
+        conn = self.connect()
+        aid = self.add_second(conn)
+        sess = self.daemon.accounts[aid]
+        sess.auth = {"state": "ready"}
+        recording = {"kind": "voice", "account": "default"}
+        self.daemon.recording = recording
+        try:
+            result = self.request(conn, 806, "voice.stop", account=aid, send=True)
+            self.assertFalse(result["ok"])
+            self.assertIn("another account", result["error"])
+            self.assertIs(self.daemon.recording, recording)
+        finally:
+            self.daemon.recording = None
+
+    def test_multi_account_lifecycle(self):
+        conn = self.connect()
+        # Initial hello returns accounts and activeAccount
+        hello = self.request(conn, 1, "hello")
+        self.assertTrue(hello["ok"])
+        self.assertEqual(hello["result"]["activeAccount"], "default")
+        self.assertEqual(len(hello["result"]["accounts"]), 1)
+        self.assertEqual(hello["result"]["accounts"][0]["id"], "default")
+
+        # account.list
+        res = self.request(conn, 2, "account.list")
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["result"]["active"], "default")
+        self.assertEqual(len(res["result"]["accounts"]), 1)
+
+        # account.add
+        added = self.request(conn, 3, "account.add", name="Work Profile")
+        self.assertTrue(added["ok"])
+        new_id = added["result"]["account"]["id"]
+        self.assertEqual(added["result"]["activeAccount"], new_id)
+        self.assertEqual(added["result"]["account"]["name"], "Work Profile")
+
+        # account.list now has 2 accounts
+        res2 = self.request(conn, 4, "account.list")
+        self.assertTrue(res2["ok"])
+        self.assertEqual(res2["result"]["active"], new_id)
+        self.assertEqual(len(res2["result"]["accounts"]), 2)
+        ids = [a["id"] for a in res2["result"]["accounts"]]
+        self.assertIn("default", ids)
+        self.assertIn(new_id, ids)
+
+        # account.switch back to default
+        switched = self.request(conn, 5, "account.switch", accountId="default")
+        self.assertTrue(switched["ok"])
+        self.assertEqual(switched["result"]["activeAccount"], "default")
+
+        # account.logout for the second account
+        before = self.sent_count("logOut")
+        self.send(conn, {"id": 6, "cmd": "account.logout", "args": {"accountId": new_id}})
+        query = self.next_query("logOut", before)
+        self.td_event({"@type": "ok", "@extra": query["@extra"],
+                       "@client_id": self.daemon.accounts[new_id].client_id})
+        logout = self.read(conn, lambda v: v.get("id") == 6)
+        self.assertTrue(logout["ok"])
+
+        # account.list now has only 1 account again
+        res3 = self.request(conn, 7, "account.list")
+        self.assertTrue(res3["ok"])
+        self.assertEqual(len(res3["result"]["accounts"]), 2)
+        self.assertEqual(res3["result"]["accounts"][0]["id"], "default")
 
 
 if __name__ == "__main__":

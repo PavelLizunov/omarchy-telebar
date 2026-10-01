@@ -22,6 +22,7 @@ Item {
   property real stickerSize: Style.space(180)
   property bool still: false
   property bool interactive: true
+  property bool animationsEnabled: true
   // Spoiler media stays covered, and does not play behind the cover, until you choose to see it.
   property bool spoiler: false
   property bool revealed: false
@@ -109,6 +110,7 @@ Item {
     source: Model.miniUrl(view.media ? view.info.mini : null)
     fillMode: Image.PreserveAspectCrop
     smooth: true
+    asynchronous: true
   }
 
   component ProgressBar: Rectangle {
@@ -135,13 +137,12 @@ Item {
     radius: width / 2
     color: Qt.rgba(0, 0, 0, 0.5)
     property bool playing: false
-    Text {
+    Icon {
       anchors.centerIn: parent
       // md-download U+F01DA, md-play U+F040A, md-pause U+F03E4
-      text: !view.ready ? "󰇚" : (parent.playing ? "󰏤" : "󰐊")
+      name: !view.ready ? "download" : (parent.playing ? "pause" : "play")
       color: "white"
-      font.family: view.app.glyphFamily
-      font.pixelSize: Style.font.title
+      size: Style.font.title
     }
   }
 
@@ -184,8 +185,9 @@ Item {
         source: view.url
         asynchronous: true
         fillMode: Image.PreserveAspectCrop
-        sourceSize.width: Math.min(2048, width * 2)
-        sourceSize.height: Math.min(2048, height * 2)
+        sourceSize.width: Math.min(2048, Math.ceil(width * 2 / 128) * 128)
+        sourceSize.height: Math.min(2048, Math.ceil(height * 2 / 128) * 128)
+        autoTransform: true
       }
       ProgressBar {}
     }
@@ -236,11 +238,12 @@ Item {
         visible: view.still && format !== "webp"
         source: visible ? view.thumbUrl : ""
         asynchronous: true
+        sourceSize: Qt.size(512, 512)
         fillMode: Image.PreserveAspectFit
       }
       Loader {
         anchors.fill: parent
-        active: format === "tgs" && sticker.lottie !== "" && !view.still
+        active: format === "tgs" && sticker.lottie !== "" && !view.still && view.animationsEnabled
         sourceComponent: LottieAnimation {
           source: Model.fileUrl(sticker.lottie)
           autoPlay: true
@@ -249,7 +252,7 @@ Item {
       }
       Loader {
         anchors.fill: parent
-        active: format === "webm" && view.ready && !view.still
+        active: format === "webm" && view.ready && !view.still && view.animationsEnabled
         sourceComponent: Video {
           source: view.url
           autoPlay: true
@@ -269,7 +272,7 @@ Item {
       Placeholder { visible: !view.ready }
       Loader {
         anchors.fill: parent
-        active: view.ready && !view.covered
+        active: view.ready && !view.covered && view.animationsEnabled
         sourceComponent: Video {
           source: view.url
           autoPlay: true
@@ -381,7 +384,7 @@ Item {
         Loader {
           id: noteVideo
           anchors.fill: parent
-          active: view.ready
+          active: view.ready && (view.animationsEnabled || note.sound)
           sourceComponent: Video {
             source: view.url
             autoPlay: true
@@ -418,12 +421,21 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: Style.space(10)
-        text: Model.formatDuration(view.info.duration) + (note.sound ? "" : "  󰖁")
+        text: Model.formatDuration(view.info.duration)
         color: "white"
         style: Text.Outline
         styleColor: Qt.rgba(0, 0, 0, 0.6)
-        font.family: view.app.glyphFamily
+        font.family: view.app.fontFamily
         font.pixelSize: Style.font.caption
+      }
+      Icon {
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: Style.space(10)
+        visible: !note.sound
+        name: "volumeOff"
+        color: "white"
+        size: Style.font.caption
       }
       SpeedChip {
         dark: true
@@ -440,20 +452,23 @@ Item {
     id: voiceView
     Item {
       id: voice
+      property bool started: false
       readonly property bool playing: audio.playbackState === MediaPlayer.PlayingState
       readonly property real played: audio.duration > 0 ? audio.position / audio.duration : 0
 
       function toggle() {
         if (!view.ready) { view.download(32); return }
+        if (!started) { started = true; return }
         if (playing) audio.pause()
         else audio.play()
       }
 
       MediaPlayer {
         id: audio
-        source: view.ready ? view.url : ""
+        source: voice.started && view.ready ? view.url : ""
         audioOutput: AudioOutput {}
         playbackRate: Model.playbackRate(view.app.playbackRate)
+        autoPlay: true
         onMediaStatusChanged: if (mediaStatus === MediaPlayer.EndOfMedia) position = 0
       }
 
@@ -465,12 +480,11 @@ Item {
         height: width
         radius: width / 2
         color: view.app.accent
-        Text {
+        Icon {
           anchors.centerIn: parent
-          text: !view.ready ? "󰇚" : (voice.playing ? "󰏤" : "󰐊")
+          name: !view.ready ? "download" : (voice.playing ? "pause" : "play")
           color: view.app.onAccent
-          font.family: view.app.glyphFamily
-          font.pixelSize: Style.font.title
+          size: Style.font.title
         }
         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: voice.toggle() }
       }
@@ -561,13 +575,12 @@ Item {
         height: width
         radius: width / 2
         color: Qt.rgba(view.app.foreground.r, view.app.foreground.g, view.app.foreground.b, 0.1)
-        Text {
+        Icon {
           anchors.centerIn: parent
           // md-download U+F01DA, md-music-note U+F0387, md-file-outline U+F0224, md-play/pause
-          text: !view.ready ? "󰇚" : (fileItem.isAudio ? (fileItem.playing ? "󰏤" : "󰎇") : "󰈤")
+          name: !view.ready ? "download" : (fileItem.isAudio ? (fileItem.playing ? "pause" : "music") : "file")
           color: view.app.foreground
-          font.family: view.app.glyphFamily
-          font.pixelSize: Style.font.title
+          size: Style.font.title
         }
         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: fileItem.toggle() }
       }

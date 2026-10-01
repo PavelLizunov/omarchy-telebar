@@ -23,14 +23,28 @@ Item {
   property var chats: []
   property real meId: 0
   property var shortcuts: ({})   // your shortcut choices; Keymap.js has the defaults
+  property var accounts: []
+  property string activeAccount: "default"
+  property var pendingChats: ({})
+  property int accountRevision: -1
   // Notifications and sounds held back from the bar menu. Telegram's own settings and the
   // unread count are untouched: only what pops up and what sounds.
   property bool quiet: false
   // Stopped from the bar menu: the service is not asked for again until something wants it.
   property bool stopped: false
+  property bool quitting: false
   readonly property bool connected: client.connected
   readonly property bool ready: client.connected && service.auth.state === "ready"
-  readonly property int unread: Model.unreadTotal(service.chats)
+  readonly property int totalUnread: {
+    var sum = 0
+    if (service.accounts && service.accounts.length) {
+      for (var i = 0; i < service.accounts.length; i++) {
+        sum += (service.accounts[i].unread || 0)
+      }
+    }
+    return service.accounts.length ? sum : Model.unreadTotal(service.chats)
+  }
+  readonly property int unread: service.totalUnread
   // For the quick view: the voice or round video message being listened to ({ fileId: 0 } when none), one
   // being recorded ({ state: "idle" | "voice" | "video", startedAt, preview }), and what the service last said
   // about a file (a sticker or photo coming down), by file id.
@@ -96,13 +110,13 @@ Item {
     environment: service.daemonEnv
     command: [service.python, "-I", service.binDir + "omagramd", "--with-parent"]
     running: !service.stopped
-    onExited: if (!service.stopped) restart.restart()
+    onExited: if (!service.stopped && !service.quitting) restart.restart()
   }
 
   Timer {
     id: restart
     interval: 30000
-    onTriggered: if (!daemon.running && !service.stopped) daemon.running = true
+    onTriggered: if (!daemon.running && !service.stopped && !service.quitting) daemon.running = true
   }
 
   // Omagram in the app launcher: Omarchy's launcher lists desktop entries, not plugins, so each start
@@ -120,28 +134,51 @@ Item {
     id: client
     binDir: service.binDir
     autoStart: false
+    accountId: service.activeAccount
+    uiContext: ({ chats: service.chats.length, files: Object.keys(service.files).length })
 
     onHello: function (result) {
-      service.auth = result.auth || { state: "starting" }
-      service.meId = result.meId || 0
+      service.applyAccountSnapshot(result)
       service.shortcuts = result.settings ? (result.settings.shortcuts || ({})) : ({})
       service.quiet = !!(result.settings && result.settings.quiet)
       service.chats = Model.sortChats(result.chats || [])
+      service.accounts = result.accounts || []
+      service.activeAccount = result.activeAccount || "default"
     }
 
     onServiceEvent: function (name, e) {
+      if (name === "quit") { service.quitting = true; return }
+      if (name === "accounts") { service.accounts = e.accounts || []; return }
+      if (e.account && typeof e.account === "string" && e.account !== service.activeAccount) {
+        if (name === "chat" || name === "auth" || name === "me") accountsDelay.restart()
+        return
+      }
       if (name === "auth") {
-        service.auth = e.auth
-        if (e.auth.state !== "ready") service.chats = []
+        if (!e.account || e.account === service.activeAccount) {
+          service.auth = e.auth
+          if (e.auth.state !== "ready") service.chats = []
+        }
+        accountsDelay.restart()
+      } else if (name === "accountSwitched") {
+        service.reloadAccount()
+      } else if (name === "accountAdded" || name === "accountRemoved") {
+        service.reloadAccount()
       } else if (name === "settings") {
         service.shortcuts = e.settings ? (e.settings.shortcuts || ({})) : ({})
         service.quiet = !!(e.settings && e.settings.quiet)
       } else if (name === "me") {
-        service.meId = e.meId || 0
+        if (!e.account || e.account === service.activeAccount) service.meId = e.meId || 0
+        accountsDelay.restart()
       } else if (name === "chat") {
-        service.chats = Model.upsertChat(service.chats, e.chat, "main")
+        if (!e.account || e.account === service.activeAccount) {
+          service.pendingChats[e.chat.id] = e.chat
+          if (!chatFlush.running) chatFlush.start()
+        }
+        accountsDelay.restart()
       } else if (name.indexOf("message") === 0) {
-        service.messageEvent(name, e)
+        if (!e.account || e.account === service.activeAccount) {
+          service.messageEvent(name, e)
+        }
       } else if (name === "playing") {
         service.playing = e
       } else if (name === "recording") {
@@ -151,7 +188,73 @@ Item {
       }
     }
 
-    onConnectedChanged: if (!connected) service.auth = { state: "connecting" }
+    onConnectedChanged: if (!connected) {
+      service.auth = { state: "connecting" }
+      service.accountRevision = -1
+      if (service.quitting) { service.stopped = true; service.quitting = false }
+    }
+  }
+
+  function refreshAccounts() {
+    client.request("account.list", {}, function (ans) {
+      if (ans.ok && ans.result) {
+        service.accounts = ans.result.accounts || []
+      }
+    })
+  }
+
+  function switchAccount(accountId) {
+    client.request("account.switch", { accountId: accountId }, function (ans) {
+      if (ans.ok && ans.result) {
+        service.applyAccountSnapshot(ans.result)
+        service.refreshAccounts()
+      }
+    })
+  }
+
+  signal accountChanging()
+
+  Timer {
+    id: chatFlush
+    interval: 100
+    onTriggered: {
+      var updates = Object.keys(service.pendingChats).map(function (key) { return service.pendingChats[key] })
+      service.pendingChats = ({})
+      service.chats = Model.mergeChatUpdates(service.chats, updates, "main")
+    }
+  }
+
+  Timer {
+    id: accountsDelay
+    interval: 100
+    onTriggered: service.refreshAccounts()
+  }
+
+  function applyAccountSnapshot(result) {
+    if (result.accountRevision !== undefined && result.accountRevision < service.accountRevision) return
+    service.accountRevision = result.accountRevision === undefined ? service.accountRevision : result.accountRevision
+    if (result.activeAccount && result.activeAccount !== service.activeAccount) {
+      service.accountChanging()
+      service.files = ({})
+      service.playing = { fileId: 0 }
+      service.recording = { state: "idle" }
+      service.quickChatId = 0
+      service.quickDraft = ""
+      service.quickClosedAt = 0
+    }
+    service.activeAccount = result.activeAccount || service.activeAccount
+    chatFlush.stop()
+    service.pendingChats = ({})
+    service.auth = result.auth || { state: "starting" }
+    service.meId = result.meId || 0
+    service.chats = Model.sortChats(result.chats || [])
+    if (result.accounts) service.accounts = result.accounts
+  }
+
+  function reloadAccount() {
+    client.request("hello", {}, function (answer) {
+      if (answer.ok) service.applyAccountSnapshot(answer.result)
+    })
   }
 
   // A Hyprland config reload drops runtime bindings: have the service register your global
@@ -180,11 +283,16 @@ Item {
   // Quit from the bar menu: the window is asked to close, then the service is let go. It
   // comes back when Omagram is opened again, which starts it the way the launcher does.
   function quit() {
-    client.request("app.quit", {}, function () {})
-    service.stopped = true
+    if (service.quitting) return
+    service.quitting = true
+    restart.stop()
+    client.request("app.quit", {}, function (answer) {
+      if (!answer.ok) { service.quitting = false; console.warn("Omagram: quit request failed") }
+    })
   }
 
   function openWindow() {
+    service.quitting = false
     service.stopped = false
     Quickshell.execDetached([service.python, service.binDir + "omagram"])
   }

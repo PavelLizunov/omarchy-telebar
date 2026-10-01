@@ -216,13 +216,12 @@ FocusScope {
           stickerSize: Style.space(32)
           message: picker.sticker(modelData.cover)
         }
-        Text {
+        Icon {
           anchors.centerIn: parent
           visible: !modelData.cover
-          text: String.fromCodePoint(modelData.glyph || 0xF0150)
+          glyph: modelData.glyph || 0xF0150
           color: app.foreground
-          font.family: app.glyphFamily
-          font.pixelSize: Style.font.title
+          size: Style.font.title
         }
         MouseArea {
           anchors.fill: parent

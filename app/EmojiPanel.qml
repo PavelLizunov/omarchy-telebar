@@ -194,8 +194,9 @@ FocusScope {
     anchors.margins: Style.space(10)
     spacing: Style.space(6)
 
-    RowLayout {
+    Flow {
       Layout.fillWidth: true
+      Layout.preferredHeight: implicitHeight
       spacing: Style.space(6)
 
       Repeater {
@@ -206,8 +207,8 @@ FocusScope {
           required property var modelData
           required property int index
           readonly property bool current: panel.reacting || tabChip.index === panel.tab
-          Layout.preferredHeight: Style.space(30)
-          Layout.preferredWidth: tabLabel.implicitWidth + Style.space(22)
+          height: Style.space(30)
+          width: tabLabel.implicitWidth + Style.space(22)
           radius: Style.cornerRadius
           color: tabChip.current ? panel.app.selected
                : (tabArea.containsMouse ? Qt.rgba(panel.app.foreground.r, panel.app.foreground.g, panel.app.foreground.b, 0.05) : "transparent")
@@ -235,6 +236,31 @@ FocusScope {
         }
       }
 
+      Row {
+        visible: panel.kind === "emoji"
+        spacing: Style.space(2)
+
+        Repeater {
+          model: panel.tones
+          delegate: Rectangle {
+            id: toneChip
+            required property var modelData
+            required property int index
+            width: Style.space(28)
+            height: Style.space(28)
+            radius: Style.cornerRadius
+            color: toneChip.index === panel.tone ? panel.app.selected : "transparent"
+            Text { anchors.centerIn: parent; text: toneChip.modelData; textFormat: Text.PlainText; font.pixelSize: Style.font.body }
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: { panel.setTone(toneChip.index); search.forceActiveFocus() }
+            }
+          }
+        }
+      }
+    }
+
       Rectangle {
         Layout.fillWidth: true
         Layout.preferredHeight: Style.space(30)
@@ -245,6 +271,7 @@ FocusScope {
 
         TextInput {
           id: search
+          objectName: "emoji-search"
           anchors.fill: parent
           anchors.leftMargin: Style.space(10)
           anchors.rightMargin: Style.space(10)
@@ -285,45 +312,11 @@ FocusScope {
             text: panel.reacting ? "Find a reaction by name" : "Search in English, Ukrainian or Russian"
             textFormat: Text.PlainText
             color: panel.app.muted
+            elide: Text.ElideRight
             font: search.font
           }
         }
       }
-
-      Row {
-        visible: panel.kind === "emoji"
-        spacing: Style.space(2)
-
-        Repeater {
-          model: panel.tones
-
-          delegate: Rectangle {
-            id: toneChip
-            required property var modelData
-            required property int index
-            width: Style.space(28)
-            height: Style.space(28)
-            radius: Style.cornerRadius
-            color: toneChip.index === panel.tone ? panel.app.selected : "transparent"
-
-            Text {
-              anchors.centerIn: parent
-              text: toneChip.modelData
-              textFormat: Text.PlainText
-              font.pixelSize: Style.font.body
-            }
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              onClicked: {
-                panel.setTone(toneChip.index)
-                search.forceActiveFocus()
-              }
-            }
-          }
-        }
-      }
-    }
 
     GridView {
       id: grid

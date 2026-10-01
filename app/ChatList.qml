@@ -16,6 +16,8 @@ FocusScope {
   id: root
 
   property var app
+  property Item menuHost: root
+  readonly property bool compact: root.width < 180
   property var chats: []        // the chosen tab's chats, in order
   property var allChats: []     // every known chat, for search and tab counts
   property var stories: []      // chats with active stories, in the order shown
@@ -85,6 +87,7 @@ FocusScope {
   }
 
   function focusSearch() {
+    if (root.compact) root.app.expandChatList()
     search.forceActiveFocus()
     search.selectAll()
   }
@@ -261,6 +264,18 @@ FocusScope {
     anchors.fill: parent
     spacing: 0
 
+    Text {
+      Layout.fillWidth: true
+      Layout.margins: Style.space(10)
+      visible: !!app.accountError
+      text: app.accountError || ""
+      textFormat: Text.PlainText
+      wrapMode: Text.WordWrap
+      color: app.urgent
+      font.family: app.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+
     // ------------------------------------------------ search
     Rectangle {
       Layout.fillWidth: true
@@ -275,10 +290,51 @@ FocusScope {
         border.width: Math.max(1, Style.space(1.5))
         border.color: search.activeFocus ? app.accent : "transparent"
 
+        // Account switcher button
+        Rectangle {
+          id: accountBtn
+          width: Style.space(26)
+          height: Style.space(26)
+          radius: width / 2
+          anchors.left: parent.left
+          anchors.leftMargin: root.compact ? Math.max(0, (parent.width - width) / 2) : Style.space(8)
+          anchors.verticalCenter: parent.verticalCenter
+          color: app.accent
+
+          Text {
+            anchors.centerIn: parent
+            text: {
+              var name = "1"
+              if (app.accounts && app.accounts.length) {
+                for (var i = 0; i < app.accounts.length; i++) {
+                  if (app.accounts[i].id === app.activeAccount) {
+                    name = app.accounts[i].name || String(i + 1)
+                    break
+                  }
+                }
+              }
+              return name.charAt(0).toUpperCase()
+            }
+            color: app.onAccent
+            font.family: app.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            enabled: !app.accountBusy
+            onClicked: accountMenu.visible = !accountMenu.visible
+          }
+        }
+
         TextInput {
           id: search
+          visible: !root.compact
           anchors.fill: parent
-          anchors.leftMargin: Style.space(12)
+          anchors.leftMargin: Style.space(40)
           anchors.rightMargin: Style.space(70)
           verticalAlignment: TextInput.AlignVCenter
           clip: true
@@ -324,14 +380,14 @@ FocusScope {
         }
 
         // md-pencil-outline (U+F0CB6): start a chat, a group or a channel
-        Text {
+        Icon {
           anchors.right: gear.left
+          visible: !root.compact
           anchors.rightMargin: Style.space(14)
           anchors.verticalCenter: parent.verticalCenter
-          text: String.fromCodePoint(0xF0CB6)
+          name: "edit"
           color: newArea.containsMouse ? app.foreground : app.muted
-          font.family: app.glyphFamily
-          font.pixelSize: Style.font.body
+          size: Style.font.body
           MouseArea {
             id: newArea
             anchors.fill: parent
@@ -343,15 +399,15 @@ FocusScope {
         }
 
         // md-cog (U+F0493): settings, including every shortcut
-        Text {
+        Icon {
           id: gear
+          visible: !root.compact
           anchors.right: parent.right
           anchors.rightMargin: Style.space(12)
           anchors.verticalCenter: parent.verticalCenter
-          text: String.fromCodePoint(0xF0493)
+          name: "settings"
           color: gearArea.containsMouse ? app.foreground : app.muted
-          font.family: app.glyphFamily
-          font.pixelSize: Style.font.body
+          size: Style.font.body
           MouseArea {
             id: gearArea
             anchors.fill: parent
@@ -364,12 +420,26 @@ FocusScope {
       }
     }
 
+    Icon {
+      Layout.fillWidth: true
+      Layout.preferredHeight: Style.space(32)
+      visible: root.compact
+      name: "search"
+      color: app.muted
+      size: Style.font.body
+      MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: root.focusSearch()
+      }
+    }
+
     // ------------------------------------------------ stories
     ListView {
       id: storyStrip
       Layout.fillWidth: true
       Layout.preferredHeight: visible ? Style.space(86) : 0
-      visible: root.stories.length > 0 && !root.searchMode
+      visible: root.stories.length > 0 && !root.searchMode && !root.compact
       orientation: ListView.Horizontal
       leftMargin: Style.space(6)
       rightMargin: Style.space(6)
@@ -433,7 +503,7 @@ FocusScope {
       id: tabStrip
       Layout.fillWidth: true
       Layout.preferredHeight: Style.space(34)
-      visible: !root.searchMode
+      visible: !root.searchMode && !root.compact
       contentWidth: tabRow.implicitWidth + Style.space(20)
       contentHeight: height
       clip: true
@@ -540,7 +610,7 @@ FocusScope {
         readonly property bool isCursor: index === root.cursor && listView.activeFocus && kind !== "header"
 
         width: listView.width
-        height: kind === "header" ? Style.space(30) : (kind === "message" ? Style.space(58) : Style.space(68))
+        height: kind === "header" ? Style.space(30) : (kind === "message" ? Style.space(58) : Style.space(root.compact ? 60 : 68))
         color: isCursor ? app.selected
              : (isOpen ? Qt.rgba(app.accent.r, app.accent.g, app.accent.b, 0.12)
                 : (hover.containsMouse && kind !== "header" ? Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.04) : "transparent"))
@@ -570,7 +640,7 @@ FocusScope {
 
         Loader {
           anchors.fill: parent
-          active: row.kind === "chat"
+          active: row.kind === "chat" && !root.compact
           sourceComponent: chatRow
         }
 
@@ -606,12 +676,11 @@ FocusScope {
                 spacing: Style.space(6)
 
                 // md-lock U+F033E: a secret chat
-                Text {
+                Icon {
                   visible: row.chat.kind === "secret"
-                  text: String.fromCodePoint(0xF033E)
+                  name: "lock"
                   color: app.accentText
-                  font.family: app.glyphFamily
-                  font.pixelSize: Style.font.bodySmall
+                  size: Style.font.bodySmall
                 }
 
                 Text {
@@ -660,24 +729,22 @@ FocusScope {
                 }
 
                 // md-pin (U+F0403) and md-bell-off (U+F009B), from the Nerd Font.
-                Text {
+                Icon {
                   visible: Model.pinnedIn(row.chat, root.searchMode ? "main" : root.listKey) && !(row.chat.unread > 0)
-                  text: "󰐃"
+                  name: "pin"
                   color: app.muted
-                  font.family: app.glyphFamily
-                  font.pixelSize: Style.font.bodySmall
+                  size: Style.font.bodySmall
                 }
-                Text {
+                Icon {
                   visible: row.chat.muted
-                  text: "󰂛"
+                  name: "bellOff"
                   color: app.muted
-                  font.family: app.glyphFamily
-                  font.pixelSize: Style.font.bodySmall
+                  size: Style.font.bodySmall
                 }
 
                 // The unread count, @ for a mention, or a dot for a chat you marked unread.
                 Rectangle {
-                  visible: row.chat.unread > 0 || row.chat.mentions > 0 || row.chat.markedUnread
+                  visible: row.chat.unread > 0 || row.chat.mentions > 0 || row.chat.markedUnread === true
                   Layout.preferredHeight: badge.text === "" ? Style.space(12) : Style.space(20)
                   Layout.preferredWidth: badge.text === "" ? Style.space(12) : Math.max(Style.space(20), badge.implicitWidth + Style.space(12))
                   radius: height / 2
@@ -693,6 +760,38 @@ FocusScope {
                     font.bold: true
                   }
                 }
+              }
+            }
+          }
+        }
+
+        Loader {
+          anchors.fill: parent
+          active: root.compact && row.kind === "chat"
+          sourceComponent: Item {
+            Avatar {
+              anchors.centerIn: parent
+              app: root.app
+              chat: row.chat
+              size: Style.space(44)
+            }
+            Rectangle {
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              anchors.margins: Style.space(5)
+              visible: !!row.chat && (row.chat.unread > 0 || row.chat.mentions > 0 || row.chat.markedUnread === true)
+              width: Math.max(Style.space(18), compactBadge.implicitWidth + Style.space(8))
+              height: Style.space(18)
+              radius: height / 2
+              color: row.chat && row.chat.muted ? app.muted : app.accent
+              Text {
+                id: compactBadge
+                anchors.centerIn: parent
+                text: !row.chat ? "" : (row.chat.mentions > 0 ? "@" : (row.chat.unread > 99 ? "99+" : (row.chat.unread > 0 ? String(row.chat.unread) : "•")))
+                color: app.onAccent
+                font.family: app.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
               }
             }
           }
@@ -788,5 +887,204 @@ FocusScope {
     items: Model.chatMenu(root.menuChat ? (Model.findChat(root.allChats, root.menuChat.id) || root.menuChat) : null, root.listKey, root.searchMode)
     onDismissed: root.focusList()
     onPicked: function (id) { root.focusList(); root.chatMenuPicked(id) }
+  }
+
+  MouseArea {
+    parent: root.menuHost
+    anchors.fill: parent
+    z: 98
+    visible: accountMenu.visible
+    onClicked: accountMenu.visible = false
+  }
+
+  Rectangle {
+    id: accountMenu
+    objectName: "account-menu"
+    parent: root.menuHost
+    visible: false
+    z: 99
+    x: root.mapToItem(parent, Style.space(10), 0).x
+    y: root.mapToItem(parent, 0, Style.space(56)).y
+    width: Math.min(parent.width - x - Style.space(10), Style.space(260))
+    implicitHeight: accountCol.implicitHeight + Style.space(16)
+    height: Math.min(implicitHeight, parent.height - y - Style.space(10))
+    onVisibleChanged: if (visible) forceActiveFocus()
+    Keys.onEscapePressed: { visible = false; root.focusList() }
+    radius: Style.cornerRadius
+    color: app.background
+    border.width: Math.max(1, Style.space(1))
+    border.color: app.border
+
+    Flickable {
+      anchors.fill: parent
+      contentHeight: accountCol.implicitHeight + Style.space(16)
+      clip: true
+      boundsBehavior: Flickable.StopAtBounds
+    ColumnLayout {
+      id: accountCol
+      x: Style.space(8)
+      y: Style.space(8)
+      width: parent.width - Style.space(16)
+      spacing: Style.space(4)
+
+      Text {
+        text: "Telegram Accounts"
+        color: app.muted
+        font.family: app.fontFamily
+        font.pixelSize: Style.font.caption
+        font.bold: true
+        Layout.leftMargin: Style.space(8)
+        Layout.topMargin: Style.space(4)
+      }
+
+      Button {
+        app: root.app
+        visible: root.compact
+        text: "Settings"
+        onClicked: { accountMenu.visible = false; root.settingsRequested() }
+      }
+
+      Repeater {
+        model: app.accounts || []
+
+        Rectangle {
+          Layout.fillWidth: true
+          Layout.preferredHeight: Style.space(50)
+          radius: Style.cornerRadius / 2
+          color: modelData.id === app.activeAccount
+                 ? Qt.rgba(app.accent.r, app.accent.g, app.accent.b, 0.15)
+                 : (accItemArea.containsMouse ? Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.08) : "transparent")
+
+          RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: Style.space(8)
+            anchors.rightMargin: Style.space(8)
+            spacing: Style.space(8)
+
+            Rectangle {
+              width: Style.space(24)
+              height: Style.space(24)
+              radius: width / 2
+              color: modelData.id === app.activeAccount ? app.accent : app.muted
+
+              Text {
+                anchors.centerIn: parent
+                text: (modelData.name || "A").charAt(0).toUpperCase()
+                color: app.onAccent
+                font.family: app.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+            }
+
+            ColumnLayout {
+              Layout.fillWidth: true
+              spacing: 0
+
+              Text {
+                text: modelData.name || modelData.id
+                textFormat: Text.PlainText
+                color: app.foreground
+                font.family: app.fontFamily
+                font.pixelSize: Style.font.body
+                font.bold: modelData.id === app.activeAccount
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+              }
+
+              Text {
+                visible: !!modelData.phone
+                textFormat: Text.PlainText
+                text: modelData.phone || ""
+                color: app.muted
+                font.family: app.fontFamily
+                font.pixelSize: Style.font.caption
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+              }
+            }
+
+            Rectangle {
+              visible: (modelData.unread || 0) > 0
+              Layout.preferredHeight: Style.space(18)
+              Layout.preferredWidth: Math.max(height, unreadBadgeText.implicitWidth + Style.space(10))
+              radius: height / 2
+              color: app.accent
+
+              Text {
+                id: unreadBadgeText
+                anchors.centerIn: parent
+                text: String(modelData.unread || "")
+                color: app.onAccent
+                font.family: app.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+            }
+          }
+
+          MouseArea {
+            id: accItemArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+              accountMenu.visible = false
+              app.switchAccount(modelData.id)
+            }
+          }
+        }
+      }
+
+      Rectangle {
+        Layout.fillWidth: true
+        Layout.preferredHeight: 1
+        color: app.border
+        Layout.topMargin: Style.space(4)
+        Layout.bottomMargin: Style.space(4)
+      }
+
+      Rectangle {
+        Layout.fillWidth: true
+        Layout.preferredHeight: Style.space(36)
+        radius: Style.cornerRadius / 2
+        color: addAccArea.containsMouse ? Qt.rgba(app.accent.r, app.accent.g, app.accent.b, 0.1) : "transparent"
+
+        RowLayout {
+          anchors.fill: parent
+          anchors.leftMargin: Style.space(8)
+          spacing: Style.space(8)
+
+          Text {
+            text: "+"
+            color: app.accentText
+            font.family: app.fontFamily
+            font.pixelSize: Style.font.body
+            font.bold: true
+          }
+
+          Text {
+            text: "Add Account…"
+            color: app.accentText
+            font.family: app.fontFamily
+            font.pixelSize: Style.font.body
+            Layout.fillWidth: true
+          }
+        }
+
+        MouseArea {
+          id: addAccArea
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          enabled: !app.accountBusy
+          onClicked: {
+            accountMenu.visible = false
+            app.addAccount()
+          }
+        }
+      }
+    }
+    }
   }
 }

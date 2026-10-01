@@ -1,0 +1,159 @@
+#!/usr/bin/python3
+"""Bundled loopback MTProto→Telegram WebSocket bridge; private config arrives on stdin."""
+import asyncio
+import json
+import pathlib
+import signal
+import sys
+import os
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import plugin_safety as safe
+from vendor.flowseal.transport import CryptoCtx, MsgSplitter, client_handshake, relay_handshake
+from vendor.flowseal.websocket import WebSocket
+
+MAX_CLIENTS = 32
+# Upstream Flowseal WS entrypoint for DC2/DC4, tried after ordinary Telegram DNS.
+WS_ADDRESSES = {2: "149.154.167.220", 4: "149.154.167.220"}
+
+
+async def serve(secret, port=0, owner_fd=None):
+    stop = asyncio.Event()
+    tasks = set()
+    counts = {"connections": 0, "active": 0, "failures": 0, "up_bytes": 0, "down_bytes": 0}
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
+    # Linux PDEATHSIG follows the spawning *thread*, not only its process. The daemon
+    # starts us in a short-lived worker, so an owned stdin pipe is the lifetime signal.
+    if owner_fd is not None:
+        def owner_closed():
+            if not os.read(owner_fd, 1):
+                stop.set()
+                loop.remove_reader(owner_fd)
+        loop.add_reader(owner_fd, owner_closed)
+
+    async def handle(reader, writer):
+        counts["connections"] += 1
+        counts["active"] += 1
+        ws = None
+        crypto = splitter = None
+        pumps = []
+        try:
+            handshake = await asyncio.wait_for(reader.readexactly(64), 10)
+            dc, tag = client_handshake(handshake, secret)
+            names = [f"kws{abs(dc)}.web.telegram.org", f"kws{abs(dc)}-1.web.telegram.org"]
+            if abs(dc) == 203:
+                names = ["kws2.web.telegram.org", "kws2-1.web.telegram.org"]
+            if dc < 0:
+                names.reverse()
+            targets = [(host, None) for host in names]
+            if abs(dc) in WS_ADDRESSES:
+                targets = [(host, WS_ADDRESSES[abs(dc)]) for host in names] + targets
+            for host, address in targets:
+                try:
+                    ws = await WebSocket.connect(host, address)
+                    break
+                except (OSError, ValueError, asyncio.TimeoutError):
+                    continue
+            if ws is None:
+                raise ConnectionError("Telegram WebSocket unavailable")
+            relay = relay_handshake(tag, dc)
+            crypto = CryptoCtx(handshake, secret, relay)
+            splitter = MsgSplitter(relay, tag)
+            await ws.send(relay)
+
+            async def upstream():
+                while True:
+                    data = await reader.read(65536)
+                    if not data:
+                        return
+                    counts["up_bytes"] += len(data)
+                    for packet in splitter.split(crypto.tg_enc.update(crypto.clt_dec.update(data))):
+                        await ws.send(packet)
+
+            async def downstream():
+                while True:
+                    data = await ws.recv()
+                    if data is None:
+                        return
+                    counts["down_bytes"] += len(data)
+                    writer.write(crypto.clt_enc.update(crypto.tg_dec.update(data)))
+                    await asyncio.wait_for(writer.drain(), 30)
+
+            pumps = [asyncio.create_task(upstream()), asyncio.create_task(downstream())]
+            completed, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+            for task in completed:
+                task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as error:
+            counts["failures"] += 1
+            # Fixed exception type only: never packet data, secret, host response or argv.
+            print(json.dumps({"event": "connection_error", "exception_type": type(error).__name__}), flush=True)
+        finally:
+            for task in pumps:
+                task.cancel()
+            if pumps:
+                await asyncio.gather(*pumps, return_exceptions=True)
+            if crypto:
+                crypto.close()
+            if splitter:
+                splitter.close()
+            if ws:
+                await ws.close()
+            writer.close()
+            try:
+                await asyncio.wait_for(writer.wait_closed(), 2)
+            except (OSError, asyncio.TimeoutError):
+                pass
+            counts["active"] -= 1
+
+    def accept(reader, writer):
+        if len(tasks) >= MAX_CLIENTS:
+            writer.close()
+            return
+        task = asyncio.create_task(handle(reader, writer))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    server = await asyncio.start_server(accept, "127.0.0.1", port, limit=65536)
+    print(json.dumps({"event": "ready", "port": server.sockets[0].getsockname()[1]}), flush=True)
+
+    async def report():
+        while not stop.is_set():
+            await asyncio.sleep(10)
+            print(json.dumps({"event": "stats", **counts}), flush=True)
+
+    reporter = asyncio.create_task(report())
+    try:
+        await stop.wait()
+    finally:
+        if owner_fd is not None:
+            loop.remove_reader(owner_fd)
+        server.close()
+        await server.wait_closed()
+        reporter.cancel()
+        for task in list(tasks):
+            task.cancel()
+        await asyncio.gather(reporter, *list(tasks), return_exceptions=True)
+
+
+def main():
+    line = sys.stdin.buffer.readline(1025)
+    if len(line) > 1024 or not line.endswith(b"\n"):
+        raise ValueError("invalid private config")
+    data = safe.loads(line, max_depth=2, max_items=4, max_string=64)
+    secret = data.get("secret") if isinstance(data, dict) else None
+    if not isinstance(secret, str) or len(secret) != 32:
+        raise ValueError("invalid private config")
+    asyncio.run(serve(bytes.fromhex(secret), owner_fd=sys.stdin.fileno()))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        print(json.dumps({"event": "startup_error", "exception_type": type(error).__name__}), flush=True)
+        sys.exit(1)

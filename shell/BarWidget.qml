@@ -61,16 +61,34 @@ BarWidget {
   // where the tray's menu sits and closes when you click away.
   property bool menuOpen: false
 
-  readonly property var menuEntries: [
-    { action: "open", label: "Open Omagram" },
-    { action: "quiet", label: root.omagram && root.omagram.quiet ? "Turn notifications on" : "Mute notifications" },
-    { action: "quit", label: "Quit" }
-  ]
+  readonly property var menuEntries: {
+    var entries = [
+      { action: "open", label: "Open Omagram" }
+    ]
+    if (root.omagram && root.omagram.accounts && root.omagram.accounts.length > 1) {
+      for (var i = 0; i < root.omagram.accounts.length; i++) {
+        var acc = root.omagram.accounts[i]
+        var isCurrent = acc.id === root.omagram.activeAccount
+        var unreadBadge = acc.unread > 0 ? " (" + acc.unread + ")" : ""
+        entries.push({
+          action: "switch:" + acc.id,
+          label: (isCurrent ? "✓ " : "   ") + (acc.name || acc.id) + unreadBadge
+        })
+      }
+    }
+    entries.push({ action: "quiet", label: root.omagram && root.omagram.quiet ? "Turn notifications on" : "Mute notifications" })
+    entries.push({ action: "quit", label: "Quit" })
+    return entries
+  }
 
   function runMenu(action) {
     root.menuOpen = false
     if (!root.omagram) return
     if (action === "open") root.omagram.openWindow()
+    else if (action.indexOf("switch:") === 0) {
+      var aid = action.slice(7)
+      root.omagram.switchAccount(aid)
+    }
     else if (action === "quiet") root.omagram.setQuiet(!root.omagram.quiet)
     else if (action === "quit") { root.close(); root.omagram.quit() }
   }
@@ -86,46 +104,13 @@ BarWidget {
     contentHeight: menu.fittedContentHeight(menuColumn.implicitHeight)
     onVisibleChanged: if (!visible) root.menuOpen = false
 
-    Column {
+    BarMenu {
       id: menuColumn
       anchors.left: parent.left
       anchors.right: parent.right
-      spacing: Style.space(2)
-
-      Repeater {
-        model: root.menuEntries
-
-        delegate: Rectangle {
-          id: entry
-          required property var modelData
-          width: parent.width
-          height: Style.space(30)
-          radius: Style.space(6)
-          color: entryHover.hovered ? Style.hoverFillFor(Color.popups.text, Color.accent) : "transparent"
-
-          HoverHandler { id: entryHover }
-
-          Text {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.leftMargin: Style.space(10)
-            anchors.rightMargin: Style.space(10)
-            anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: entry.modelData.label
-            elide: Text.ElideRight
-            color: entry.modelData.action === "quit" ? Color.urgent : Color.popups.text
-            font.family: root.bar ? root.bar.fontFamily : Style.font.family
-            font.pixelSize: Style.font.body
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.runMenu(entry.modelData.action)
-          }
-        }
-      }
+      entries: root.menuEntries
+      fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+      onPicked: function (action) { root.runMenu(action) }
     }
   }
 

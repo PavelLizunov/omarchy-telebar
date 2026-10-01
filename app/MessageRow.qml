@@ -17,6 +17,9 @@ Item {
   property var view
   property var app
   property var messages: []
+  // Clipping does not stop decoding: only animate silent media in the visible viewport.
+  readonly property bool inViewport: !!ListView.view && row.y + row.height > ListView.view.contentY
+    && row.y < ListView.view.contentY + ListView.view.height
 
   // Rows and `messages` change a step apart; in between a row keeps the message it showed, so
   // nothing evaluates against a missing one.
@@ -56,7 +59,7 @@ Item {
 
   visible: !row.hiddenInAlbum
   height: row.hiddenInAlbum ? 0
-        : (row.newDay ? day.height + Style.space(12) : 0) + (row.runStart ? Style.space(6) : 0)
+        : (row.newDay ? day.height + Style.space(16) : 0) + (row.runStart ? Style.space(10) : Style.space(3))
           + (row.service ? servicePill.height : bubble.height)
 
   Text {
@@ -79,7 +82,7 @@ Item {
     y: row.height - height
     width: Math.min(row.width - Style.space(60), serviceText.implicitWidth + Style.space(24))
     height: serviceText.implicitHeight + Style.space(10)
-    radius: height / 2
+    radius: Style.cornerRadius
     color: Qt.rgba(row.app.foreground.r, row.app.foreground.g, row.app.foreground.b, 0.06)
 
     Text {
@@ -100,7 +103,7 @@ Item {
   Rectangle {
     id: bubble
     visible: !row.service && !row.hiddenInAlbum
-    readonly property real maxWidth: Math.min(row.width * 0.72, Style.space(640))
+    readonly property real maxWidth: Math.min(row.width < Style.space(600) ? row.width - Style.space(36) : row.width * 0.72, Style.space(640))
     readonly property real inner: maxWidth - Style.space(24)
     y: row.height - height
     x: row.message.outgoing ? row.width - width - Style.space(18) : Style.space(18)
@@ -121,14 +124,16 @@ Item {
                                        buttons.visible ? buttons.wantedWidth : 0,
                                        repliesBar.visible ? repliesBar.wantedWidth : 0) + Style.space(24))
     height: column.implicitHeight + Style.space(16)
-    radius: Style.cornerRadius * 1.5
+    radius: Style.cornerRadius
     // Stickers and round video messages float without a bubble, as in Telegram.
     color: row.bare ? "transparent"
-         : (row.message.outgoing ? Qt.rgba(row.app.accent.r, row.app.accent.g, row.app.accent.b, 0.14)
-                                 : Qt.rgba(row.app.foreground.r, row.app.foreground.g, row.app.foreground.b, 0.06))
+         : (row.message.outgoing ? Qt.rgba(row.app.accent.r, row.app.accent.g, row.app.accent.b, 0.22)
+                                 : Qt.rgba(row.app.foreground.r, row.app.foreground.g, row.app.foreground.b, 0.095))
     border.width: row.isCursor || !!row.view.selection[row.message.id] ? Math.max(1, Style.space(1.5))
-                : (row.message.id === row.view.confirmDeleteId ? 1 : 0)
-    border.color: row.message.id === row.view.confirmDeleteId ? row.app.urgent : row.app.accent
+                 : (row.bare ? 0 : 1)
+    border.color: row.message.id === row.view.confirmDeleteId ? row.app.urgent
+                : (row.isCursor || !!row.view.selection[row.message.id] ? row.app.accent
+                   : Qt.rgba(row.app.foreground.r, row.app.foreground.g, row.app.foreground.b, 0.09))
 
     Column {
       id: column
@@ -136,12 +141,14 @@ Item {
       anchors.right: parent.right
       anchors.top: parent.top
       anchors.margins: Style.space(12)
-      anchors.topMargin: Style.space(8)
-      spacing: Style.space(4)
+      anchors.topMargin: Style.space(10)
+      spacing: Style.space(6)
 
       Text {
         id: name
         visible: row.showName
+        width: Math.min(implicitWidth, bubble.inner)
+        elide: Text.ElideRight
         text: row.message.senderName || "Unknown"
         textFormat: Text.PlainText
         color: row.app.foreground
@@ -200,6 +207,7 @@ Item {
         maxWidth: bubble.inner
         spoiler: !!row.content.spoiler
         revealed: row.revealed
+        animationsEnabled: row.inViewport && row.app.windowFocused
         onRevealRequested: row.view.reveal(row.message.id)
       }
 
@@ -221,6 +229,7 @@ Item {
             maxWidth: albumFlow.cell
             spoiler: !!modelData.content.spoiler
             revealed: !!row.view.revealed[modelData.id]
+            animationsEnabled: row.inViewport && row.app.windowFocused
             onRevealRequested: row.view.reveal(modelData.id)
           }
         }
@@ -228,6 +237,8 @@ Item {
 
       Text {
         id: kindLabel
+        width: Math.min(implicitWidth, bubble.inner)
+        wrapMode: Text.Wrap
         visible: row.label !== "" && !row.content.media && !row.cardKind
         text: row.label
         textFormat: Text.PlainText
@@ -256,6 +267,8 @@ Item {
         Component.onCompleted: if (emojiIds.length) row.app.requestCustomEmoji(emojiIds)
         textFormat: Text.RichText
         wrapMode: Text.Wrap
+        lineHeight: 1.22
+        lineHeightMode: Text.ProportionalHeight
         color: row.app.foreground
         linkColor: row.app.accentText
         font.family: row.app.fontFamily
@@ -328,7 +341,7 @@ Item {
         Component.onCompleted: fetch()
         onPhotoFileChanged: fetch()
 
-        Rectangle { width: Style.space(3); height: parent.height; radius: 1; color: row.app.accent }
+        Rectangle { width: Style.space(3); height: parent.height; radius: Math.min(1, Style.cornerRadius); color: row.app.accent }
 
         Column {
           id: previewColumn
@@ -634,7 +647,7 @@ Item {
             required property var modelData
             height: Style.space(24)
             width: chip.implicitWidth + Style.space(14)
-            radius: height / 2
+            radius: Style.cornerRadius
             color: modelData.chosen ? Qt.rgba(row.app.accent.r, row.app.accent.g, row.app.accent.b, 0.3)
                                     : Qt.rgba(row.app.foreground.r, row.app.foreground.g, row.app.foreground.b, 0.08)
             border.width: modelData.chosen ? 1 : 0
@@ -723,15 +736,14 @@ Item {
                                          : Qt.rgba(row.app.foreground.r, row.app.foreground.g, row.app.foreground.b, 0.06)
 
         // md-comment-outline U+F0182
-        Text {
+        Icon {
           id: repliesGlyph
           anchors.left: parent.left
           anchors.leftMargin: Style.space(10)
           anchors.verticalCenter: parent.verticalCenter
-          text: String.fromCodePoint(0xF0182)
+          name: "reply"
           color: row.app.accentText
-          font.family: row.app.glyphFamily
-          font.pixelSize: Style.font.bodySmall
+          size: Style.font.bodySmall
         }
         Text {
           id: repliesLabel
@@ -760,6 +772,9 @@ Item {
 
       Text {
         id: meta
+        width: Math.min(implicitWidth, bubble.inner)
+        elide: Text.ElideLeft
+        horizontalAlignment: Text.AlignRight
         anchors.right: parent.right
         // A scheduled message is under the heading of the day it goes out: its time is enough.
         text: row.message.sendAt ? (row.message.sendAt > 0 ? "scheduled  " + Model.clock(row.message.sendAt) : "scheduled")

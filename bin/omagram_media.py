@@ -11,20 +11,22 @@ reads a recording from there, and stale ones are deleted.
 A round video someone sent moves in the quick view as a small, silent, animated WebP made here
 once and kept in ~/.cache/omagram/notes, because the shell loads no media player.
 """
+import array
 import base64
 import hashlib
 import json
+import math
 import os
 import pathlib
 import secrets
 import stat
-import struct
 import sys
 import time
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import plugin_safety as safe  # noqa: E402
+import omagram_td as td  # noqa: E402
 
 REC = pathlib.Path(safe.runtime_dir()) / "omagram" / "rec"
 # Voice and video messages as they are sent: TDLib keeps pointing at these files afterwards, so
@@ -54,19 +56,22 @@ def new_path(prefix, suffix):
     return rec_dir() / f"{prefix}-{secrets.token_hex(8)}{suffix}"
 
 
-def sent_dir():
-    safe.ensure_dir(SENT, 0o700)
-    return SENT
+def sent_dir(account_id="default"):
+    path = SENT if account_id == "default" else td.account_paths(account_id)["sent"]
+    safe.ensure_dir(path, 0o700)
+    return path
 
 
-def new_sent_path(prefix, suffix):
-    return sent_dir() / f"{prefix}-{secrets.token_hex(8)}{suffix}"
+def new_sent_path(prefix, suffix, account_id="default"):
+    return sent_dir(account_id) / f"{prefix}-{secrets.token_hex(8)}{suffix}"
 
 
 def remove(path):
     """Delete a file of ours in the recording or sent directory; anything else is left alone."""
     path = pathlib.Path(path)
-    if os.path.dirname(str(path)) not in (str(REC), str(SENT)):
+    parent = path.parent
+    account_sent = parent.name == "sent" and parent.parent.parent == td.ACCOUNTS_DIR and td.valid_account_id(parent.parent.name)
+    if os.path.dirname(str(path)) not in (str(REC), str(SENT)) and not account_sent:
         return
     try:
         os.unlink(path)
@@ -117,12 +122,14 @@ def levels_from_pcm(pcm, samples=WAVEFORM_SAMPLES):
     count = len(pcm) // 2
     if count == 0:
         return []
-    values = struct.unpack(f"<{count}h", pcm[:count * 2])
+    values = array.array("h")
+    values.frombytes(pcm[:count * 2])
+    if sys.byteorder != "little":
+        values.byteswap()
     buckets = min(samples, count)
-    step = count / buckets
     peaks = []
     for i in range(buckets):
-        chunk = values[int(i * step):max(int(i * step) + 1, int((i + 1) * step))]
+        chunk = values[i * count // buckets:(i + 1) * count // buckets]
         peaks.append(max(abs(v) for v in chunk))
     top = max(peaks) or 1
     return [round(31 * p / top) for p in peaks]
@@ -143,9 +150,12 @@ def duration_of(path):
     if not r.ok:
         raise safe.UnsafeError("could not read the recording")
     try:
-        return float(r.text().strip().splitlines()[0])
+        duration = float(r.text().strip().splitlines()[0])
     except (ValueError, IndexError):
         raise safe.UnsafeError("could not read the recording")
+    if not math.isfinite(duration) or duration < 0:
+        raise safe.UnsafeError("could not read the recording")
+    return duration
 
 
 def probe_media(path):

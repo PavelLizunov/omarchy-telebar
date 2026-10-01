@@ -16,6 +16,7 @@ FocusScope {
 
   property var app
   property real chatId: 0
+  property string accountId: ""
   readonly property int maxSeconds: 60
 
   property string phase: "closed"   // closed | preview | recording | stopping
@@ -35,6 +36,7 @@ FocusScope {
   function open(chatId) {
     if (noteRecorder.phase !== "closed" || !chatId) return
     noteRecorder.chatId = chatId
+    noteRecorder.accountId = noteRecorder.app.activeAccount
     noteRecorder.sendWhenStopped = false
     noteRecorder.phase = "preview"
     noteRecorder.forceActiveFocus()
@@ -65,6 +67,7 @@ FocusScope {
   function stopped() {
     var path = decodeURIComponent(String(noteRecorder.mediaRecorder ? noteRecorder.mediaRecorder.actualLocation : "").replace(/^file:\/\//, ""))
     var send = noteRecorder.sendWhenStopped && noteRecorder.seconds >= 1 && path !== ""
+      && noteRecorder.accountId === noteRecorder.app.activeAccount
     noteRecorder.phase = "closed"
     if (send) noteRecorder.recorded(noteRecorder.chatId, path)
     else noteRecorder.discarded(path)
@@ -200,12 +203,11 @@ FocusScope {
           radius: width / 2
           color: modelData.action === "main" ? (noteRecorder.phase === "preview" ? noteRecorder.app.urgent : noteRecorder.app.accent)
                                              : Qt.rgba(1, 1, 1, 0.12)
-          Text {
+          Icon {
             anchors.centerIn: parent
-            text: modelData.glyph
+            glyph: modelData.glyph
             color: "white"
-            font.family: noteRecorder.app.glyphFamily
-            font.pixelSize: Style.font.title
+            size: Style.font.title
           }
           MouseArea {
             anchors.fill: parent

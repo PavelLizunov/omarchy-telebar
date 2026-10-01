@@ -39,8 +39,33 @@ class Waveform(unittest.TestCase):
         self.assertEqual(len(media.levels_from_pcm(quiet, samples=100)), 100)
         self.assertEqual(media.levels_from_pcm(struct.pack("<3h", 0, 0, 0), samples=100), [0, 0, 0])
 
+    def test_pcm_storage_preserves_signed_samples_and_bucket_boundaries(self):
+        values = [0, 100, -100, 32767, -32768, 1200, -1200, 7] * 15
+        for count in (1, 3, 8, 113, len(values)):
+            pcm = struct.pack(f"<{count}h", *values[:count]) + b"\xff"
+            for samples in (1, 3, 100):
+                buckets = min(samples, count)
+                peaks = [max(abs(v) for v in values[i * count // buckets:(i + 1) * count // buckets])
+                         for i in range(buckets)]
+                expected = [round(31 * p / (max(peaks) or 1)) for p in peaks]
+                self.assertEqual(media.levels_from_pcm(pcm, samples), expected)
+        tail = struct.pack("<113h", *([0] * 112 + [32767]))
+        self.assertEqual(media.levels_from_pcm(tail), [0] * 99 + [31],
+                         "The final PCM sample must contribute to the final bucket")
+
 
 class Probing(unittest.TestCase):
+    def test_recording_duration_is_finite_and_nonnegative(self):
+        with mock.patch.object(media.safe, "tool", return_value="/usr/bin/ffprobe"), \
+                mock.patch.object(media.safe, "run") as run:
+            run.return_value = types.SimpleNamespace(ok=True, text=lambda: "12.6\n")
+            self.assertEqual(media.duration_of("/synthetic/recording"), 12.6)
+            for text in ("nan", "inf", "-inf", "-1", "N/A", ""):
+                with self.subTest(text=text):
+                    run.return_value = types.SimpleNamespace(ok=True, text=lambda: text)
+                    with self.assertRaises(safe.UnsafeError):
+                        media.duration_of("/synthetic/recording")
+
     def probe(self, result):
         with mock.patch.object(media.safe, "tool", return_value="/usr/bin/ffprobe"), \
                 mock.patch.object(media.safe, "run", return_value=result):

@@ -26,6 +26,7 @@ import os
 import pathlib
 import queue
 import re
+import secrets
 import selectors
 import signal
 import socket
@@ -47,6 +48,8 @@ import omagram_notify as notify  # noqa: E402
 import omagram_media as media  # noqa: E402
 import omagram_settings as prefs  # noqa: E402
 import omagram_sounds as sounds  # noqa: E402
+import omagram_diagnostics as diagnostics  # noqa: E402
+import omagram_bridge as bridge_module  # noqa: E402
 
 VERSION = "0.1.0"
 RUN = pathlib.Path(safe.runtime_dir()) / "omagram"
@@ -83,6 +86,8 @@ LOTTIE_FAILED_MAX = 512
 _lottie_failed = {}                     # stickers that are not sane TGS, by hash: never inflated twice
 _lottie_writes = 0
 EVENTS_MAX = 50000                      # TDLib updates waiting for the loop
+EVENT_BATCH_MAX = 128
+EVENT_BATCH_SECONDS = 0.008
 FILE_ID_MAX = 2 ** 31 - 1
 DOCUMENT_MAX = 2 * 1024 ** 3                        # Telegram's file limit without Premium
 PHOTO_MAX = 10 * 1024 ** 2                          # larger images go as documents
@@ -201,9 +206,9 @@ def local_upload(path):
         raise BadRequest("that file does not exist") from None
     if not stat.S_ISREG(st.st_mode):
         raise BadRequest("only regular files can be sent")
-    database = str(td.DATABASE) + "/"
-    if real == str(td.DATABASE) or real.startswith(database):
-        raise BadRequest("Omagram's own database is not sent")
+    for db_dir in td.all_database_dirs():
+        if real == db_dir or real.startswith(db_dir + "/"):
+            raise BadRequest("Omagram's own database is not sent")
     if not os.access(real, os.R_OK):
         raise BadRequest("that file is not readable")
     if st.st_size == 0:
@@ -502,17 +507,42 @@ def arg_ids(args, name):
 
 
 class Client:
-    __slots__ = ("sock", "inbox", "outbox", "window")
+    __slots__ = ("sock", "inbox", "outbox", "window", "pid", "ui_seen", "ui_metrics", "ui_stalled")
 
     def __init__(self, sock):
         self.sock = sock
         self.inbox = bytearray()
         self.outbox = bytearray()
         self.window = False   # Omagram's window (said so in hello), not the bar or a tool
+        self.pid = 0
+        self.ui_seen = 0
+        self.ui_metrics = {}
+        self.ui_stalled = False
+
+
+class AccountSession:
+    """State, client id, authorization and pending requests for one Telegram account."""
+
+    def __init__(self, account_id, name=""):
+        self.id = account_id
+        self.name = name or ("Account 1" if account_id == td.DEFAULT_ACCOUNT_ID else account_id)
+        self.client_id = None
+        self.state = model.State(td.media_roots_for(account_id))
+        self.auth = {"state": "starting"}
+        self.phone = ""
+        self.me_id = 0
+        self.unread = None
+        self.gif_bot_id = 0
+        self.bridge_ready = False
 
 
 class Daemon:
-    def __init__(self, open_client=None, keyring=None, notifier_factory=None):
+    def __init__(self, open_client=None, keyring=None, notifier_factory=None, diagnostic_log=None):
+        self.diagnostic_log = diagnostic_log or diagnostics.Diagnostics(enabled=False)
+        self.request_times = {}
+        self.td_times = {}
+        self.receiving = False
+        self.last_td_receive = 0
         self.open_client = open_client or td.open_client
         self.keyring = keyring or td
         self.notifier_factory = notifier_factory or (lambda on_action: notify.Notifier(notify.GioTransport, on_action))
@@ -520,6 +550,7 @@ class Daemon:
         self.pending_open = None   # (monotonic time, {"chatId", "reply"}) for the next window
         self.focus_client = None   # the client whose focused chat keeps notifications quiet
         self.focused_chat = 0      # the chat it shows
+        self.focused_account = None # the account of the focused chat
         self.notified = {}         # chat id -> the message its notification shows, for the notification's buttons
         self.sound_last = 0.0      # when a sound last played, and each person's, so a busy chat is not a din
         self.sound_by_person = {}
@@ -530,21 +561,137 @@ class Daemon:
         self.prefs = prefs.load()   # your shortcuts, as stored in ~/.config/omagram/settings.json
         self.global_status = {action: "off" for action in prefs.GLOBALS}
         self.children = {}   # detached helpers still running: pid -> what to do if they fail
-        self.gif_bot_id = 0  # the @gif inline bot, once looked up
-        self.state = model.State(td.MEDIA_ROOTS)
+        self.accounts = {}
+        self.by_client_id = {}
+        self.active_id = td.DEFAULT_ACCOUNT_ID
+        self.account_revision = 0
+        self.current_session = None
+        self.accounts[td.DEFAULT_ACCOUNT_ID] = AccountSession(td.DEFAULT_ACCOUNT_ID, "Account 1")
         self.td = None
-        self.auth = {"state": "starting"}
         self.clients = {}
         self.pending = {}
         self.next_extra = 1
         self.events = queue.Queue(maxsize=EVENTS_MAX)
         self.stopping = False
+        self.quit_deadline = None
         self.closed = threading.Event()
         self.sel = selectors.DefaultSelector()
         self.wake_r, self.wake_w = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
         self.sel.register(self.wake_r, selectors.EVENT_READ, "wake")
         self.listener = None
         self.lock_fd = None
+        self.bridge = None
+        self.bridge_busy = set()
+        self.bridge_retry_at = 0
+        self.bridge_idle_at = 0
+        self.bridge_restore = set()
+
+    @property
+    def active_session(self):
+        return self.accounts.get(self.active_id) or (next(iter(self.accounts.values())) if self.accounts else None)
+
+    def session_for(self, account_id=None):
+        if account_id is not None:
+            if not isinstance(account_id, str) or account_id not in self.accounts:
+                raise BadRequest("unknown account")
+            return self.accounts[account_id]
+        if self.current_session is not None:
+            return self.current_session
+        sess = self.active_session
+        if sess is None:
+            sess = AccountSession(td.DEFAULT_ACCOUNT_ID, "Account 1")
+            self.accounts[td.DEFAULT_ACCOUNT_ID] = sess
+        return sess
+
+    @property
+    def state(self):
+        return self.session_for().state
+
+    @state.setter
+    def state(self, value):
+        self.session_for().state = value
+
+    @property
+    def auth(self):
+        return self.session_for().auth
+
+    @auth.setter
+    def auth(self, value):
+        self.session_for().auth = value
+
+    @property
+    def gif_bot_id(self):
+        return self.session_for().gif_bot_id
+
+    @gif_bot_id.setter
+    def gif_bot_id(self, value):
+        self.session_for().gif_bot_id = value
+
+    def update_account_info(self, account_id, **fields):
+        acc_loader = getattr(self.keyring, "load_accounts", td.load_accounts)
+        acc_saver = getattr(self.keyring, "save_accounts", td.save_accounts)
+        if not callable(acc_loader) or not callable(acc_saver):
+            return
+        data = acc_loader()
+        changed = False
+        for acc in data.get("accounts", []):
+            if acc.get("id") == account_id:
+                for k, v in fields.items():
+                    if acc.get(k) != v:
+                        acc[k] = v
+                        changed = True
+        if changed:
+            acc_saver(data)
+
+    def accounts_summary(self):
+        out = []
+        for aid, sess in self.accounts.items():
+            chats = sess.state.chat_list("main", 100)
+            unread = sess.unread if sess.unread is not None else sum(c.get("unread", 0) for c in chats if not c.get("muted"))
+            out.append({
+                "id": aid,
+                "name": sess.name,
+                "phone": sess.phone,
+                "meId": sess.me_id,
+                "unread": unread,
+                "state": sess.auth.get("state")
+            })
+        return out
+
+    def diagnostic_snapshot(self):
+        now = time.monotonic()
+        clients = list(self.clients.values())
+        requests = list(self.request_times.values())
+        pending = list(self.td_times.values())
+        ui = []
+        for client in clients:
+            age = round((now - client.ui_seen) * 1000) if client.ui_seen else None
+            if age is not None and age > 10000 and not client.ui_stalled:
+                client.ui_stalled = True
+                self.diagnostic_log.emit("ui_heartbeat_missing", peer_pid=client.pid, age_ms=age,
+                                         surface="window" if client.window else "shell")
+            ui.append({"surface": "window" if client.window else "shell", "age_ms": age,
+                       "process": diagnostics.process_metrics(client.pid), "metrics": client.ui_metrics})
+        return {"phase": self.diagnostic_log.phase, "event_queue": self.events.qsize(),
+                "task_queue": self.tasks.qsize(), "jobs": self.jobs, "clients": len(clients),
+                "socket_in_bytes": sum(len(c.inbox) for c in clients),
+                "socket_out_bytes": sum(len(c.outbox) for c in clients),
+                "pending_td": len(pending), "pending_ipc": len(requests),
+                "oldest_td_ms": round(max((now - r[0] for r in pending), default=0) * 1000),
+                "oldest_ipc_ms": round(max((now - r[0] for r in requests), default=0) * 1000),
+                "receiver_alive": self.receiving,
+                "td_idle_ms": round((now - self.last_td_receive) * 1000) if self.last_td_receive else None,
+                "process": diagnostics.process_metrics(os.getpid()), "ui": ui,
+                "counts": dict(self.diagnostic_log.counters),
+                "logger_queue": self.diagnostic_log.records.qsize(),
+                "logger_dropped": self.diagnostic_log.dropped,
+                "logger_write_errors": self.diagnostic_log.write_errors,
+                "logger_written": self.diagnostic_log.written,
+                "account_count": len(self.accounts),
+                "cached_chats": sum(len(s.state.chats) for s in list(self.accounts.values())),
+                "cached_users": sum(len(s.state.users) for s in list(self.accounts.values())),
+                "children": len(self.children), "recording": self.recording is not None,
+                "playing": self.player is not None}
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -597,21 +744,61 @@ class Daemon:
         except td.TdUnavailable as e:
             self.set_auth({"state": "noLibrary", "reason": str(e)})
             return
+        acc_loader = getattr(self.keyring, "load_accounts", td.load_accounts)
+        acc_data = acc_loader() if callable(acc_loader) else None
+        if not isinstance(acc_data, dict):
+            acc_data = td.load_accounts()
+        self.active_id = acc_data.get("active", td.DEFAULT_ACCOUNT_ID)
+        registered = {a["id"] for a in acc_data["accounts"]}
+        self.accounts = {aid: sess for aid, sess in self.accounts.items() if aid in registered}
+        self.by_client_id.clear()
+        for a in acc_data.get("accounts", []):
+            aid = a.get("id")
+            if aid:
+                if aid not in self.accounts:
+                    self.accounts[aid] = AccountSession(aid, a.get("name", aid))
+                sess = self.accounts[aid]
+                sess.name = a.get("name", aid)
+                sess.phone = a.get("phone", "")
+                sess.me_id = int(a.get("meId") or 0)
+        if not self.accounts:
+            self.accounts[td.DEFAULT_ACCOUNT_ID] = AccountSession(td.DEFAULT_ACCOUNT_ID, "Account 1")
+            self.active_id = td.DEFAULT_ACCOUNT_ID
+        if self.active_id not in self.accounts:
+            self.active_id = next(iter(self.accounts.keys()))
+
+        for i, (aid, sess) in enumerate(self.accounts.items()):
+            if i == 0:
+                cid = getattr(self.td, "client_id", 1)
+            else:
+                cid = self.td.create_client() if hasattr(self.td, "create_client") else getattr(self.td, "client_id", 1)
+            sess.client_id = cid
+            self.by_client_id[cid] = sess
+
         threading.Thread(target=self.receive_loop, daemon=True).start()
-        # Any request activates a new client; its answer is not needed.
-        self.td_send({"@type": "getOption", "name": "version"})
+        for sess in self.accounts.values():
+            self.td_send({"@type": "getOption", "name": "version"}, session=sess)
 
     def receive_loop(self):
-        while not self.stopping or not self.closed.is_set():
-            event = self.td.receive(1.0)
-            if event is not None:
-                self.enqueue(event)
-            elif self.stopping and self.closed.is_set():
-                return
+        self.receiving = True
+        try:
+            while not self.stopping or not self.closed.is_set():
+                event = self.td.receive(1.0)
+                self.last_td_receive = time.monotonic()
+                if event is not None:
+                    self.enqueue(event)
+                elif self.stopping and self.closed.is_set():
+                    return
+        except Exception as error:
+            self.diagnostic_log.failure("td_receive", error)
+            self.enqueue({"@type": "omagramReceiverFailed"})
+        finally:
+            self.receiving = False
 
     def enqueue(self, event):
         """Hands an update to the loop. When the loop falls behind this waits, and TDLib keeps
         the rest, rather than the queue growing without end."""
+        started = time.monotonic()
         while True:
             try:
                 self.events.put(event, timeout=1.0)
@@ -619,9 +806,13 @@ class Daemon:
             except queue.Full:
                 if self.closed.is_set():
                     return
+        waited = time.monotonic() - started
+        if waited > 0.1:
+            self.diagnostic_log.emit("queue_backpressure", duration_ms=round(waited * 1000), depth=self.events.qsize())
         self.wake()
 
     def run(self):
+        self.diagnostic_log.start(self.diagnostic_snapshot)
         # Created on the thread that pumps it: Gio delivers bus signals to this context.
         self.notifier = self.notifier_factory(self.on_notification_action)
         try:
@@ -634,20 +825,37 @@ class Daemon:
         if self.prefs["globalShortcuts"]:
             self.apply_globals()
         self.listen()
+        self.bridge = bridge_module.Bridge(self.diagnostic_log)
+        self.bridge_restore = set(self.bridge.metadata)
         self.start_td()
         while not self.stopping:
-            for key, mask in self.sel.select(timeout=0.25 if self.notifier.available else 1.0):
+            self.diagnostic_log.progress("select")
+            timeout = 0 if not self.events.empty() else (0.25 if self.notifier.available else 1.0)
+            for key, mask in self.sel.select(timeout=timeout):
                 if key.data == "wake":
                     self.drain_wake()
                 elif key.data == "listen":
                     self.accept()
                 else:
                     self.on_socket(key.data, mask)
+            started = time.monotonic()
+            self.diagnostic_log.progress("td_events")
             self.process_events()
+            self.diagnostic_log.progress("background_results")
             self.run_tasks()
+            self.diagnostic_log.progress("dbus_notifications")
             self.notifier.pump()
+            self.diagnostic_log.progress("children")
             self.reap_children()
+            if self.quit_deadline is not None and time.monotonic() >= self.quit_deadline:
+                self.stop()
+            elapsed = (time.monotonic() - started) * 1000
+            if elapsed > 100:
+                self.diagnostic_log.emit("slow_loop", duration_ms=round(elapsed), queue_depth=self.events.qsize())
+            self.diagnostic_log.progress()
+        self.diagnostic_log.progress("shutdown")
         self.shutdown()
+        self.diagnostic_log.close()
 
     def shutdown(self):
         if self.recording is not None:   # a half-recorded voice or video message is not kept
@@ -661,16 +869,20 @@ class Daemon:
             self.player = None
         if self.td is not None and not self.closed.is_set():
             # A clean close lets TDLib flush its database; waiting is bounded.
-            self.td.send({"@type": "close"})
+            waiting = {sess.client_id for sess in self.accounts.values() if sess.client_id is not None}
+            for sess in self.accounts.values():
+                self.td_send({"@type": "close"}, session=sess)
             deadline = time.monotonic() + CLOSE_TIMEOUT
-            while not self.closed.is_set() and time.monotonic() < deadline:
+            while waiting and time.monotonic() < deadline:
                 try:
                     event = self.events.get(timeout=0.2)
                 except queue.Empty:
                     continue
                 if _auth_type(event) == "authorizationStateClosed":
-                    self.closed.set()
+                    waiting.discard(event.get("@client_id"))
         self.closed.set()
+        if self.bridge is not None:
+            self.bridge.stop()
         for client in list(self.clients.values()):
             self.drop(client)
         if self.listener is not None:
@@ -683,135 +895,272 @@ class Daemon:
 
     # ---------------------------------------------------------------- TDLib
 
-    def td_send(self, query, client=None, rid=None, transform=None, failed=None):
+    def td_send(self, query, client=None, rid=None, transform=None, failed=None, session=None):
         if self.td is None:
             if client is not None:
                 self.respond_error(client, rid, "Telegram is not available")
             return
+        sess = session or self.current_session or self.session_for()
         extra = self.next_extra
         self.next_extra += 1
         # A request with no client but a transform is the service's own: its answer is
         # handed to the transform instead of a socket.
         if client is not None or transform is not None:
-            self.pending[extra] = (client, rid, transform, failed)
+            self.pending[extra] = (client, rid, transform, failed, sess.id)
+            self.td_times[extra] = (time.monotonic(), query.get("@type", "unknown"))
+            self.diagnostic_log.emit("td_request", extra=extra, command=query.get("@type"), client_id=sess.client_id)
         query = dict(query)
         query["@extra"] = extra
-        self.td.send(query)
+        if hasattr(self.td, "send_client") and sess.client_id is not None:
+            self.td.send_client(sess.client_id, query)
+        else:
+            self.td.send(query)
 
     def process_events(self):
-        while True:
+        deadline = time.monotonic() + EVENT_BATCH_SECONDS
+        for _ in range(EVENT_BATCH_MAX):
             try:
                 event = self.events.get_nowait()
             except queue.Empty:
                 return
+            started = time.monotonic()
+            kind = event.get("@type", "unknown")
+            self.diagnostic_log.progress("td:" + str(kind)[:80])
             self.handle_td(event)
+            self.diagnostic_log.counters["td_events"] += 1
+            duration = (time.monotonic() - started) * 1000
+            if duration > 50:
+                self.diagnostic_log.emit("slow_td_event", command=str(kind)[:80], duration_ms=round(duration))
+            if time.monotonic() >= deadline:
+                return
 
     def handle_td(self, event):
-        if self.td is not None and event.get("@client_id") not in (None, self.td.client_id):
+        if event.get("@type") == "omagramReceiverFailed":
+            for sess in self.accounts.values():
+                self.set_auth(sess, {"state": "error", "reason": "Telegram receiver stopped; see local diagnostics"})
             return
+        cid = event.get("@client_id")
+        sess = self.by_client_id.get(cid)
+        if sess is None:
+            if cid is None and len(self.accounts) == 1:
+                sess = next(iter(self.accounts.values()))
+            else:
+                return
         extra = event.get("@extra")
         if isinstance(extra, int) and extra in self.pending:
-            client, rid, transform, failed = self.pending.pop(extra)
+            entry = self.pending[extra]
+            if entry[4] != sess.id:
+                return
+            self.pending.pop(extra)
+            timing = self.td_times.pop(extra, None)
+            if timing:
+                self.diagnostic_log.emit("td_response", extra=extra, command=timing[1],
+                                         duration_ms=round((time.monotonic() - timing[0]) * 1000),
+                                         ok=event.get("@type") != "error", code=model._int(event.get("code")))
+            client, rid, transform, failed = entry[0], entry[1], entry[2], entry[3]
+            req_sess = sess
             if client is None:
                 # The service's own request (often the first step of a command): an error goes to
                 # `failed`, so whoever is waiting still hears back.
                 try:
+                    self.current_session = req_sess
                     if event.get("@type") != "error":
                         transform(event)
                     elif failed is not None:
                         failed(event)
-                except Exception:   # a malformed answer must not take the service down
-                    pass
+                except Exception as error:   # a malformed answer must not take the service down
+                    self.diagnostic_log.failure("td_transform", error)
+                finally:
+                    self.current_session = None
                 return
             if client.sock.fileno() in self.clients:
                 if event.get("@type") == "error":
                     self.respond_error(client, rid, model._str(event.get("message"), 200), model._int(event.get("code")))
                 else:
                     try:
+                        self.current_session = req_sess
                         result = transform(event) if transform else {}
                     except BadRequest as e:
                         self.respond_error(client, rid, str(e))
                         return
-                    except Exception:   # a malformed answer must not take the service down
+                    except Exception as error:   # a malformed answer must not take the service down
+                        self.diagnostic_log.failure("td_transform", error)
                         result = {}
+                    finally:
+                        self.current_session = None
                     if result is not DEFERRED:
                         self.respond(client, rid, result)
             return
         if event.get("@type") == "updateAuthorizationState":
-            self.on_auth(event.get("authorization_state"))
+            self.on_auth(sess, event.get("authorization_state"))
             return
         if event.get("@type") == "updateNotificationGroup":
-            self.on_notification_group(event)
-        for out in self.state.apply(event):
+            self.on_notification_group(sess, event)
+        if event.get("@type") == "updateUnreadMessageCount" and model.list_key(event.get("chat_list")) == "main":
+            sess.unread = max(0, model._int(event.get("unread_unmuted_count")))
+            self.broadcast({"event": "accounts", "accounts": self.accounts_summary()})
+        for out in sess.state.apply(event):
             if out.get("event") == "call":
-                self.on_call(out["call"])
+                self.on_call(sess, out["call"])
+            out["account"] = sess.id
             self.broadcast(out)
         if event.get("@type") in ("updateChatUnreadReactionCount", "updateMessageUnreadReactions"):
-            self.reactions_seen(model._int(event.get("chat_id")))
+            self.reactions_seen(model._int(event.get("chat_id")), session=sess)
 
-    def on_call(self, call):
+    def on_call(self, sess_or_call, call=None):
         """Calls cannot be answered here -- TDLib brings no voice engine -- so an incoming one is
         announced, to be taken in another Telegram app, and the note goes when the call ends."""
+        if call is None:
+            sess = self.session_for()
+            call = sess_or_call
+        else:
+            sess = sess_or_call
         if call["outgoing"]:
             return
         if call["state"] == "pending":
             kind = "video call" if call["video"] else "call"
-            self.notifier.show(call["userId"], call["name"] or "Someone", f"Incoming {kind}: answer it in another Telegram app")
+            name = f"{sess.name} • {call['name'] or 'Someone'}" if len(self.accounts) > 1 else (call["name"] or "Someone")
+            self.notifier.show(self.notification_key(sess, call["userId"]), name, f"Incoming {kind}: answer it in another Telegram app")
         elif call["state"] in ("ended", "failed"):
-            self.notifier.withdraw(call["userId"])
+            self.notifier.withdraw(self.notification_key(sess, call["userId"]))
 
-    def load_stories(self, page=0):
+    def notification_key(self, session, chat_id):
+        return chat_id if session.id == td.DEFAULT_ACCOUNT_ID else (session.id, chat_id)
+
+    def load_stories(self, sess_or_page=0, page=0):
         """The chats with active stories in the main list arrive as updates, a page per call."""
+        if isinstance(sess_or_page, AccountSession):
+            sess = sess_or_page
+        else:
+            sess = self.session_for()
+            page = sess_or_page
         if page < STORY_PAGES:
             self.td_send({"@type": "loadActiveStories", "story_list": {"@type": "storyListMain"}},
-                         transform=lambda _event: self.load_stories(page + 1), failed=lambda _event=None: None)
+                         transform=lambda _event: self.load_stories(sess, page + 1),
+                         failed=lambda _event=None: None, session=sess)
 
-    def on_auth(self, value):
+    def set_auth(self, sess_or_auth, auth=None):
+        if auth is None:
+            sess = self.session_for()
+            auth = sess_or_auth
+        else:
+            sess = sess_or_auth
+        sess.auth = auth
+        self.broadcast({"event": "auth", "account": sess.id, "auth": auth})
+
+    def on_auth(self, sess_or_value, value=None):
+        if value is None:
+            sess = self.session_for()
+            value = sess_or_value
+        else:
+            sess = sess_or_value
         kind = model._obj(value).get("@type")
         if kind == "authorizationStateWaitTdlibParameters":
-            self.send_parameters()
+            self.send_parameters(sess)
         elif kind == "authorizationStateReady":
-            self.set_auth({"state": "ready"})
-            self.td_send({"@type": "loadChats", "chat_list": {"@type": "chatListMain"}, "limit": 100})
-            self.td_send({"@type": "getMe"}, transform=self.on_me)
-            self.load_stories()
+            self.set_auth(sess, {"state": "ready"})
+            self.td_send({"@type": "loadChats", "chat_list": {"@type": "chatListMain"}, "limit": 100}, session=sess)
+            self.td_send({"@type": "getMe"}, transform=lambda me: self.on_me(sess, me), session=sess)
+            self.load_stories(sess)
             # TDLib's notification groups: it applies mutes, exceptions and mentions itself,
             # and removes a notification once its messages are read on any device.
             self.td_send({"@type": "setOption", "name": "notification_group_count_max",
-                          "value": {"@type": "optionValueInteger", "value": NOTIFICATION_GROUPS}})
+                          "value": {"@type": "optionValueInteger", "value": NOTIFICATION_GROUPS}}, session=sess)
         elif kind == "authorizationStateClosed":
             if self.stopping:
                 self.closed.set()
                 return
             # Logged out or the session was terminated elsewhere: start over, signed out.
-            self.state = model.State(td.MEDIA_ROOTS)
-            self.set_auth({"state": "starting"})
-            self.td.new_client()
-            self.td_send({"@type": "getOption", "name": "version"})
+            sess.state = model.State(td.media_roots_for(sess.id))
+            sess.me_id = 0
+            sess.phone = ""
+            sess.unread = 0
+            sess.bridge_ready = False
+            for extra, entry in list(self.pending.items()):
+                if entry[4] == sess.id:
+                    del self.pending[extra]
+                    self.td_times.pop(extra, None)
+                    if entry[0] is not None:
+                        self.respond_error(entry[0], entry[1], "the account session was closed")
+            self.set_auth(sess, {"state": "starting"})
+            if hasattr(self.td, "create_client"):
+                new_cid = self.td.create_client()
+            else:
+                new_cid = self.td.new_client()
+            if sess.client_id in self.by_client_id:
+                del self.by_client_id[sess.client_id]
+            sess.client_id = new_cid
+            self.by_client_id[new_cid] = sess
+            self.td_send({"@type": "getOption", "name": "version"}, session=sess)
         else:
-            self.set_auth(self.with_qr(model.auth_view(value)))
+            auth = model.auth_view(value)
+            if auth.get("state") == "qr":
+                auth["imagePending"] = self.jobs < JOBS_MAX
+            self.set_auth(sess, auth)
+            if auth.get("imagePending"):
+                def encoded(result, error):
+                    if sess.auth is auth:
+                        self.set_auth(sess, dict(result if error is None else auth, imagePending=False))
+                self.background(lambda: self.with_qr(auth), encoded, session=sess)
 
-    def send_parameters(self):
+    def send_parameters(self, sess=None):
+        sess = sess or self.session_for()
         try:
             credentials = self.keyring.load_credentials()
             if credentials is None:
-                self.set_auth({"state": "needCredentials"})
+                self.set_auth(sess, {"state": "needCredentials"})
                 return
-            key = self.keyring.database_key()
-            query = self.keyring.tdlib_parameters(credentials[0], credentials[1], key, VERSION)
+            key_getter = getattr(self.keyring, "database_key", td.database_key)
+            try:
+                key = key_getter(sess.id)
+            except TypeError:
+                key = key_getter()
+            params_getter = getattr(self.keyring, "tdlib_parameters", td.tdlib_parameters)
+            try:
+                query = params_getter(credentials[0], credentials[1], key, VERSION, account_id=sess.id)
+            except TypeError:
+                query = params_getter(credentials[0], credentials[1], key, VERSION)
         except (td.TdUnavailable, safe.UnsafeError, OSError) as e:
-            self.set_auth({"state": "error", "reason": str(e)[:200]})
+            self.set_auth(sess, {"state": "error", "reason": str(e)[:200]})
             return
-        self.td_send(query)
+        def configured(_event):
+            sess.bridge_ready = True
+            if self.bridge is not None and sess.id in self.bridge.metadata:
+                self.bridge_restore.add(sess.id)
+        self.td_send(query, transform=configured, session=sess)
 
-    def on_notification_group(self, update):
+    def on_me(self, sess_or_user, user=None):
+        if user is None:
+            sess = self.session_for()
+            user = sess_or_user
+        else:
+            sess = sess_or_user
+        uid = model._int(user.get("id"))
+        if not uid:
+            return
+        sess.me_id = uid
+        sess.phone = model._str(user.get("phone_number"), 32)
+        display_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or sess.name
+        sess.name = display_name
+        sess.state.me_id = uid
+        sess.state.apply({"@type": "updateUser", "user": user})
+        self.update_account_info(sess.id, phone=sess.phone, meId=uid, name=display_name)
+        self.broadcast({"event": "me", "account": sess.id, "meId": uid})
+
+    def on_notification_group(self, sess_or_update, update=None):
+        if update is None:
+            sess = self.session_for()
+            update = sess_or_update
+        else:
+            sess = sess_or_update
         chat_id = model._int(update.get("chat_id"))
         if not chat_id:
             return
+        key = self.notification_key(sess, chat_id)
         if self.prefs.get("quiet") is True:
             # Quiet from the bar menu: nothing pops up and nothing sounds, but the unread
             # count in the bar carries on, because that is the point of it.
-            self.notifier.withdraw(chat_id)
+            self.notifier.withdraw(key)
             return
         total = model._int(update.get("total_count"))
         added = [model._obj(n, "notification") for n in model._list(update.get("added_notifications"), 100)]
@@ -819,12 +1168,16 @@ class Daemon:
                 and model._obj(n.get("type")).get("@type") == "notificationTypeNewMessage"]
         if not loud:
             if total == 0:
-                self.notifier.withdraw(chat_id)
+                self.notifier.withdraw(key)
+            return
+        if chat_id == self.focused_chat and (self.focused_account in (None, sess.id)):
             return
         kind = model._obj(max(loud, key=lambda n: model._int(n.get("id"))).get("type"))
-        message = self.state.message(kind.get("message"))
-        chat = self.state.chats.get(chat_id)
+        message = sess.state.message(kind.get("message"))
+        chat = sess.state.chats.get(chat_id)
         title = chat["title"] if chat else ""
+        if len(self.accounts) > 1:
+            title = f"{sess.name} • {title}" if title else sess.name
         if total > 1:
             title = f"{title} ({total})"
         if message is None or kind.get("show_preview") is not True:
@@ -834,38 +1187,47 @@ class Daemon:
             if chat and chat["kind"] != "private" and message["senderName"]:
                 body = f"{message['senderName']}: {body}"
         if message is not None:
-            if len(self.notified) >= 512 and chat_id not in self.notified:
+            if len(self.notified) >= 512 and key not in self.notified:
                 self.notified.clear()
-            self.notified[chat_id] = message["id"]
+            self.notified[key] = message["id"]
         shown = message if kind.get("show_preview") is True else None
-        if self.notifier.show(chat_id, title, body, self.notification_picture(chat, shown)) and message is not None:
+        if self.notifier.show(key, title, body, self.notification_picture(chat, shown)) and message is not None:
             self.play_person(self.sound_seed(chat, message))
 
-    def on_notification_action(self, chat_id, action):
-        if action == "reply":
-            self.summon_quick_reply(chat_id)
-        elif action in ("read", "mute", "react"):
-            self.notification_button(chat_id, action)
-        else:
-            self.open_chat(chat_id, False)
-            self.launch_window()
+    def on_notification_action(self, key, action):
+        aid, chat_id = key if isinstance(key, tuple) else (td.DEFAULT_ACCOUNT_ID, key)
+        if aid not in self.accounts:
+            return
+        self.current_session = self.accounts[aid]
+        try:
+            if action == "reply":
+                self.summon_quick_reply(chat_id)
+            elif action in ("read", "mute", "react"):
+                self.notification_button(chat_id, action)
+            else:
+                self.open_chat(chat_id, False)
+                self.launch_window()
+        finally:
+            self.current_session = None
 
     def notification_button(self, chat_id, action):
         """Mark as read (up to the message shown, as if it had been seen), Mute for an hour, or a thumbs up on the
         message shown. The notification goes away whichever it is."""
-        message_id = self.notified.get(chat_id, 0)
-        chat = self.state.chats.get(chat_id)
+        sess = self.session_for()
+        key = self.notification_key(sess, chat_id)
+        message_id = self.notified.get(key, 0)
+        chat = sess.state.chats.get(chat_id)
         if action == "read" and message_id:
             self.td_send({"@type": "viewMessages", "chat_id": chat_id, "message_ids": [message_id],
-                          "source": {"@type": "messageSourceNotification"}, "force_read": True})
+                          "source": {"@type": "messageSourceNotification"}, "force_read": True}, session=sess)
         elif action == "mute" and chat is not None:
             settings = dict(chat["notification"], use_default_mute_for=False, mute_for=MUTE_HOUR)
-            self.td_send({"@type": "setChatNotificationSettings", "chat_id": chat_id, "notification_settings": settings})
+            self.td_send({"@type": "setChatNotificationSettings", "chat_id": chat_id, "notification_settings": settings}, session=sess)
         elif action == "react" and message_id:
             self.td_send({"@type": "addMessageReaction", "chat_id": chat_id, "message_id": message_id,
                           "reaction_type": {"@type": "reactionTypeEmoji", "emoji": notify.QUICK_REACTION},
-                          "is_big": False, "update_recent_reactions": True})
-        self.notifier.withdraw(chat_id)
+                          "is_big": False, "update_recent_reactions": True}, session=sess)
+        self.notifier.withdraw(key)
 
     def notification_picture(self, chat, message):
         """What shows beside a notification: a thumbnail of the photo, sticker or video just sent (when previews
@@ -960,6 +1322,8 @@ class Daemon:
         if os.path.isfile(path):
             self.spawn_sound(path)
             return
+        if self.jobs >= JOBS_MAX:
+            return
 
         def make():
             data = sounds.render(sounds.motif(seed, variant), style)
@@ -978,15 +1342,17 @@ class Daemon:
     def summon_quick_reply(self, chat_id):
         """Reply opens the quick-reply overlay on that chat. The overlay lives in Omarchy's shell;
         when that is not there, the window opens on the chat with its composer focused instead."""
+        sess = self.session_for()
         def fallback():
-            self.open_chat(chat_id, True)
+            self.open_chat(chat_id, True, session=sess)
             self.launch_window()
-        self.spawn([OMARCHY_SHELL, "shell", "summon", PLUGIN_ID, json.dumps({"chatId": chat_id})], fallback,
+        payload = {"chatId": chat_id, "account": sess.id}
+        self.spawn([OMARCHY_SHELL, "shell", "summon", PLUGIN_ID, json.dumps(payload)], fallback,
                    timeout=HELPER_TIMEOUT)
 
-    def open_chat(self, chat_id, reply):
+    def open_chat(self, chat_id, reply, session=None):
         """Tell the window to open a chat, or keep the request for the window that starts next."""
-        target = {"chatId": chat_id, "reply": reply}
+        target = {"chatId": chat_id, "reply": reply, "account": (session or self.session_for()).id}
         windows = [c for c in self.clients.values() if c.window]
         self.pending_open = None if windows else (time.monotonic(), target)
         for client in windows:
@@ -1016,38 +1382,65 @@ class Daemon:
         except OSError:
             return None
 
-    def background(self, work, done):
+    def background(self, work, done, session=None):
         """Slow work (ffmpeg) off the loop; `done(result, error)` then runs back on the loop."""
         self.jobs += 1
+        session = session or self.session_for()
+        client_id = session.client_id
+        started = time.monotonic()
+        self.diagnostic_log.emit("job_start", jobs=self.jobs)
 
         def run():
             try:
                 result, error = work(), None
             except Exception as e:   # handed to `done`, never lost in the thread
                 result, error = None, e
-            self.tasks.put((done, result, error))
+                self.diagnostic_log.failure("background_work", e)
+            self.diagnostic_log.emit("job_end", duration_ms=round((time.monotonic() - started) * 1000), ok=error is None)
+            self.tasks.put((done, result, error, session, client_id))
             self.wake()
         threading.Thread(target=run, daemon=True).start()
 
     def run_tasks(self):
         while True:
             try:
-                done, result, error = self.tasks.get_nowait()
+                done, result, error, session, client_id = self.tasks.get_nowait()
             except queue.Empty:
                 return
             self.jobs -= 1
             try:
+                if session.client_id != client_id:
+                    continue
+                self.current_session = session
                 done(result, error)
-            except Exception:
-                pass
+            except Exception as error:
+                self.diagnostic_log.failure("background_callback", error)
+            finally:
+                self.current_session = None
 
     def reap_children(self):
         now = time.monotonic()
+        if (self.bridge is not None and not self.bridge.metadata and not self.bridge_busy
+                and self.bridge.proc is not None and now >= self.bridge_idle_at and self.jobs < JOBS_MAX):
+            self.bridge_idle_at = now + 60
+            self.background(self.bridge.stop, lambda *_: None)
+        if (self.bridge is not None and self.bridge.metadata and self.bridge.proc is not None
+                and self.bridge.proc.poll() is not None and not self.bridge_busy
+                and now >= self.bridge_retry_at and self.jobs < JOBS_MAX):
+            self.bridge_retry_at = now + 30
+            self.diagnostic_log.emit("proxy_restarting")
+            self.bridge_restore.update(self.bridge.metadata)
+        if self.bridge is not None and self.jobs < JOBS_MAX:
+            for aid in list(self.bridge_restore):
+                if aid not in self.accounts or aid not in self.bridge.metadata:
+                    self.bridge_restore.discard(aid)
+                elif self.accounts[aid].bridge_ready and aid not in self.bridge_busy and self.jobs < JOBS_MAX:
+                    self.enable_bridge(None, None, self.accounts[aid])
         if self.player is not None and (self.player["proc"].poll() is not None or now > self.player["deadline"]):
             finished, self.player = self.player, None   # it came to its end, or ran far too long
             if finished["proc"].poll() is None:
                 self.children[finished["proc"].pid] = (finished["proc"], None, now)
-            self.broadcast({"event": "playing", "fileId": 0})
+            self.broadcast({"event": "playing", "fileId": 0, "account": finished["account"]})
         for pid, (proc, fallback, deadline) in list(self.children.items()):
             status = proc.poll()
             if status is None and deadline is not None and now > deadline:
@@ -1061,18 +1454,6 @@ class Daemon:
             del self.children[pid]
             if fallback and status != 0:
                 fallback()
-
-    def on_me(self, user):
-        uid = model._int(user.get("id"))
-        if not uid:
-            return
-        self.state.me_id = uid
-        self.state.apply({"@type": "updateUser", "user": user})
-        self.broadcast({"event": "me", "meId": uid})
-
-    def set_auth(self, auth):
-        self.auth = auth
-        self.broadcast({"event": "auth", "auth": auth})
 
     def with_qr(self, auth):
         """Signing in with a QR code: the link Telegram gives, drawn as a PNG for another device to
@@ -1098,7 +1479,7 @@ class Daemon:
             return
         try:
             creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
-            _, uid, _ = struct.unpack("3i", creds)
+            pid, uid, _ = struct.unpack("3i", creds)
         except OSError:
             conn.close()
             return
@@ -1107,13 +1488,18 @@ class Daemon:
             return
         conn.setblocking(False)
         client = Client(conn)
+        client.pid = pid
+        self.diagnostic_log.emit("ipc_connect", peer_pid=pid, clients=len(self.clients) + 1)
         self.clients[conn.fileno()] = client
         self.sel.register(conn, selectors.EVENT_READ, client)
 
     def drop(self, client):
+        self.diagnostic_log.emit("ipc_disconnect", peer_pid=client.pid,
+                                 queued_bytes=len(client.outbox), input_bytes=len(client.inbox))
         if client is self.focus_client:   # a window that closed is not reading its chat any more
             self.focus_client = None
             self.focused_chat = 0
+            self.focused_account = None
             self.notifier.focus(0)
         fd = client.sock.fileno()
         if fd in self.clients:
@@ -1124,6 +1510,9 @@ class Daemon:
                 pass
         for extra in [e for e, entry in self.pending.items() if entry[0] is client]:
             del self.pending[extra]
+            self.td_times.pop(extra, None)
+        for key in [key for key in self.request_times if key[0] is client]:
+            del self.request_times[key]
         client.sock.close()
 
     def on_socket(self, client, mask):
@@ -1159,6 +1548,7 @@ class Daemon:
     def send_to(self, client, value):
         data = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
         if len(client.outbox) + len(data) > OUTBOX_MAX:
+            self.diagnostic_log.emit("ipc_slow_consumer", peer_pid=client.pid, queued_bytes=len(client.outbox))
             self.drop(client)   # not reading: better a reconnect than unbounded memory
             return
         client.outbox += data
@@ -1183,14 +1573,25 @@ class Daemon:
             pass
 
     def broadcast(self, value):
+        if (self.current_session is not None and "account" not in value
+                and value.get("event") not in ("settings", "quit", "accountAdded", "accountSwitched", "accountRemoved", "accounts")):
+            value = dict(value, account=self.current_session.id)
         for client in list(self.clients.values()):
             self.send_to(client, value)
 
     def respond(self, client, rid, result):
+        self.finish_request(client, rid, True)
         self.send_to(client, {"id": rid, "ok": True, "result": result})
 
     def respond_error(self, client, rid, message, code=0):
+        self.finish_request(client, rid, False, code)
         self.send_to(client, {"id": rid, "ok": False, "error": message or "failed", "code": code})
+
+    def finish_request(self, client, rid, ok, code=0):
+        timing = self.request_times.pop((client, rid), None)
+        if timing:
+            self.diagnostic_log.emit("ipc_response", request_id=rid, peer_pid=client.pid, command=timing[1],
+                                     duration_ms=round((time.monotonic() - timing[0]) * 1000), ok=ok, code=code)
 
     # ---------------------------------------------------------------- requests
 
@@ -1216,15 +1617,56 @@ class Daemon:
             self.respond_error(client, rid, "unknown command")
             return
         name, needs_ready = handler
-        if needs_ready and self.auth.get("state") != "ready":
+        started = time.monotonic()
+        if cmd != "diagnostics.ui":
+            self.request_times[(client, rid)] = (started, cmd)
+            self.diagnostic_log.emit("ipc_request", request_id=rid, peer_pid=client.pid, command=cmd)
+            self.diagnostic_log.counters["ipc_requests"] += 1
+        self.diagnostic_log.progress("ipc:" + cmd)
+        target_account = args.get("account") or request.get("account")
+        try:
+            sess = self.session_for(target_account)
+        except BadRequest as e:
+            self.respond_error(client, rid, str(e))
+            return
+        if needs_ready and sess.auth.get("state") != "ready":
             self.respond_error(client, rid, "not signed in")
             return
+        self.current_session = sess
         try:
             getattr(self, name)(client, rid, args)
         except BadRequest as e:
             self.respond_error(client, rid, str(e))
-        except Exception:   # one bad request must never take the service, and the session, down
+        except Exception as error:   # one bad request must never take the service, and the session, down
+            self.diagnostic_log.failure("ipc_handler", error)
             self.respond_error(client, rid, "the request failed")
+        finally:
+            self.current_session = None
+            elapsed = (time.monotonic() - started) * 1000
+            if elapsed > 100:
+                self.diagnostic_log.emit("slow_ipc_handler", command=cmd, duration_ms=round(elapsed))
+            self.diagnostic_log.progress()
+
+    def cmd_diagnostics_ui(self, client, rid, args):
+        now = time.monotonic()
+        metrics = diagnostics.numeric_fields(args)
+        if client.ui_seen and now - client.ui_seen < 1:
+            self.respond_error(client, rid, "diagnostic reports are rate limited")
+            return
+        if client.ui_stalled:
+            self.diagnostic_log.emit("ui_heartbeat_restored", peer_pid=client.pid,
+                                     gap_ms=round((now - client.ui_seen) * 1000))
+        client.ui_metrics = metrics
+        client.ui_seen = now
+        client.ui_stalled = False
+        if args.get("window") is True:
+            client.window = True
+        self.diagnostic_log.emit("ui_sample", peer_pid=client.pid,
+                                 surface="window" if client.window else "shell", metrics=metrics)
+        self.respond(client, rid, {})
+
+    def cmd_diagnostics_status(self, client, rid, args):
+        self.respond(client, rid, self.diagnostic_snapshot())
 
     def cmd_hello(self, client, rid, args):
         target = None
@@ -1233,15 +1675,94 @@ class Daemon:
             if self.pending_open and time.monotonic() - self.pending_open[0] < OPEN_TTL:
                 target = self.pending_open[1]
             self.pending_open = None
-        answer = {"version": VERSION, "auth": self.auth, "meId": self.state.me_id,
-                  "chats": self.state.chat_list("main", 100), "open": target,
-                  "folders": self.state.folders, "mainPosition": self.state.main_position,
-                  "settings": self.prefs, "globalStatus": self.global_status, "calls": list(self.state.calls.values()),
-                  "connection": self.state.connection}
+        active_sess = self.active_session
+        answer = {"version": VERSION, "auth": active_sess.auth, "meId": active_sess.me_id,
+                  "chats": active_sess.state.chat_list("main", 100), "open": target,
+                  "folders": active_sess.state.folders, "mainPosition": active_sess.state.main_position,
+                  "settings": self.prefs, "globalStatus": self.global_status, "calls": list(active_sess.state.calls.values()),
+                  "connection": active_sess.state.connection,
+                  "accounts": self.accounts_summary(),
+                  "activeAccount": self.active_id, "accountRevision": self.account_revision}
         if client.window:
-            answer["allChats"] = self.state.all_chats()   # the window's tabs need every list
-            answer["stories"] = self.state.story_list()
+            answer["allChats"] = active_sess.state.all_chats()   # the window's tabs need every list
+            answer["stories"] = active_sess.state.story_list()
         self.respond(client, rid, answer)
+
+    def cmd_account_list(self, client, rid, args):
+        self.respond(client, rid, {
+            "active": self.active_id,
+            "accounts": self.accounts_summary()
+        })
+
+    def cmd_account_switch(self, client, rid, args):
+        aid = args.get("accountId") or args.get("id")
+        if not aid or aid not in self.accounts:
+            raise BadRequest("unknown account")
+        acc_saver = getattr(self.keyring, "save_accounts", td.save_accounts)
+        acc_loader = getattr(self.keyring, "load_accounts", td.load_accounts)
+        if callable(acc_loader) and callable(acc_saver):
+            data = acc_loader()
+            data["active"] = aid
+            acc_saver(data)
+        self.active_id = aid
+        self.account_revision += 1
+        sess = self.accounts[aid]
+        self.broadcast({"event": "accountSwitched", "activeAccount": aid})
+        answer = {
+            "activeAccount": aid,
+            "accountRevision": self.account_revision,
+            "auth": sess.auth,
+            "meId": sess.me_id,
+            "chats": sess.state.chat_list("main", 100),
+            "folders": sess.state.folders,
+            "mainPosition": sess.state.main_position,
+            "calls": list(sess.state.calls.values()),
+            "connection": sess.state.connection,
+        }
+        if client.window:
+            answer["allChats"] = sess.state.all_chats()
+            answer["stories"] = sess.state.story_list()
+        self.respond(client, rid, answer)
+
+    def cmd_account_add(self, client, rid, args):
+        if self.td is None:
+            raise BadRequest("Telegram is not available")
+        if len(self.accounts) >= 10:
+            raise BadRequest("maximum of 10 accounts allowed")
+        name = args.get("name")
+        aid = f"acc_{int(time.time() * 1000)}_{secrets.token_hex(4)}"
+        if name is not None and (not isinstance(name, str) or len(name) > 80):
+            raise BadRequest("account name must be at most 80 characters")
+        name = name.strip() if name else f"Account {len(self.accounts) + 1}"
+        sess = AccountSession(aid, name)
+        acc_saver = getattr(self.keyring, "save_accounts", td.save_accounts)
+        acc_loader = getattr(self.keyring, "load_accounts", td.load_accounts)
+        if callable(acc_loader) and callable(acc_saver):
+            data = acc_loader()
+            if "accounts" not in data or not isinstance(data["accounts"], list):
+                data["accounts"] = []
+            data["accounts"].append({"id": aid, "name": name, "phone": "", "meId": 0})
+            data["active"] = aid
+            acc_saver(data)
+        self.accounts[aid] = sess
+        self.active_id = aid
+        self.account_revision += 1
+        if hasattr(self.td, "create_client"):
+            cid = self.td.create_client()
+        else:
+            cid = self.td.new_client()
+        sess.client_id = cid
+        self.by_client_id[cid] = sess
+        self.td_send({"@type": "getOption", "name": "version"}, session=sess)
+        self.broadcast({"event": "accountAdded", "account": {"id": aid, "name": name}, "activeAccount": aid})
+        self.respond(client, rid, {"account": {"id": aid, "name": name}, "activeAccount": aid,
+                                   "accountRevision": self.account_revision, "auth": sess.auth})
+
+    def cmd_account_logout(self, client, rid, args):
+        sess = self.session_for(args.get("accountId") or args.get("id") or self.session_for().id)
+        # TDLib owns logout and database cleanup. Never erase a live database or its key.
+        # Keep the local profile so it can be signed into again after authorizationStateClosed.
+        self.td_send({"@type": "logOut"}, client, rid, session=sess)
 
     def found_messages(self, event):
         found = (self.state.message(m) for m in model._list(event.get("messages"), 100))
@@ -1592,7 +2113,7 @@ class Daemon:
         local = model._obj(f.get("local"))
         if local.get("is_downloading_completed") is not True:
             raise BadRequest("the file is not downloaded yet")
-        path = model.local_path(local.get("path"), td.MEDIA_ROOTS)
+        path = model.local_path(local.get("path"), self.state.files_root)
         if not path:
             raise BadRequest("that file is not one of Omagram's")
         return path
@@ -1603,24 +2124,107 @@ class Daemon:
             return {}
         self.td_send({"@type": "getFile", "file_id": arg_int(args, "fileId", 1, INT32_MAX)}, client, rid, opened)
 
+    def checked_photo_action(self, client, rid, args, action):
+        """Viewer exports recheck TDLib permission and bind the file to that photo."""
+        chat_id = arg_int(args, "chatId")
+        message_id = arg_int(args, "messageId", 1)
+        file_id = arg_int(args, "fileId", 1, INT32_MAX)
+
+        def message_found(event):
+            content = model._obj(event.get("content"))
+            photo = model.media_for("photo", content, self.state.files_root) if content.get("@type") == "messagePhoto" else None
+            if (event.get("chat_id") != chat_id or event.get("id") != message_id or not photo
+                    or not photo.get("file") or photo["file"]["id"] != file_id):
+                raise BadRequest("that file is not this message's photo")
+
+            def permitted(properties):
+                if properties.get("can_be_saved") is not True:
+                    raise BadRequest("this photo cannot be saved or copied")
+                return action()
+            self.td_send({"@type": "getMessageProperties", "chat_id": chat_id, "message_id": message_id},
+                         client, rid, permitted)
+            return DEFERRED
+        self.td_send({"@type": "getMessage", "chat_id": chat_id, "message_id": message_id}, client, rid, message_found)
+        return DEFERRED
+
     def cmd_file_save(self, client, rid, args):
         name = download_name(args.get("fileName"))
 
         def located(event):
             path = self.downloaded_path(event)
-            if self.jobs >= JOBS_MAX:
-                raise BadRequest("still saving an earlier file")
+            def save():
+                if self.jobs >= JOBS_MAX:
+                    raise BadRequest("still saving an earlier file")
 
-            def done(saved, error):
-                if error is not None:
-                    self.respond_error(client, rid, "the file could not be saved to Downloads")
-                else:
-                    self.respond(client, rid, {"path": saved})
-            self.background(lambda: str(copy_out(path, DOWNLOADS, name)), done)
-            return DEFERRED
+                def done(saved, error):
+                    if error is not None:
+                        self.respond_error(client, rid, "the file could not be saved to Downloads")
+                    else:
+                        self.respond(client, rid, {"path": saved})
+                self.background(lambda: str(copy_out(path, DOWNLOADS, name)), done)
+                return DEFERRED
+            if "chatId" in args or "messageId" in args:
+                return self.checked_photo_action(client, rid, args, save)
+            return save()
+        self.td_send({"@type": "getFile", "file_id": arg_int(args, "fileId", 1, INT32_MAX)}, client, rid, located)
+
+    def cmd_file_copy_image(self, client, rid, args):
+        # Validate message context before even asking for the file.
+        arg_int(args, "chatId")
+        arg_int(args, "messageId", 1)
+
+        def located(event):
+            path = self.downloaded_path(event)
+
+            def copy():
+                if self.jobs >= JOBS_MAX:
+                    raise BadRequest("still preparing an earlier request; try again in a moment")
+
+                def work():
+                    data = safe.read_file(path, CLIPBOARD_MAX)
+                    if not data:
+                        raise BadRequest("the image is empty or missing")
+                    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+                        mime = "image/png"
+                    elif data.startswith(b"\xff\xd8\xff"):
+                        mime = "image/jpeg"
+                    elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+                        mime = "image/webp"
+                    else:
+                        raise BadRequest("that file is not a supported image")
+                    # wl-copy owns the Wayland selection after its normal fork. Stdin is
+                    # bounded image bytes, never a path, shell command or user-supplied MIME.
+                    result = safe.run([str(safe.tool("wl-copy")), "--type", mime], input=data,
+                                      timeout=HELPER_TIMEOUT, max_output=4096)
+                    if not result.ok:
+                        raise BadRequest("the image could not be copied to the clipboard")
+                    return {}
+
+                def done(result, error):
+                    if error is not None:
+                        self.respond_error(client, rid, str(error) if isinstance(error, BadRequest)
+                                           else "the image could not be copied (maximum 10 MiB)")
+                    else:
+                        self.respond(client, rid, result)
+                self.background(work, done)
+                return DEFERRED
+            return self.checked_photo_action(client, rid, args, copy)
         self.td_send({"@type": "getFile", "file_id": arg_int(args, "fileId", 1, INT32_MAX)}, client, rid, located)
 
     def cmd_clipboard_image(self, client, rid, args):
+        self.clipboard_job(client, rid, self.clipboard_image)
+
+    def clipboard_job(self, client, rid, work):
+        if self.jobs >= JOBS_MAX:
+            raise BadRequest("still preparing an earlier request; try again in a moment")
+        def done(result, error):
+            if error is not None:
+                self.respond_error(client, rid, "the clipboard could not be read")
+            else:
+                self.respond(client, rid, result)
+        self.background(work, done)
+
+    def clipboard_image(self):
         """An image on the clipboard, saved privately to send; "" when there is none."""
         try:
             offered = clipboard_types()
@@ -1632,13 +2236,15 @@ class Daemon:
                     break
                 path = media.new_path("paste", suffix)
                 safe.write_file(path, data, mode=0o600)
-                self.respond(client, rid, {"path": str(path)})
-                return
+                return {"path": str(path)}
         except (safe.UnsafeError, OSError):
             pass
-        self.respond(client, rid, {"path": ""})
+        return {"path": ""}
 
     def cmd_clipboard_files(self, client, rid, args):
+        self.clipboard_job(client, rid, self.clipboard_files)
+
+    def clipboard_files(self):
         """What Ctrl+V sends: the files a file manager copied, each checked as any file you send is, or else a copied
         picture, saved privately. Answers {"paths", "skipped"}; no paths and nothing skipped means the clipboard holds
         neither, and the text is pasted instead."""
@@ -1661,8 +2267,7 @@ class Daemon:
                 if real not in paths:
                     paths.append(real)
             if paths or skipped:
-                self.respond(client, rid, {"paths": paths, "skipped": skipped})
-                return
+                return {"paths": paths, "skipped": skipped}
         try:
             for mime, suffix in CLIPBOARD_TYPES:
                 if mime not in offered:
@@ -1672,11 +2277,10 @@ class Daemon:
                     break
                 path = media.new_path("paste", suffix)
                 safe.write_file(path, data, mode=0o600)
-                self.respond(client, rid, {"paths": [str(path)], "skipped": 0})
-                return
+                return {"paths": [str(path)], "skipped": 0}
         except (safe.UnsafeError, OSError):
             pass
-        self.respond(client, rid, {"paths": [], "skipped": 0})
+        return {"paths": [], "skipped": 0}
 
     # ---------------------------------------------------------------- a chat's info, members and shared media
 
@@ -1975,6 +2579,8 @@ class Daemon:
         """A new profile photo from a picture you chose, cut to a centred square JPEG first. The copy
         is deleted once Telegram has the photo, or has refused it."""
         source, _ = local_upload(args.get("path"))
+        if self.jobs >= JOBS_MAX:
+            raise BadRequest("still preparing an earlier request; try again in a moment")
         target = media.new_path("profile", ".jpg")
 
         def done(_answer):
@@ -2113,6 +2719,133 @@ class Daemon:
 
     # ---------------------------------------------------------------- proxies (before sign-in too: where
     # Telegram is blocked, a proxy is how signing in gets through)
+
+    def cmd_bridge_status(self, client, rid, args):
+        if self.bridge is None:
+            raise BadRequest("the bundled bridge is not available")
+        self.respond(client, rid, self.bridge.status(self.session_for().id))
+
+    def cmd_bridge_test(self, client, rid, args):
+        if self.bridge is None or self.jobs >= JOBS_MAX or self.bridge_busy:
+            raise BadRequest("wait for the current bridge operation")
+        sess = self.session_for()
+        self.bridge_idle_at = time.monotonic() + 180
+        def ready(port, error):
+            if error is not None:
+                self.respond_error(client, rid, "could not start the bundled bridge")
+                return
+            proxy = {"@type": "proxy", "server": "127.0.0.1", "port": port,
+                     "type": {"@type": "proxyTypeMtproto", "secret": "dd" + self.bridge.secret}}
+            self.td_send({"@type": "pingProxy", "proxy": proxy}, client, rid,
+                         lambda event: {"seconds": max(0, float(event.get("seconds") or 0))}, session=sess)
+        self.background(self.bridge.start, ready, session=sess)
+
+    def cmd_bridge_set(self, client, rid, args):
+        if not isinstance(args.get("enabled"), bool):
+            raise BadRequest("enabled must be true or false")
+        sess = self.session_for()
+        if self.bridge is None or sess.id in self.bridge_busy:
+            raise BadRequest("a bridge operation is already running")
+        if args["enabled"]:
+            self.enable_bridge(client, rid, sess)
+        else:
+            self.disable_bridge(client, rid, sess)
+
+    def enable_bridge(self, client, rid, sess):
+        if sess.id in self.bridge_busy or self.jobs >= JOBS_MAX:
+            if client is not None:
+                self.respond_error(client, rid, "wait for the current background operation")
+            return
+        self.bridge_busy.add(sess.id)
+        self.bridge_idle_at = time.monotonic() + 180
+
+        def fail(error=None):
+            self.bridge_busy.discard(sess.id)
+            self.bridge_restore.discard(sess.id)
+            if not self.bridge.metadata and self.jobs < JOBS_MAX:
+                self.background(self.bridge.stop, lambda *_: None, session=sess)
+            if client is not None:
+                self.respond_error(client, rid, "could not enable the bundled bridge")
+            self.diagnostic_log.emit("proxy_configuration_error")
+
+        def ready(port, error):
+            if error is not None:
+                fail(error)
+                return
+            def listed(event):
+                existing = self.bridge.metadata.get(sess.id, {})
+                active = next((model._int(p.get("id")) for p in model._list(event.get("proxies"), PROXIES_MAX)
+                               if p.get("is_enabled") is True), 0)
+                proxy_id = existing.get("proxy_id", 0)
+                previous = existing.get("previous_id", 0) if existing else active
+                proxy = {"@type": "proxy", "server": "127.0.0.1", "port": port,
+                         "type": {"@type": "proxyTypeMtproto", "secret": "dd" + self.bridge.secret}}
+                if proxy_id and not any(model._int(p.get("id")) == proxy_id for p in model._list(event.get("proxies"), PROXIES_MAX)):
+                    proxy_id = 0
+                command = {"@type": "editProxy", "proxy_id": proxy_id, "proxy": proxy, "enable": True, "comment": "Omagram bundled bridge"} if proxy_id else {
+                    "@type": "addProxy", "proxy": proxy, "enable": True, "comment": "Omagram bundled bridge"}
+
+                def configured(added):
+                    new_id = model._int(added.get("id"))
+                    if new_id <= 0:
+                        fail()
+                        return
+                    self.bridge.metadata[sess.id] = {"proxy_id": new_id, "previous_id": previous}
+                    try:
+                        self.bridge.save()
+                    except (safe.UnsafeError, OSError):
+                        fail()
+                        return
+                    self.bridge_busy.discard(sess.id)
+                    self.bridge_restore.discard(sess.id)
+                    if client is not None:
+                        self.respond(client, rid, self.bridge.status(sess.id))
+                self.td_send(command, transform=configured, failed=fail, session=sess)
+            self.td_send({"@type": "getProxies"}, transform=listed, failed=fail, session=sess)
+        self.background(self.bridge.start, ready, session=sess)
+
+    def disable_bridge(self, client, rid, sess):
+        entry = self.bridge.metadata.get(sess.id)
+        if not entry:
+            self.respond(client, rid, self.bridge.status(sess.id))
+            return
+        self.bridge_busy.add(sess.id)
+
+        def fail(_error=None):
+            self.bridge_busy.discard(sess.id)
+            self.bridge_restore.discard(sess.id)
+            self.respond_error(client, rid, "could not restore the previous connection")
+
+        def finished(_event=None):
+            old_entry = self.bridge.metadata.pop(sess.id, None)
+            try:
+                self.bridge.save()
+            except (safe.UnsafeError, OSError):
+                if old_entry is not None:
+                    self.bridge.metadata[sess.id] = old_entry
+                fail()
+                return
+            self.bridge_busy.discard(sess.id)
+            self.respond(client, rid, self.bridge.status(sess.id))
+            if not self.bridge.metadata:
+                def stop_if_unused():
+                    if not self.bridge.metadata and not self.bridge_busy:
+                        self.bridge.stop()
+                self.background(stop_if_unused, lambda *_: None)
+
+        def listed(event):
+            proxies = model._list(event.get("proxies"), PROXIES_MAX)
+            active = next((model._int(p.get("id")) for p in proxies if p.get("is_enabled") is True), 0)
+            if active != entry["proxy_id"]:
+                finished()
+                return
+            previous = entry.get("previous_id", 0)
+            if previous and any(model._int(p.get("id")) == previous for p in proxies):
+                command = {"@type": "enableProxy", "proxy_id": previous}
+            else:
+                command = {"@type": "disableProxy"}
+            self.td_send(command, transform=finished, failed=fail, session=sess)
+        self.td_send({"@type": "getProxies"}, transform=listed, failed=fail, session=sess)
 
     def cmd_proxies_list(self, client, rid, args):
         """The proxies you added, the one in use marked, and how TDLib is reaching Telegram right now."""
@@ -2526,7 +3259,7 @@ class Daemon:
             raise BadRequest("a voice or video message is already being recorded")
         try:
             media.clean_stale()
-            path = media.new_sent_path("voice", ".ogg")
+            path = media.new_sent_path("voice", ".ogg", self.session_for().id)
             argv = media.voice_argv(path)
         except (safe.UnsafeError, OSError) as e:
             raise BadRequest(f"cannot record: {e}")
@@ -2534,7 +3267,8 @@ class Daemon:
         if proc is None:
             raise BadRequest("cannot start the recorder")
         started = int(time.time() * 1000)
-        self.recording = {"kind": "voice", "proc": proc, "path": path, "chatId": chat_id, "started": started}
+        self.recording = {"kind": "voice", "proc": proc, "path": path, "chatId": chat_id, "started": started,
+                          "account": self.session_for().id}
         self.respond(client, rid, {"startedAt": started})
         self.broadcast({"event": "recording", "state": "voice", "chatId": chat_id, "startedAt": started})
 
@@ -2542,6 +3276,8 @@ class Daemon:
         rec = self.recording
         if rec is None or rec.get("kind") != "voice":
             raise BadRequest("no voice message is being recorded")
+        if rec.get("account") != self.session_for().id:
+            raise BadRequest("the recording belongs to another account")
         send = args.get("send") is True
         reply = self.reply_args(args) if send else {}
         self.recording = None
@@ -2596,7 +3332,8 @@ class Daemon:
         if proc is None:
             raise BadRequest("cannot start the recorder")
         started = int(time.time() * 1000)
-        self.recording = {"kind": "video", "proc": proc, "path": path, "preview": preview, "chatId": chat_id, "started": started}
+        self.recording = {"kind": "video", "proc": proc, "path": path, "preview": preview, "chatId": chat_id, "started": started,
+                          "account": self.session_for().id}
         self.respond(client, rid, {"startedAt": started, "preview": str(preview)})
         self.broadcast({"event": "recording", "state": "video", "chatId": chat_id, "startedAt": started, "preview": str(preview)})
 
@@ -2605,6 +3342,8 @@ class Daemon:
         rec = self.recording
         if rec is None or rec.get("kind") != "video":
             raise BadRequest("no video message is being recorded")
+        if rec.get("account") != self.session_for().id:
+            raise BadRequest("the recording belongs to another account")
         send = args.get("send") is True
         reply = self.reply_args(args) if send else {}
         self.recording = None
@@ -2614,7 +3353,7 @@ class Daemon:
             proc.send_signal(signal.SIGINT)   # ffmpeg finishes both files on its first interrupt
         except OSError:
             pass
-        target = media.new_sent_path("note", ".mp4") if send else None
+        target = media.new_sent_path("note", ".mp4", self.session_for().id) if send else None
 
         def work():
             try:
@@ -2666,7 +3405,7 @@ class Daemon:
                 raise BadRequest("the player could not start")
             started = int(time.time() * 1000)
             self.player = {"proc": proc, "fileId": file_id, "chatId": chat_id, "messageId": message_id, "startedAt": started,
-                           "deadline": time.monotonic() + PLAY_TIMEOUT}
+                           "deadline": time.monotonic() + PLAY_TIMEOUT, "account": self.session_for().id}
             self.td_send({"@type": "openMessageContent", "chat_id": chat_id, "message_id": message_id})
             self.broadcast({"event": "playing", "fileId": file_id, "chatId": chat_id, "messageId": message_id,
                             "startedAt": started, "rate": rate})
@@ -2688,7 +3427,7 @@ class Daemon:
         except OSError:
             pass
         self.children[player["proc"].pid] = (player["proc"], None, time.monotonic() + 2)
-        self.broadcast({"event": "playing", "fileId": 0})
+        self.broadcast({"event": "playing", "fileId": 0, "account": player["account"]})
 
     def cmd_videonote_send(self, client, rid, args):
         chat_id = arg_int(args, "chatId")
@@ -2699,7 +3438,7 @@ class Daemon:
         reply = self.reply_args(args)
         if self.jobs >= JOBS_MAX:
             raise BadRequest("still preparing an earlier message")
-        target = media.new_sent_path("note", ".mp4")
+        target = media.new_sent_path("note", ".mp4", self.session_for().id)
 
         def work():
             try:
@@ -2782,7 +3521,7 @@ class Daemon:
     def cmd_settings_set(self, client, rid, args):
         settings = args.get("settings")
         if isinstance(settings, dict):   # the shortcuts page leaves the speed and the downloads as they are
-            settings = dict({k: self.prefs[k] for k in ("playbackRate", "autoDownload", "reactionsSeen", "emoji", "sounds", "quiet") if k in self.prefs}, **settings)
+            settings = dict({k: self.prefs[k] for k in ("shortcuts", "globalShortcuts", "playbackRate", "autoDownload", "reactionsSeen", "showStories", "emoji", "sounds", "quiet", "chatListWidth") if k in self.prefs}, **settings)
         try:
             new = prefs.check(settings)
         except ValueError as e:
@@ -2806,6 +3545,18 @@ class Daemon:
         new = dict(self.prefs, playbackRate=rate)
         try:
             prefs.save(new)
+        except (safe.UnsafeError, OSError):
+            raise BadRequest("the settings could not be saved")
+        self.prefs = new
+        self.respond(client, rid, self.settings_view())
+        self.broadcast(dict({"event": "settings"}, **self.settings_view()))
+
+    def cmd_settings_chat_list_width(self, client, rid, args):
+        try:
+            new = prefs.check(dict(self.prefs, chatListWidth=args.get("width")))
+            prefs.save(new)
+        except ValueError as e:
+            raise BadRequest(str(e))
         except (safe.UnsafeError, OSError):
             raise BadRequest("the settings could not be saved")
         self.prefs = new
@@ -2859,10 +3610,10 @@ class Daemon:
         self.broadcast(dict({"event": "settings"}, **self.settings_view()))
 
     def cmd_app_quit(self, client, rid, args):
-        """Close Omagram's window, if one is open. The service itself is stopped by whatever
-        started it - inside Omarchy that is the shell plugin, which stops asking for it."""
-        self.respond(client, rid, {})
+        """Notify clients before graceful service shutdown; drain queued IPC for a bounded grace period."""
         self.broadcast({"event": "quit"})
+        self.respond(client, rid, {})
+        self.quit_deadline = time.monotonic() + 0.3
 
     def cmd_settings_sounds(self, client, rid, args):
         """The instrument every person's sound is played on, or off. The new one plays at once, as your own sound."""
@@ -2927,19 +3678,23 @@ class Daemon:
 
     def cmd_ui_focus(self, client, rid, args):
         chat_id = arg_int(args, "chatId", None, None, 0)
+        sess = self.session_for()
         self.focus_client = client if chat_id else None
         self.focused_chat = chat_id
-        self.notifier.focus(chat_id)
-        self.reactions_seen(chat_id)
+        self.focused_account = sess.id if chat_id else None
+        self.notifier.focus(self.notification_key(sess, chat_id) if chat_id else 0)
+        self.reactions_seen(chat_id, session=sess)
         self.respond(client, rid, {})
 
-    def reactions_seen(self, chat_id):
+    def reactions_seen(self, chat_id, session=None):
         """With reactionsSeen on (the default), reactions to your messages in the chat on screen count as seen at
         once: nothing waits for you to scroll up to it."""
-        chat = self.state.chats.get(chat_id)
-        if (chat_id and chat_id == self.focused_chat and chat and chat.get("reactions", 0) > 0
+        sess = session or self.current_session or self.session_for()
+        chat = sess.state.chats.get(chat_id)
+        is_focused = (chat_id and chat_id == self.focused_chat and (self.focused_account in (None, sess.id)))
+        if (is_focused and chat and chat.get("reactions", 0) > 0
                 and self.prefs.get("reactionsSeen", True)):
-            self.td_send({"@type": "readAllChatReactions", "chat_id": chat_id})
+            self.td_send({"@type": "readAllChatReactions", "chat_id": chat_id}, session=sess)
 
     def cmd_ui_open(self, client, rid, args):
         self.open_chat(arg_int(args, "chatId"), args.get("reply") is True)
@@ -3129,6 +3884,8 @@ class Daemon:
         if kind not in ("video", "audio"):
             self.send_content(client, rid, chat_id, file_content(path, kind, text, (0, 0, 0)), reply)
             return
+        if self.jobs >= JOBS_MAX:
+            raise BadRequest("still preparing an earlier message; try again in a moment")
         # A video's length and size, and music's length, are read first, as Telegram's player needs them.
         self.background(lambda: media.probe_media(path),
                         lambda probed, error: self.send_content(
@@ -3161,6 +3918,8 @@ class Daemon:
         if not any(kind in ("video", "audio") for _, kind in files):
             send([(0, 0, 0)] * len(files))
             return
+        if self.jobs >= JOBS_MAX:
+            raise BadRequest("still preparing an earlier message; try again in a moment")
         self.background(lambda: [media.probe_media(path) if kind in ("video", "audio") else (0, 0, 0) for path, kind in files],
                         lambda probed, error: send(probed if error is None else [(0, 0, 0)] * len(files)))
 
@@ -3367,7 +4126,15 @@ class Daemon:
     def cmd_sticker_lottie(self, client, rid, args):
         def convert(f):
             view = model.file_view(f, self.state.files_root)
-            return {"path": lottie_json(view["path"]) if view and view["path"] else ""}
+            if not view or not view["path"]:
+                return {"path": ""}
+            if self.jobs >= JOBS_MAX:
+                raise BadRequest("still preparing something else; ask again in a moment")
+
+            def done(path, error):
+                self.respond(client, rid, {"path": path if error is None else ""})
+            self.background(lambda: lottie_json(view["path"]), done)
+            return DEFERRED
         self.td_send({"@type": "getFile", "file_id": arg_int(args, "fileId", 1, FILE_ID_MAX)}, client, rid, convert)
 
     def drain_wake(self):
@@ -3379,7 +4146,17 @@ class Daemon:
 
 
 COMMANDS = {
+    "bridge.test": ("cmd_bridge_test", False),
+    "bridge.status": ("cmd_bridge_status", False),
+    "bridge.set": ("cmd_bridge_set", False),
+    "diagnostics.ui": ("cmd_diagnostics_ui", False),
+    "diagnostics.status": ("cmd_diagnostics_status", False),
+    "settings.chatListWidth": ("cmd_settings_chat_list_width", False),
     "hello": ("cmd_hello", False),
+    "account.list": ("cmd_account_list", False),
+    "account.switch": ("cmd_account_switch", False),
+    "account.add": ("cmd_account_add", False),
+    "account.logout": ("cmd_account_logout", False),
     "credentials.set": ("cmd_credentials_set", False),
     "auth.phone": ("cmd_auth_phone", False),
     "auth.code": ("cmd_auth_code", False),
@@ -3429,6 +4206,7 @@ COMMANDS = {
     "username.chat": ("cmd_username_chat", True),
     "file.open": ("cmd_file_open", True),
     "file.save": ("cmd_file_save", True),
+    "file.copyImage": ("cmd_file_copy_image", True),
     "clipboard.image": ("cmd_clipboard_image", True),
     "clipboard.files": ("cmd_clipboard_files", True),
     "chat.info": ("cmd_chat_info", True),
@@ -3550,19 +4328,21 @@ def main(argv):
         return 2
     if argv[1:] == ["--with-parent"]:
         safe.die_with_parent()
-    daemon = Daemon()
+    daemon = Daemon(diagnostic_log=diagnostics.Diagnostics())
     try:
         if not daemon.acquire():
             return 0
     except (safe.UnsafeError, OSError) as e:
-        print(f"omagramd: {e}", file=sys.stderr)
+        print("omagramd: unable to acquire private runtime lock", file=sys.stderr)
         return 1
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, daemon.stop)
     try:
         daemon.run()
-    except (safe.UnsafeError, OSError) as e:
-        print(f"omagramd: {e}", file=sys.stderr)
+    except Exception as e:
+        daemon.diagnostic_log.failure("daemon_run", e)
+        daemon.diagnostic_log.close()
+        print("omagramd: service failed; see local diagnostics", file=sys.stderr)
         return 1
     return 0
 

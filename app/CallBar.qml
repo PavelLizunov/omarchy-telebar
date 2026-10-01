@@ -28,11 +28,10 @@ Rectangle {
     spacing: Style.space(10)
 
     // md-phone-incoming U+F03F7
-    Text {
-      text: String.fromCodePoint(0xF03F7)
+    Icon {
+      name: "microphone"
       color: bar.app.accentText
-      font.family: bar.app.glyphFamily
-      font.pixelSize: Style.font.title
+      size: Style.font.title
     }
     Text {
       Layout.fillWidth: true

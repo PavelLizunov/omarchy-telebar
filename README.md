@@ -37,6 +37,8 @@
 - **Built for Omarchy.** Your theme's colours with text kept readable, the keyboard first everywhere,
   every shortcut yours to change, global keys registered with Hyprland without touching your config,
   and silent sending per chat that your other Telegram apps follow.
+  Message bubbles, quick-reply backgrounds, menus and controls follow the theme's
+  corner radius, including square corners. Avatars and round video stay circular.
 - **Emoji by name, in three languages.** The emoji panel finds emoji, symbols and kaomoji by their
   English, Ukrainian or Russian names and keeps the ones you use and your skin tone. Reactions to your
   messages count as seen when you open the chat, instead of one by one.
@@ -50,6 +52,9 @@
   contact or anyone's @username, or create a group or a channel (`Ctrl+Shift+N`, or the pencil).
   Your chat with yourself is Saved Messages, and a forum group opens on its topics; a channel
   post's comments and the replies to a message open the same way (`c`, or the bar under it).
+  Click the handle between the chat list and conversation to collapse or expand the
+  list; drag that same handle or the divider to resize it. With the handle focused,
+  Left/Right adjust its width and Enter/Space toggle it.
 - **Chat info** — a panel (`Ctrl+I`) with a person's bio, username and phone, or a group's
   description and invite link; its members; and everything shared in it: photos and videos,
   files, links, voice messages, music and GIFs. Leave a group, or clear or delete a chat, from it.
@@ -63,6 +68,9 @@
   groups and channels by name too; one you open is joined from the bar that takes the message box's
   place. The + button (`Ctrl+Shift+A`) sends a poll or a quiz, dice, a person's contact card, or a
   location: coordinates, or a Google Maps or OpenStreetMap link pasted in.
+  In narrow windows, the message box keeps its width by moving secondary actions into
+  the three-dot menu. Typing replaces the microphone with Send; chat info fills the chat
+  area instead of squeezing messages beside it. Keyboard shortcuts stay the same.
 - **Rich messages** — formatting (typed the way Telegram's own apps read it: `**bold**`,
   `__italic__`, `~~strikethrough~~`, `||spoiler||`, `` `code` ``, `[text](address)`, or with the keys
   below), links, mentions and hashtags, spoilers, link previews (shown as you type, under or above the text, or left out), polls
@@ -75,6 +83,9 @@
   above the message box, which holds their caption, and go as albums of up to ten (`Ctrl+Shift+O` and
   `Ctrl+Shift+V` send them as files). Record voice
   messages (`Ctrl+R`) and round video messages (`Ctrl+Shift+R`). A file's menu opens it with its app or saves it to Downloads.
+  In either photo viewer, right-click (or press `Shift+F10`) to save the original photo to Downloads or copy the image
+  with `wl-copy`. Copying supports JPEG, PNG and WebP up to 10 MiB. Protected photos cannot be exported;
+  if the photo is still downloading, wait for it to finish and choose the action again.
 - **Emoji** — an emoji panel beside the message box (`Ctrl+;`), from the Omarchy emoji picker plugin's
   data and search: emoji, symbols and kaomoji found by their English, Ukrainian or Russian names, the
   ones you use most first, your skin tone kept (`Alt+0`–`Alt+5`). Type `:name` in a message for emoji
@@ -98,6 +109,9 @@
 - **Stories** — the stories of the people and channels you follow, above the chat list
   (`Ctrl+Shift+S`): photos and videos one after another. Watching one shows you among its
   viewers, as in any Telegram app. Posting stories needs an official app.
+  Settings → Chats → Show Telegram stories hides the strip and disables its opening
+  shortcut. This local preference applies to all profiles; it does not mute stories
+  in other Telegram clients.
 - **Stickers and GIFs** — favorite stickers (`F` on a sticker in the picker, or a sticker's menu in a chat),
   a sticker set added from a sticker someone sent (`A` in the picker), static, animated (TGS) and video (WebM) stickers, custom emoji, and a
   picker with your recent stickers, your GIFs (or GIFs found through Telegram's @gif, as its own
@@ -128,6 +142,14 @@
   over the whole screen (a video plays in your own video player). Scroll up for older messages.
   Close it in a chat and for the next hour it opens there again, with anything you had not sent;
   Omagram's mark in its corner opens the whole window.
+  Sending text, files or recordings keeps the quick view open for another reply.
+  Incoming messages shown in the quick view are marked read, including forum
+  messages grouped by topic. Topics outside the visible history stay unread.
+  Your outgoing messages show sent/read checks, or a sending/failure state. The
+  hotkey overlay stays centered; the bar panel remains positioned by Omarchy.
+  The paperclip opens the shared file picker in compact and wide quick views.
+  Selected files wait with their caption until Enter sends them. In narrow quick
+  views the tools sit below the text so the editor keeps its width.
 
 Calls cannot be taken in Omagram: TDLib carries a call's signalling but no voice engine. An
 incoming call is shown so you can decline it or answer in another Telegram app.
@@ -150,7 +172,7 @@ sudo pacman -S --needed git cmake gperf clang openssl zlib
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/ReidenXerx/omarchy-omagram.git --enable
+omarchy plugin add https://github.com/PavelLizunov/omarchy-tg.git --enable
 ~/.config/omarchy/plugins/reidenxerx.omagram/bin/omagram-build-tdlib
 ```
 
@@ -178,9 +200,156 @@ Optionally add Omagram to the Omarchy menu (Trigger → Omagram):
 3. Enter the API id and hash, then your phone number, the code Telegram sends you, and your
    two-step verification password if you have one. Or choose **Use a QR code instead** and scan
    it with Telegram on your phone (Settings → Devices → Link Desktop Device); drawing the code
-   needs `qrencode`.
+    needs `qrencode`. The sign-in screen shows progress while the code is prepared;
+    if preparation is unavailable, use your phone number. QR encoding runs outside
+    the service loop and an expired result cannot replace a newer sign-in step.
 
 The API id and hash go straight into your keyring; they are never written to a file.
+
+### Multiple accounts (fork)
+
+Click the profile initial beside the search field and choose **Add Account…** to sign in
+with another phone number or QR code. If Telegram requests a two-step verification
+password after scanning the QR code, enter that account's cloud password. **Back to
+another account** leaves the sign-in screen without signing out your other accounts.
+
+Select a profile in the same menu or in the bar icon's right-click menu. The window and
+quick view share the selected profile; all signed-in accounts continue receiving updates.
+The bar indicator sums unmuted unread messages from the main chat lists. Up to ten local
+profiles are supported. Notifications and their actions are tied to the originating account.
+
+The existing `default` profile keeps its original database and keyring entry. New profiles
+use `~/.local/share/omagram/accounts/<id>/` and separate encryption keys. Application API
+credentials are shared. **Log out** lets TDLib close its session; it does not delete files
+or encryption keys behind TDLib's back. The local profile remains available for sign-in.
+
+This fork retains the upstream plugin ID `reidenxerx.omagram`: install it as a replacement,
+not alongside the upstream copy. Do not run both copies against the same session directories.
+
+### Forum groups and topics
+
+Opening a forum group in the main window shows its topics. Select a topic to open its
+messages; the back arrow returns to the topic list. Topics and messages are fetched in
+pages of 50, rather than loading the group's entire history at once. Scroll the topic
+list to load further pages. A failed topic request shows the error and a retry button.
+The quick view remains a compact chat view; use the main window to choose forum topics.
+
+### Window layout and stories
+
+Drag the separator between the chat list and the conversation to resize the list. Its saved
+width is 72–1200 pixels and is capped at 45% of the current window width, leaving most of
+the window for the conversation. The default is 300 pixels. Drag below 180 pixels and
+release to collapse it to a 72-pixel avatar rail with unread badges. Double-click the
+separator to collapse/expand. Search expands the rail; the profile button still switches
+accounts and provides access to Settings in compact mode.
+The panel-arrow button at the top of the separator also collapses/expands with one click
+(or Enter/Space when focused). The divider is a one-pixel line with a wider invisible
+drag target, so it need not be visually thick to remain easy to grab.
+
+Stories are downloaded into TDLib's private `database/stories/` directory within the selected
+account. The viewer reports download/display errors and offers **Retry story**. Closing the
+viewer stops viewing that story; the downloaded files remain managed by TDLib.
+
+Silent animated stickers, GIFs and round-video previews only animate while their message is
+in the visible viewport and the Omagram window has focus. Explicit round-video audio playback
+can continue independently.
+
+### Built-in connection bridge
+
+Settings → Connection → **Built-in MTProto → WebSocket bridge** enables the bundled
+transport for the selected account. **Test the built-in bridge without switching** asks
+TDLib to ping it without changing the current account connection. A local loopback process
+is started on demand; no tray application, system package or root service is needed.
+Secrets travel through a private pipe and TDLib, never through command-line arguments
+or the UI/diagnostic log. Only proxy IDs and previous connection IDs are saved in
+`~/.config/omagram/bridge.json`. Disabling restores the preceding proxy if it still exists,
+otherwise direct access. The bridge exits with its owning daemon; unexpected exits are
+retried at most once per 30 seconds. A test-only idle process is stopped after three minutes.
+
+The MIT transport algorithms are adapted from Flowseal `tg-ws-proxy` at the revision recorded
+in `bin/vendor/flowseal/README.md`. This bundled profile uses Telegram WebSocket endpoints
+and the upstream DC2/DC4 WebSocket entrypoint with TLS hostname verification. No public
+Cloudflare relay pool, remote update job, fake-TLS server or third-party SNI fronting is
+enabled. Availability and benefit depend on the network; it is not a guarantee of bypass
+or higher throughput. See `THIRD_PARTY_NOTICES.md` for attribution.
+
+### Interface icons and media bounds
+
+Attachment and profile-photo pickers use the shared Qt Quick `FilePicker.qml` and
+Qt's directory model instead of the GTK native chooser, with no helper dependency.
+Click files or press Space to select; Open confirms, Escape cancels. The path field
+accepts absolute local folders, including mounted drives; Up navigates to the parent.
+This avoids the GTK places-sidebar path implicated in a USB
+volume-change crash on this installation. The original memory fault's owning
+component and physical USB regression are not yet established. Multi-file
+attachments and the profile-photo image filter retain their existing behavior.
+
+Service controls use the original 24-unit SVG drawings in `app/Icons.js`, rendered through
+`Icon.qml`. Existing action glyph codes are aliases, not a font dependency for drawing.
+The Omagram Ring brand mark and user-provided emoji/sticker artwork retain their identity.
+Icons pulse briefly on a state change; loading spinners run only while visible. SVGs are
+rasterized by Qt at a stable small size and shared by its image cache.
+The simplified drawings use 2.4-unit rounded strokes. Play/pause and the sidebar arrow
+use original matched QML contours with a finite 160 ms transition; they do not reparse
+SVG on every animation frame. Message bubbles inherit the theme's corner radius, with visible
+spacing and a faint boundary, with distinct incoming/outgoing fills. Quick replies
+likewise separate individual messages. These are functional separation cues, not shadows
+or continuously animated decoration.
+
+**Quit** in the bar menu closes the app window and gracefully stops the daemon and its
+owned proxy. It leaves the installed bar widget in place, so clicking it can start
+Omagram again. It does not sign out your Telegram accounts. If you want the widget
+removed from the bar, use Omarchy's plugin/widget controls separately.
+
+Full-screen photos have bounded asynchronous decode sizes and do not occupy the UI-image
+cache. In-message image sizes are rounded into 128-pixel buckets to avoid decoding again
+for every single-pixel resize. Voice media is opened only when playback is requested.
+Incoming UI events are handled in batches of 32 or six milliseconds, and chat updates are
+coalesced over 100 milliseconds before rebuilding/sorting lists. These limits preserve
+responsiveness under synchronization bursts; a single expensive QML handler can still
+exceed the budget and is recorded by local diagnostics.
+
+### Diagnosing pauses
+
+Quickshell keeps per-instance UI logs. Find the current instance with `quickshell list --all`
+and read its log with `quickshell log --pid <PID> --tail 100 --no-color`. If launched as a user
+systemd service, the same process output is also available through `journalctl --user -u <unit>`.
+The daemon also records local JSONL diagnostics in
+`~/.local/state/omagram/diagnostics/trace.jsonl`, with four rotated backups. Each file is
+capped at 4 MiB (20 MiB total), permissions are `0600`, and the containing directory is
+`0700`. There is no external telemetry endpoint. TDLib's verbose content log stays disabled.
+
+Records include IPC/TDLib command names, request IDs and elapsed times; slow handlers;
+event/task queue depth, backpressure, pending request ages, background jobs and socket
+backlogs; process RSS/swap, CPU time, page faults, I/O counters and system memory pressure.
+Every five seconds the window and shell report UI heartbeat delays, handler/response times,
+pending counts and numeric cache/layout sizes. The focused window also samples QML
+animation-tick intervals. These are **not GPU or compositor frame timings**; sampling
+intentionally keeps an animation callback active while the focused window is visible.
+
+An independent watchdog records location-only Python thread stacks if the daemon stops
+progressing for 2.5 seconds, at most once per 15 seconds. It reports missing UI heartbeats
+and their recovery. It cannot distinguish a compositor/GPU stall from a blocked UI thread
+on its own, and cannot produce native TDLib/Qt stacks. A stopped TDLib receive thread is
+reported to the UI rather than failing silently. Ordinary UI callbacks are capped at 512
+and expire after three minutes; an expired send is not automatically retried, since it
+may already have reached Telegram.
+
+No message bodies, account names/numbers, file paths, passwords, login codes, API hashes,
+request arguments, exception messages or frame-local variables are recorded. Operation
+names and timestamps still reveal usage patterns: do not publish the log unreviewed.
+Disk writes run on a dedicated bounded queue. If the filesystem fails, diagnosis records
+can be dropped; status exposes logger queue/drop/error counts. Logging is best-effort,
+not a durable audit trail. The code hash in the startup record identifies the instrumented
+backend and selected UI sources.
+
+Current counters can be queried over the private local socket using `diagnostics.status`.
+Use `diagnostics.ui` only for numeric UI reports; arbitrary strings are discarded and
+reports are rate-limited per connection. Diagnostic fields do not contain chat contents.
+
+The daemon processes at most 128 TDLib updates or eight milliseconds of update work before
+returning to IPC handling. A single slow handler can still exceed that budget. Clipboard reads
+run in bounded background jobs, so a slow clipboard owner does not block the service loop.
 
 ## Keys
 
@@ -344,7 +513,20 @@ python3 tests/settings_test.py  # settings and global shortcuts, with Hyprland f
 python3 tests/install_test.py   # the menu entries, the window's runtime root, the launcher entry
 node tests/model-test.js        # the window's list, message and menu logic
 node tests/keymap-test.js       # shortcuts: parsing, matching, clashes
+node tests/accounts-ui-test.js  # account event filters, stale callbacks and snapshots
+node tests/topics-ui-test.js    # forum load errors, stale replies and pagination progress
+node tests/stories-ui-test.js   # story requests/errors and bounded chat-list width
+python3 -m unittest discover -s tests -p event_loop_test.py  # queue fairness under synthetic updates
+python3 -m unittest discover -s tests -p diagnostics_test.py # watchdog, rotation, privacy and unsafe files
+python3 -m unittest discover -s tests -p bridge_test.py      # crypto, packet bounds, loopback process lifetime
+node tests/icons-test.js        # original SVG and glyph aliases
+node tests/ui-batch-test.js     # batched chat correctness; synthetic timing is not a desktop benchmark
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_morph.qml
 ```
+
+`tests/visual/README.md` describes inert consumer fixtures, reviewed screens and the
+limitations of the configured QML-preview MCP. Rendered PNGs do not prove desktop
+placement, all theme contrasts, media playback or every interactive route.
 
 ## Remove
 

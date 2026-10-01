@@ -82,6 +82,15 @@ function upsertKnown(chats, chat) {
   return out.length > CHATS_MAX ? out.slice(out.length - CHATS_MAX) : out
 }
 
+function mergeChatUpdates(chats, incoming, listKey) {
+  var byId = {}
+  toList(chats).concat(toList(incoming)).forEach(function (chat) {
+    if (isObject(chat) && typeof chat.id === "number") byId[chat.id] = chat
+  })
+  var values = Object.keys(byId).map(function (key) { return byId[key] })
+  return listKey ? chatsIn(values, listKey) : values.slice(-CHATS_MAX)
+}
+
 function chatsIn(chats, listKey) {
   var key = listKey || "main"
   return sortChats(toList(chats).filter(function (c) { return compareOrder(orderIn(c, key), "0") > 0 }), key)
@@ -544,7 +553,7 @@ function formatDuration(seconds) {
 function fitSize(width, height, maxWidth, maxHeight) {
   var w = Number(width) || 0
   var h = Number(height) || 0
-  if (w <= 0 || h <= 0) return { width: Math.round(maxWidth), height: Math.round(maxWidth * 3 / 4) }
+  if (w <= 0 || h <= 0) { w = maxWidth; h = maxWidth * 3 / 4 }
   var scale = Math.min(1, maxWidth / w, maxHeight / h)
   return { width: Math.max(1, Math.round(w * scale)), height: Math.max(1, Math.round(h * scale)) }
 }
@@ -754,13 +763,18 @@ var ACTION_MS = 6000   // Telegram repeats an action every few seconds while it 
 
 function withAction(actions, event, nowMs) {
   var next = {}
-  for (var k in actions || {}) next[k] = actions[k]
+  for (var k in actions || {}) {
+    var live = {}
+    for (var id in actions[k]) if (actions[k][id].until > nowMs) live[id] = actions[k][id]
+    if (Object.keys(live).length) next[k] = live
+  }
   if (!isObject(event) || !event.chatId) return next
   var chat = {}
   for (var s in next[event.chatId] || {}) chat[s] = next[event.chatId][s]
   if (event.action === "cancel" || !ACTION_WORDS[event.action]) delete chat[event.senderId]
   else chat[event.senderId] = { senderName: event.senderName || "", action: event.action, until: nowMs + ACTION_MS }
-  next[event.chatId] = chat
+  if (Object.keys(chat).length) next[event.chatId] = chat
+  else delete next[event.chatId]
   return next
 }
 
@@ -1523,7 +1537,11 @@ function proxyStepProblem(step, text) {
 function proxyText(proxy, ping, connection) {
   if (!isObject(proxy)) return ""
   var parts = [PROXY_TYPE_NAMES[proxy.type] || "Proxy"]
-  if (isObject(ping)) parts.push(ping.error ? "not answering" : Math.round(Number(ping.seconds) * 1000) + " ms")
+  if (isObject(ping)) {
+    var seconds = Number(ping.seconds)
+    if (ping.error) parts.push("not answering")
+    else if (isFinite(seconds) && seconds >= 0) parts.push(Math.round(seconds * 1000) + " ms")
+  }
   if (proxy.enabled) parts.push(["network", "proxy", "connecting"].indexOf(connection) >= 0 ? "connecting…" : "in use")
   return parts.join(" · ")
 }
@@ -1597,7 +1615,7 @@ function dayOf(date, month, year, now) {
   var d = new Date(y, month, date)
   if (d.getMonth() !== month || d.getDate() !== date) return null
   if (year === undefined && d.getTime() > now.getTime()) d = new Date(y - 1, month, date)
-  return d
+  return d.getMonth() === month && d.getDate() === date ? d : null
 }
 
 // The start of a day you typed, local time, in seconds: "today", "yesterday", "2026-09-01", "01.09.2026",
@@ -1849,4 +1867,3 @@ function forwardTargets(chats, query, meId) {
   var own = function (c) { return c.kind === "private" && !!meId && c.userId === meId }
   return filterChats(every.filter(own).concat(every.filter(function (c) { return !own(c) })), query, meId).slice(0, 100)
 }
-

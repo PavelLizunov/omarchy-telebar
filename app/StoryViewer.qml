@@ -21,6 +21,7 @@ FocusScope {
   property bool paused: false
   property real shownMs: 0
   property int serial: 0          // another story: answers about the one before are dropped
+  property bool downloadRequested: false
 
   readonly property int photoMs: 6000
   readonly property var active: Model.findStories(viewer.chats, viewer.chatId)
@@ -51,7 +52,18 @@ FocusScope {
 
   visible: viewer.chatId !== 0
   onVisibleChanged: if (visible) forceActiveFocus()
-  onFileChanged: if (viewer.file && !viewer.url && !viewer.file.active) viewer.app.download(viewer.file.id, 32)
+  onFileChanged: viewer.downloadMedia()
+
+  function downloadMedia() {
+    if (!viewer.visible || !viewer.file || viewer.url || viewer.file.active || viewer.downloadRequested) return
+    viewer.downloadRequested = true
+    var serial = viewer.serial
+    viewer.client.request("file.download", { fileId: viewer.file.id, priority: 32 }, function (answer) {
+      if (serial !== viewer.serial) return
+      if (answer.ok && answer.result) viewer.app.setFile(answer.result)
+      else viewer.error = answer.error || "Could not download the story"
+    })
+  }
 
   function show(chatId, storyId) {
     viewer.leave()
@@ -60,6 +72,7 @@ FocusScope {
     viewer.error = ""
     viewer.paused = false
     viewer.shownMs = 0
+    viewer.downloadRequested = false
     var serial = ++viewer.serial
     viewer.client.request("story.get", { chatId: chatId, storyId: storyId }, function (answer) {
       if (serial !== viewer.serial) return
@@ -68,6 +81,7 @@ FocusScope {
         return
       }
       viewer.story = answer.result.story
+      viewer.downloadMedia()
       viewer.client.request("story.open", { chatId: chatId, storyId: storyId })
     })
   }
@@ -149,6 +163,9 @@ FocusScope {
       source: viewer.story && viewer.story.kind === "photo" ? viewer.url : ""
       asynchronous: true
       fillMode: Image.PreserveAspectFit
+      sourceSize.width: Math.min(1080, stage.width * 2)
+      sourceSize.height: Math.min(1920, stage.height * 2)
+      onStatusChanged: if (status === Image.Error) viewer.error = "Could not display the downloaded story"
     }
 
     Loader {
@@ -163,6 +180,7 @@ FocusScope {
           source: viewer.url
           videoOutput: output
           audioOutput: AudioOutput {}
+          onErrorOccurred: function (error, message) { viewer.error = message || "Could not play the downloaded story" }
           onMediaStatusChanged: if (mediaStatus === MediaPlayer.EndOfMedia) Qt.callLater(function () { viewer.step(1) })
         }
         VideoOutput {
@@ -192,6 +210,16 @@ FocusScope {
       color: "white"
       font.family: viewer.app.fontFamily
       font.pixelSize: Style.font.body
+    }
+
+    Button {
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: Style.space(100)
+      app: viewer.app
+      visible: viewer.error !== ""
+      text: "Retry story"
+      onClicked: viewer.show(viewer.chatId, viewer.storyId)
     }
 
     // How far through the chat's stories: one bar each.

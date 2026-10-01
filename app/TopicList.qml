@@ -18,6 +18,8 @@ FocusScope {
   property var list: []
   property var next: null            // where the next page starts; null at the end
   property bool loading: false
+  property string error: ""
+  property bool retryMore: false
   property int cursor: 0
   property int serial: 0
   property real loadedChatId: 0
@@ -25,46 +27,55 @@ FocusScope {
   signal opened(var topic)
 
   function reload() {
-    if (!topics.chat) return
     topics.serial++
-    topics.loadedChatId = topics.chat.id
+    topics.loadedChatId = topics.chat ? topics.chat.id : 0
     topics.list = []
     topics.next = null
     topics.cursor = 0
     topics.loading = false
-    topics.fetch(false)
+    topics.error = ""
+    topics.retryMore = false
+    if (topics.chat) topics.fetch(false)
   }
 
   // A page of topics: the first again to catch up with what changed, or the next one.
   function fetch(more) {
     if (!topics.chat || topics.loading || (more && !topics.next)) return
     var serial = topics.serial
-    var args = { chatId: topics.chat.id, limit: 50 }
+    var chatId = topics.chat.id
+    var args = { chatId: chatId, limit: 50 }
     if (more) {
       args.offsetDate = topics.next.offsetDate
       args.offsetMessageId = topics.next.offsetMessageId
       args.offsetTopicId = topics.next.offsetTopicId
     }
     topics.loading = true
+    topics.error = ""
     topics.client.request("topics.list", args, function (answer) {
-      if (serial !== topics.serial) return
+      if (serial !== topics.serial || !topics.chat || topics.chat.id !== chatId) return
       topics.loading = false
-      if (!answer.ok) return
+      if (!answer.ok) {
+        topics.retryMore = more
+        topics.error = answer.error || "Could not load topics"
+        return
+      }
       var found = answer.result.topics || []
       topics.list = Model.mergeTopics(topics.list, found)
       if (more || topics.next === null) {
         var n = answer.result.next
-        topics.next = found.length && n && (n.offsetDate || n.offsetMessageId || n.offsetTopicId) ? n : null
+        var advanced = n && (!more || n.offsetDate !== args.offsetDate
+          || n.offsetMessageId !== args.offsetMessageId || n.offsetTopicId !== args.offsetTopicId)
+        topics.next = found.length && advanced && (n.offsetDate || n.offsetMessageId || n.offsetTopicId) ? n : null
       }
     })
   }
 
   Timer { id: refreshLater; interval: 1200; onTriggered: topics.fetch(false) }
 
-  function refresh() { refreshLater.restart() }
+  function refresh() { if (topics.visible && !refreshLater.running) refreshLater.start() }
 
   onChatChanged: {
-    if (!topics.chat) return
+    if (!topics.chat) { topics.reload(); return }
     if (topics.chat.id !== topics.loadedChatId) topics.reload()
     else if (topics.visible) topics.refresh()   // a new message somewhere in the forum
   }
@@ -97,6 +108,7 @@ FocusScope {
     anchors.fill: parent
     anchors.topMargin: Style.space(6)
     clip: true
+    bottomMargin: topics.error ? Style.space(52) : 0
     model: topics.list
     boundsBehavior: Flickable.StopAtBounds
     onAtYEndChanged: if (atYEnd && count > 0) topics.fetch(true)
@@ -154,19 +166,18 @@ FocusScope {
               font.bold: row.modelData.unread > 0
             }
             Text {
-              visible: row.modelData.closed
+              visible: row.modelData.closed === true
               text: "closed"
               color: topics.app.muted
               font.family: topics.app.fontFamily
               font.pixelSize: Style.font.caption
             }
             // md-pin U+F0403
-            Text {
-              visible: row.modelData.pinned
-              text: String.fromCodePoint(0xF0403)
+            Icon {
+              visible: row.modelData.pinned === true
+              name: "pin"
               color: topics.app.muted
-              font.family: topics.app.glyphFamily
-              font.pixelSize: Style.font.bodySmall
+              size: Style.font.bodySmall
             }
             Text {
               text: row.last ? Model.listTime(row.last.date, topics.nowMs) : ""
@@ -225,10 +236,24 @@ FocusScope {
     Text {
       anchors.centerIn: parent
       visible: listView.count === 0
-      text: topics.loading ? "Loading topics…" : "No topics yet"
-      color: topics.app.muted
+      width: parent.width - Style.space(32)
+      horizontalAlignment: Text.AlignHCenter
+      wrapMode: Text.WordWrap
+      textFormat: Text.PlainText
+      text: topics.loading ? "Loading topics…" : (topics.error || "No topics yet")
+      color: topics.error ? topics.app.urgent : topics.app.muted
       font.family: topics.app.fontFamily
       font.pixelSize: Style.font.body
     }
+  }
+
+  Button {
+    anchors.horizontalCenter: parent.horizontalCenter
+    anchors.bottom: parent.bottom
+    anchors.bottomMargin: Style.space(12)
+    app: topics.app
+    visible: topics.error !== "" && !topics.loading
+    text: "Retry loading topics"
+    onClicked: topics.fetch(topics.retryMore)
   }
 }

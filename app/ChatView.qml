@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Dialogs
 import Quickshell
 import qs.Commons
 import "Model.js" as Model
@@ -64,7 +63,7 @@ FocusScope {
   property var menuReactions: []
   property bool menuToComposer: false
   readonly property bool modalOpen: messageMenu.visible || muteMenu.visible || sendMenu.visible || rescheduleMenu.visible
-                                    || moreMenu.visible || diceMenu.visible || peoplePicker.visible || pollComposer.visible || peopleList.visible || autoDeleteMenu.visible
+                                    || moreMenu.visible || composerMenu.visible || headerMenu.visible || diceMenu.visible || peoplePicker.visible || pollComposer.visible || peopleList.visible || autoDeleteMenu.visible || attachDialog.visible
   readonly property var people: peopleList    // who reacted or has seen a message, for checks from outside
   readonly property var emoji: emojiPanel
   readonly property var polls: pollComposer   // the poll being made, for checks from outside
@@ -72,6 +71,10 @@ FocusScope {
   property bool confirmDeleteRevoke: true
   property var pinnedMessage: null
   property bool infoOpen: false
+  // Fit controls to the chat viewport and the host's spacing/font scale.
+  readonly property bool compactControls: chatColumn.width < Style.space(600)
+  readonly property bool minimalControls: chatColumn.width < Style.space(400)
+  readonly property bool infoOverlay: root.width < Style.space(720)
 
   // What the list shows: the history, or the chat's scheduled messages while scheduledOpen.
   property bool scheduledOpen: false
@@ -96,6 +99,7 @@ FocusScope {
   readonly property bool threadOpen: !!root.chat && !!app.openTopic && app.openTopic.thread === true && app.openTopic.chatId === root.chat.id
   readonly property real topicId: (root.forum || root.threadOpen) && app.openTopic && app.openTopic.chatId === root.chat.id ? app.openTopic.id : 0
   readonly property bool showTopics: root.forum && !root.topicId
+  onShowTopicsChanged: if (root.showTopics && root.chat) topicList.refresh()
   property real draftChatId: 0
   property real draftTopicId: 0
   property bool draftThread: false
@@ -169,6 +173,8 @@ FocusScope {
     sendMenu.close()
     rescheduleMenu.close()
     autoDeleteMenu.close()
+    composerMenu.close()
+    headerMenu.close()
     draftTimer.stop()
     root.revealed = ({})
     root.pollChoices = ({})
@@ -466,7 +472,13 @@ FocusScope {
 
   function composerAction(action, item) {
     if (!root.chat || !root.canWrite) return
-    if (action === "later") root.openSendMenu(item)
+    if (action === "overflow") {
+      var at = (item || composerButtons).mapToItem(root, 0, 0)
+      composerMenu.open(at.x, at.y - Style.space(4))
+    }
+    else if (action === "silent") root.toggleSilent()
+    else if (action === "send") root.send()
+    else if (action === "later") root.openSendMenu(item)
     else if (action === "attach") root.attach(true)
     else if (action === "emoji") root.openEmoji()
     else if (action === "stickers") root.toggleStickers()
@@ -475,11 +487,13 @@ FocusScope {
     else if (action === "more") root.openMoreMenu(item)
   }
 
-  FileDialog {
+  FilePicker {
     id: attachDialog
+    objectName: "attachment-file-dialog"
+    app: root.app
+    multiple: true
     property bool asPhoto: true
     title: asPhoto ? "Send photos or files" : "Send as files"
-    fileMode: FileDialog.OpenFiles
     onAccepted: {
       var paths = []
       for (var i = 0; i < selectedFiles.length; i++) {
@@ -1420,6 +1434,12 @@ FocusScope {
     root.lastTypingMs = 0
   }
 
+  function leaveAccount() {
+    root.leaveChat()
+    if (root.recordingVoice) root.stopVoice(false)
+    videoNote.finish(false)
+  }
+
   function flash(text) {
     root.notice = text
     noticeTimer.restart()
@@ -1673,10 +1693,11 @@ FocusScope {
   }
 
   ColumnLayout {
+    id: chatColumn
     anchors.left: parent.left
     anchors.top: parent.top
     anchors.bottom: parent.bottom
-    anchors.right: infoPanel.visible ? infoPanel.left : parent.right
+    anchors.right: infoPanel.visible && !root.infoOverlay ? infoPanel.left : parent.right
     spacing: 0
     visible: !!root.chat
 
@@ -1697,12 +1718,11 @@ FocusScope {
         height: Style.space(32)
         visible: backButton.shown
 
-        Text {
+        Icon {
           anchors.centerIn: parent
-          text: String.fromCodePoint(0xF004D)
+          name: "back"
           color: backArea.containsMouse ? app.foreground : app.muted
-          font.family: app.glyphFamily
-          font.pixelSize: Style.font.title
+          size: Style.font.title
         }
         MouseArea {
           id: backArea
@@ -1778,7 +1798,7 @@ FocusScope {
         Repeater {
           // md-magnify U+F0349; md-bell-outline U+F009C, md-bell-off U+F009B; md-information-outline U+F02FD
           // md-calendar-clock U+F00F0: the chat has scheduled messages
-          model: (root.chat && root.chat.hasScheduled && !root.scheduledOpen ? [
+          model: (root.chat && root.chat.hasScheduled && !root.scheduledOpen && !root.compactControls ? [
             { glyph: String.fromCodePoint(0xF00F0), action: "scheduled", hint: "Scheduled messages" }
           ] : []).concat([
             { glyph: String.fromCodePoint(0xF0349), action: "search",
@@ -1787,32 +1807,45 @@ FocusScope {
               hint: "The chat's info   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.chatInfo")[0] || "") },
             { glyph: String.fromCodePoint(root.chat && root.chat.muted ? 0xF009B : 0xF009C), action: "mute",
               hint: (root.chat && root.chat.muted ? "Muted" : "Notifications are on") + "   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.mute")[0] || "") }
-          ])
+          ]).filter(function (entry) {
+            return !root.compactControls || entry.action === "search" || (entry.action === "info" && !root.minimalControls)
+          }).concat(root.compactControls ? [{ glyph: String.fromCodePoint(0xF01D8), action: "overflow", hint: "Chat actions" }] : [])
           delegate: Item {
             id: headerButton
             required property var modelData
+            objectName: "header-action-" + modelData.action
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: modelData.hint
             width: Style.space(36)
             height: Style.space(36)
+            function activate() {
+              var action = modelData.action
+              if (action === "search") root.searchInChatRequested()
+              else if (action === "info") root.toggleInfo()
+              else if (action === "scheduled") root.openScheduled()
+              else if (action === "overflow") {
+                var at = mapToItem(root, 0, height)
+                headerMenu.open(at.x, at.y)
+              }
+              else root.openMuteMenu(headerButton)
+            }
+            Keys.onReturnPressed: activate()
+            Keys.onSpacePressed: activate()
+            Rectangle { anchors.fill: parent; radius: Style.cornerRadius; color: "transparent"; border.width: parent.activeFocus ? 1 : 0; border.color: app.accent }
 
-            Text {
+            Icon {
               anchors.centerIn: parent
-              text: headerButton.modelData.glyph
+              glyph: headerButton.modelData.glyph
               color: headerArea.containsMouse ? app.foreground : app.muted
-              font.family: app.glyphFamily
-              font.pixelSize: Style.font.title
+              size: Style.font.title
             }
             MouseArea {
               id: headerArea
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: {
-                var action = headerButton.modelData.action
-                if (action === "search") root.searchInChatRequested()
-                else if (action === "info") root.toggleInfo()
-                else if (action === "scheduled") root.openScheduled()
-                else root.openMuteMenu(headerButton)
-              }
+              onClicked: headerButton.activate()
               onContainsMouseChanged: if (containsMouse) root.flash(headerButton.modelData.hint)
             }
           }
@@ -1846,6 +1879,8 @@ FocusScope {
         spacing: Style.space(1)
 
         Text {
+          width: parent.width
+          elide: Text.ElideRight
           text: "Pinned message   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.pinnedMessage")[0] || "")
           color: app.muted
           font.family: app.fontFamily
@@ -1897,7 +1932,7 @@ FocusScope {
         anchors.fill: parent
         clip: true
         model: rows
-        spacing: Style.space(2)
+        spacing: Style.space(5)
         boundsBehavior: Flickable.StopAtBounds
         topMargin: Style.space(12)
         // Space under the newest message as a footer, not a bottom margin: going to the end counts
@@ -2023,7 +2058,7 @@ FocusScope {
     // ------------------------------------------------ reply / edit / notice bar, and questions
     Rectangle {
       Layout.fillWidth: true
-      Layout.preferredHeight: visible ? Style.space(40) : 0
+      Layout.preferredHeight: visible ? (root.prompt && root.compactControls ? promptText.implicitHeight + promptButtons.height + Style.space(26) : Style.space(40)) : 0
       visible: !!root.prompt || root.notice !== "" || (root.composerBlock === "" && (!!root.replyTo || !!root.editing))
       color: Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.04)
 
@@ -2034,13 +2069,17 @@ FocusScope {
       }
 
       Text {
+        id: promptText
         readonly property string cancelKey: Keymap.label(Keymap.keysFor(app.shortcuts, "composer.cancel")[0] || "")
         anchors.left: parent.left
         anchors.leftMargin: Style.space(18)
-        anchors.right: promptButtons.visible ? promptButtons.left : parent.right
+        anchors.right: promptButtons.visible && !root.compactControls ? promptButtons.left : parent.right
         anchors.rightMargin: Style.space(18)
-        anchors.verticalCenter: parent.verticalCenter
-        elide: Text.ElideRight
+        anchors.verticalCenter: root.prompt && root.compactControls ? undefined : parent.verticalCenter
+        anchors.top: root.prompt && root.compactControls ? parent.top : undefined
+        anchors.topMargin: Style.space(10)
+        elide: root.prompt && root.compactControls ? Text.ElideNone : Text.ElideRight
+        wrapMode: root.prompt && root.compactControls ? Text.Wrap : Text.NoWrap
         textFormat: Text.PlainText
         color: app.foreground
         font.family: app.fontFamily
@@ -2061,13 +2100,15 @@ FocusScope {
         visible: !!root.prompt
         anchors.right: parent.right
         anchors.rightMargin: Style.space(10)
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenter: root.compactControls ? undefined : parent.verticalCenter
+        anchors.bottom: root.compactControls ? parent.bottom : undefined
+        anchors.bottomMargin: Style.space(6)
         spacing: Style.space(4)
 
         Repeater {
           model: root.prompt ? [
-            { accept: true, label: root.prompt.action + "   " + Keymap.label(Keymap.keysFor(app.shortcuts, "prompt.accept")[0] || "") },
-            { accept: false, label: "Cancel   " + Keymap.label(Keymap.keysFor(app.shortcuts, "prompt.cancel")[0] || "") }
+            { accept: true, label: root.prompt.action + (root.compactControls ? "" : "   " + Keymap.label(Keymap.keysFor(app.shortcuts, "prompt.accept")[0] || "")) },
+            { accept: false, label: "Cancel" + (root.compactControls ? "" : "   " + Keymap.label(Keymap.keysFor(app.shortcuts, "prompt.cancel")[0] || "")) }
           ] : []
           delegate: Rectangle {
             id: promptAnswer
@@ -2102,14 +2143,16 @@ FocusScope {
     // ------------------------------------------------ selected messages
     Rectangle {
       Layout.fillWidth: true
-      Layout.preferredHeight: visible ? Style.space(40) : 0
+      Layout.preferredHeight: visible ? selectionActions.y + selectionActions.implicitHeight + Style.space(6) : 0
       visible: root.selecting && !!root.chat
       color: Qt.rgba(app.accent.r, app.accent.g, app.accent.b, 0.1)
 
       Text {
         anchors.left: parent.left
         anchors.leftMargin: Style.space(18)
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenter: root.compactControls ? undefined : parent.verticalCenter
+        anchors.top: root.compactControls ? parent.top : undefined
+        anchors.topMargin: Style.space(7)
         text: Model.selectedIds(root.messages, root.selection).length + " selected"
         color: app.foreground
         font.family: app.fontFamily
@@ -2117,10 +2160,11 @@ FocusScope {
         font.bold: true
       }
 
-      Row {
-        anchors.right: parent.right
-        anchors.rightMargin: Style.space(10)
-        anchors.verticalCenter: parent.verticalCenter
+      Flow {
+        id: selectionActions
+        x: root.compactControls ? Style.space(10) : Style.space(120)
+        y: root.compactControls ? Style.space(30) : Style.space(6)
+        width: parent.width - x - Style.space(10)
         spacing: Style.space(4)
 
         Repeater {
@@ -2141,7 +2185,7 @@ FocusScope {
             Text {
               id: selectionLabel
               anchors.centerIn: parent
-              text: selectionAction.modelData.label + "   " + Keymap.label(Keymap.keysFor(app.shortcuts, selectionAction.modelData.key)[0] || "")
+              text: selectionAction.modelData.label + (root.compactControls ? "" : "   " + Keymap.label(Keymap.keysFor(app.shortcuts, selectionAction.modelData.key)[0] || ""))
               color: selectionAction.modelData.action === "delete" ? app.urgent : app.foreground
               font.family: app.fontFamily
               font.pixelSize: Style.font.caption
@@ -2219,7 +2263,7 @@ FocusScope {
     StickerPicker {
       id: stickerPicker
       Layout.fillWidth: true
-      Layout.preferredHeight: root.stickersOpen ? Style.space(320) : 0
+      Layout.preferredHeight: root.stickersOpen ? Math.min(Style.space(320), root.height * 0.55) : 0
       visible: root.stickersOpen
       app: root.app
       chatId: root.chat ? root.chat.id : 0
@@ -2244,7 +2288,7 @@ FocusScope {
     EmojiPanel {
       id: emojiPanel
       Layout.fillWidth: true
-      Layout.preferredHeight: root.emojiOpen ? Style.space(300) : 0
+      Layout.preferredHeight: root.emojiOpen ? Math.min(Style.space(300), root.height * 0.6) : 0
       visible: root.emojiOpen
       app: root.app
       onInserted: function (text) {
@@ -2385,14 +2429,13 @@ FocusScope {
             fillMode: Image.PreserveAspectCrop
           }
           // What has no picture shows what it is: md-video U+F0567, md-music-note U+F0387, md-file-outline U+F0224
-          Text {
+          Icon {
             anchors.horizontalCenter: parent.horizontalCenter
             y: Style.space(10)
             visible: !thumbnail.visible
-            text: String.fromCodePoint(attachment.modelData.kind === "video" ? 0xF0567 : (attachment.modelData.kind === "audio" ? 0xF0387 : 0xF0224))
+            name: attachment.modelData.kind === "video" ? "video" : (attachment.modelData.kind === "audio" ? "music" : "file")
             color: app.foreground
-            font.family: app.glyphFamily
-            font.pixelSize: Style.font.title
+            size: Style.font.title
           }
           Text {
             anchors.left: parent.left
@@ -2417,12 +2460,11 @@ FocusScope {
             height: width
             radius: width / 2
             color: Qt.rgba(0, 0, 0, removeArea.containsMouse ? 0.8 : 0.55)
-            Text {
+            Icon {
               anchors.centerIn: parent
-              text: String.fromCodePoint(0xF0156)
+              name: "close"
               color: "white"
-              font.family: app.glyphFamily
-              font.pixelSize: Style.font.caption
+              size: Style.font.caption
             }
             MouseArea {
               id: removeArea
@@ -2440,7 +2482,7 @@ FocusScope {
         anchors.right: parent.right
         anchors.rightMargin: Style.space(14)
         anchors.verticalCenter: parent.verticalCenter
-        width: Style.space(250)
+        width: Math.min(Style.space(250), parent.width * 0.45)
         spacing: Style.space(4)
 
         // Photos and videos as themselves, or everything as files.
@@ -2603,7 +2645,7 @@ FocusScope {
 
         Text {
           readonly property string key: Keymap.label(Keymap.keysFor(app.shortcuts, "composer.linkPreview")[0] || "")
-          text: ({ below: "Under the text", above: "Above the text", none: "Left out" })[root.linkPreviewMode] + "   " + key + " changes it"
+          text: ({ below: "Under the text", above: "Above the text", none: "Left out" })[root.linkPreviewMode] + (root.compactControls ? "" : "   " + key + " changes it")
           textFormat: Text.PlainText
           color: app.muted
           font.family: app.fontFamily
@@ -2617,18 +2659,21 @@ FocusScope {
     // ------------------------------------------------ where you cannot write
     Rectangle {
       Layout.fillWidth: true
-      Layout.preferredHeight: visible ? Style.space(58) : 0
+      Layout.preferredHeight: visible ? Math.max(Style.space(58), blockedLabel.implicitHeight + Style.space(20)) : 0
       visible: !!root.chat && root.composerBlock !== "" && !root.showTopics && !root.scheduledOpen
       color: "transparent"
 
       Rectangle { width: parent.width; height: 1; color: app.border; opacity: 0.35 }
 
-      Row {
-        anchors.centerIn: parent
+      RowLayout {
+        anchors.fill: parent
+        anchors.margins: Style.space(10)
         spacing: Style.space(14)
 
         Text {
-          anchors.verticalCenter: parent.verticalCenter
+          id: blockedLabel
+          Layout.fillWidth: true
+          wrapMode: Text.Wrap
           text: root.composerBlock === "join" ? (root.chat && root.chat.kind === "channel" ? "You are not in this channel" : "You are not in this group")
               : root.composerBlock === "channel" ? "Only the channel's admins post here"
               : root.composerBlock === "left" ? "You left this group: someone in it can add you back"
@@ -2640,7 +2685,6 @@ FocusScope {
         }
         Button {
           id: blockButton
-          anchors.verticalCenter: parent.verticalCenter
           visible: root.composerBlock === "join" || root.composerBlock === "channel"
           app: root.app
           primary: root.composerBlock === "join"
@@ -2666,6 +2710,7 @@ FocusScope {
       Rectangle { width: parent.width; height: 1; color: app.border; opacity: 0.35 }
 
       Rectangle {
+        objectName: "composer-box"
         visible: !root.recordingVoice && !root.secretBlocked
         anchors.left: parent.left
         anchors.right: composerButtons.left
@@ -2689,7 +2734,7 @@ FocusScope {
           anchors.topMargin: Style.space(7)
           width: silentChipRow.implicitWidth + Style.space(14)
           height: silentChipRow.implicitHeight + Style.space(6)
-          radius: height / 2
+          radius: Style.cornerRadius
           color: Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.08)
 
           Row {
@@ -2697,14 +2742,14 @@ FocusScope {
             anchors.centerIn: parent
             spacing: Style.space(5)
 
-            Text {
+            Icon {
               anchors.verticalCenter: parent.verticalCenter
-              text: String.fromCodePoint(0xF00A0)   // md-bell-sleep
+              name: "bellSleep"
               color: app.foreground
-              font.family: app.glyphFamily
-              font.pixelSize: Style.font.bodySmall
+              size: Style.font.bodySmall
             }
             Text {
+              visible: !root.minimalControls
               anchors.verticalCenter: parent.verticalCenter
               text: "Silent"
               textFormat: Text.PlainText
@@ -2735,6 +2780,7 @@ FocusScope {
 
           TextEdit {
             id: composer
+            objectName: "composer-text"
             width: composerFlick.width
             wrapMode: TextEdit.Wrap
             textFormat: TextEdit.PlainText
@@ -2793,14 +2839,17 @@ FocusScope {
             }
 
             Text {
+              width: parent.width
+              elide: Text.ElideRight
               visible: composer.text === ""
               text: root.editing ? (root.editingCaption ? "Caption" : "Edit message")
+                  : root.attachments.length && root.compactControls ? "Caption"
                   : root.attachments.length ? "A caption for the files, if you like   "
                                               + Keymap.label(Keymap.keysFor(app.shortcuts, "composer.send")[0] || "") + " to send"
-                  : (root.threadOpen ? (app.openTopic.name === "Comments" ? "Comment" : "Reply") : "Message") + "   "
+                  : (root.threadOpen ? (app.openTopic.name === "Comments" ? "Comment" : "Reply") : "Message") + (root.compactControls ? "" : "   "
                     + Keymap.label(Keymap.keysFor(app.shortcuts, "composer.send")[0] || "")
                     + (root.chat && root.chat.silent ? " to send without sound, " : " to send, ")
-                    + Keymap.label(Keymap.keysFor(app.shortcuts, "composer.newLine")[0] || "") + " for a new line"
+                     + Keymap.label(Keymap.keysFor(app.shortcuts, "composer.newLine")[0] || "") + " for a new line")
               color: app.muted
               opacity: 0.7
               font: composer.font
@@ -2812,6 +2861,7 @@ FocusScope {
       // Attach, stickers, a video message, a voice message.
       Row {
         id: composerButtons
+        objectName: "composer-actions"
         visible: !root.recordingVoice && !root.secretBlocked
         anchors.right: parent.right
         anchors.rightMargin: Style.space(8)
@@ -2833,20 +2883,32 @@ FocusScope {
             { glyph: String.fromCodePoint(0xF0785), action: "stickers", hint: "Stickers   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.stickers")[0] || "") },
             { glyph: String.fromCodePoint(0xF0567), action: "video", hint: "Video message   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.videoNote")[0] || "") },
             { glyph: String.fromCodePoint(0xF036C), action: "voice", hint: "Voice message   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.voice")[0] || "") }
-          ]
+          ].filter(function (entry) {
+            return !root.compactControls || entry.action === "voice" || (!root.minimalControls && (entry.action === "emoji" || entry.action === "attach"))
+          }).map(function (entry) {
+            if (entry.action === "voice" && (composer.text.trim() !== "" || root.attachments.length || root.editingId))
+              return { glyph: String.fromCodePoint(0xF048A), action: "send", hint: root.editingId ? "Save edit" : "Send message" }
+            return entry
+          }).concat(root.compactControls ? [{ glyph: String.fromCodePoint(0xF01D8), action: "overflow", hint: "Message actions" }] : [])
           delegate: Item {
             id: composerButton
             required property var modelData
+            objectName: "composer-action-" + modelData.action
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: modelData.hint
             width: Style.space(38)
             height: Style.space(38)
+            Keys.onReturnPressed: root.composerAction(modelData.action, composerButton)
+            Keys.onSpacePressed: root.composerAction(modelData.action, composerButton)
+            Rectangle { anchors.fill: parent; radius: Style.cornerRadius; color: "transparent"; border.width: parent.activeFocus ? 1 : 0; border.color: app.accent }
 
-            Text {
+            Icon {
               anchors.centerIn: parent
-              text: composerButton.modelData.glyph
+              glyph: composerButton.modelData.glyph
               color: buttonArea.containsMouse || (composerButton.modelData.action === "stickers" && root.stickersOpen)
                      || (composerButton.modelData.action === "silent" && !!root.chat && root.chat.silent) ? app.foreground : app.muted
-              font.family: app.glyphFamily
-              font.pixelSize: Style.font.title
+              size: Style.font.title
             }
             MouseArea {
               id: buttonArea
@@ -2854,8 +2916,7 @@ FocusScope {
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
               onClicked: {
-                if (composerButton.modelData.action === "silent") root.toggleSilent()
-                else root.composerAction(composerButton.modelData.action, composerButton)
+                root.composerAction(composerButton.modelData.action, composerButton)
               }
               onContainsMouseChanged: if (containsMouse) root.flash(composerButton.modelData.hint)
             }
@@ -2870,12 +2931,11 @@ FocusScope {
         spacing: Style.space(8)
 
         // md-lock-outline U+F0341
-        Text {
+        Icon {
           anchors.verticalCenter: parent.verticalCenter
-          text: String.fromCodePoint(0xF0341)
+          name: "lock"
           color: app.muted
-          font.family: app.glyphFamily
-          font.pixelSize: Style.font.body
+          size: Style.font.body
         }
         Text {
           readonly property string stateText: Model.secretStateText(root.chat)
@@ -2925,6 +2985,7 @@ FocusScope {
             font.pixelSize: Style.font.body
           }
           Text {
+            visible: !root.compactControls
             anchors.verticalCenter: parent.verticalCenter
             text: Keymap.label(Keymap.keysFor(app.shortcuts, "voice.send")[0] || "") + " sends  ·  "
                   + Keymap.label(Keymap.keysFor(app.shortcuts, "voice.cancel")[0] || "") + " cancels"
@@ -2951,12 +3012,11 @@ FocusScope {
               required property var modelData
               width: Style.space(38)
               height: Style.space(38)
-              Text {
+              Icon {
                 anchors.centerIn: parent
-                text: recordButton.modelData.glyph
+                glyph: recordButton.modelData.glyph
                 color: recordButton.modelData.send ? app.accentText : (recordArea.containsMouse ? app.urgent : app.muted)
-                font.family: app.glyphFamily
-                font.pixelSize: Style.font.title
+                size: Style.font.title
               }
               MouseArea {
                 id: recordArea
@@ -2975,10 +3035,12 @@ FocusScope {
   // ------------------------------------------------ the chat's info
   ChatInfo {
     id: infoPanel
+    objectName: "chat-info-panel"
+    z: root.infoOverlay ? 20 : 0
     anchors.right: parent.right
     anchors.top: parent.top
     anchors.bottom: parent.bottom
-    width: Math.min(Style.space(380), Math.max(Style.space(300), root.width * 0.38))
+    width: root.infoOverlay ? root.width : Math.min(Style.space(380), Math.max(Style.space(300), root.width * 0.38))
     visible: root.infoOpen && !!root.chat
     app: root.app
     client: root.client
@@ -3016,6 +3078,41 @@ FocusScope {
   }
 
   // ------------------------------------------------ menus
+  ContextMenu {
+    id: composerMenu
+    objectName: "composer-overflow-menu"
+    anchors.fill: parent
+    app: root.app
+    upward: true
+    items: [
+      { id: "attach", label: "Attach photos or files" },
+      { id: "emoji", label: "Emoji" },
+      { id: "stickers", label: "Stickers" },
+      { id: "video", label: "Video message" },
+      { id: "voice", label: "Voice message" },
+      { id: "later", label: "Send later or without sound" },
+      { id: "silent", label: root.chat && root.chat.silent ? "Turn off silent sending" : "Turn on silent sending" },
+      { id: "more", label: "Poll, dice, contact or location" }
+    ]
+    onDismissed: root.focusComposer()
+    onPicked: function (id) { root.focusComposer(); root.composerAction(id, composerButtons) }
+  }
+
+  ContextMenu {
+    id: headerMenu
+    objectName: "chat-actions-menu"
+    anchors.fill: parent
+    app: root.app
+    items: [{ id: "info", label: "Chat info" }, { id: "mute", label: "Notifications" }]
+      .concat(root.chat && root.chat.hasScheduled && !root.scheduledOpen ? [{ id: "scheduled", label: "Scheduled messages" }] : [])
+    onDismissed: root.focusComposer()
+    onPicked: function (id) {
+      if (id === "info") root.openInfo()
+      else if (id === "scheduled") root.openScheduled()
+      else root.openMuteMenu(headerButtons)
+    }
+  }
+
   ContextMenu {
     id: messageMenu
     anchors.fill: parent
@@ -3148,12 +3245,11 @@ FocusScope {
     border.width: 1
     border.color: Qt.rgba(root.app.foreground.r, root.app.foreground.g, root.app.foreground.b, floatArea.containsMouse ? 0.4 : 0.18)
 
-    Text {
+    Icon {
       anchors.centerIn: parent
-      text: floatButton.glyph
+      glyph: floatButton.glyph
       color: floatArea.containsMouse ? root.app.accentText : root.app.foreground
-      font.family: root.app.glyphFamily
-      font.pixelSize: Style.font.title
+      size: Style.font.title
     }
     Rectangle {
       visible: floatButton.count > 0

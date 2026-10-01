@@ -75,6 +75,7 @@ Scope {
   // Chats with active stories: chat id -> what the "stories" event said; and in the order shown.
   property var activeStories: ({})
   readonly property var storyChats: {
+    if (!omagram.showStories) return []
     var list = []
     for (var id in omagram.activeStories) list.push(omagram.activeStories[id])
     return Model.storyChats(list)
@@ -84,12 +85,26 @@ Scope {
     interval: 1000
     repeat: true
     running: Object.keys(omagram.chatActions).length > 0
-    onTriggered: omagram.clockMs = Date.now()
+    onTriggered: {
+      omagram.clockMs = Date.now()
+      omagram.chatActions = Model.withAction(omagram.chatActions, null, omagram.clockMs)
+    }
   }
   property var globalShortcuts: ({})
   property var globalStatus: ({})
   property string connection: ""           // how the service reaches Telegram: "proxy", "connecting", "ready"…
   property bool settingsOpen: false
+  property int chatListWidth: 300
+
+  function expandChatList() {
+    omagram.chatListWidth = 300
+    service.request("settings.chatListWidth", { width: 300 })
+  }
+
+  function toggleChatList(compact) {
+    omagram.chatListWidth = compact ? 300 : 72
+    service.request("settings.chatListWidth", { width: omagram.chatListWidth })
+  }
 
   // Voice and video messages, videos and music play at 1×, 1.5× or 2× (Qt keeps a voice's pitch);
   // the choice is kept in the settings for the next time.
@@ -109,12 +124,16 @@ Scope {
     omagram.playbackRate = Model.playbackRate(view.settings.playbackRate)
     omagram.autoDownloadRules = view.settings.autoDownload || null
     omagram.reactionsSeen = view.settings.reactionsSeen !== false
+    omagram.showStories = view.settings.showStories !== false
     omagram.emojiState = view.settings.emoji || ({ tone: 0, recents: ({}) })
     omagram.soundStyle = (view.settings.sounds || {}).style || "drop"
+    omagram.chatListWidth = view.settings.chatListWidth || 300
   }
 
   // What downloads by itself as it comes on screen (Model.autoDownload); kept in the settings.
   property var autoDownloadRules: null
+  property bool showStories: true
+  onShowStoriesChanged: if (!showStories) storyViewer.finish()
   property bool reactionsSeen: true        // reactions to your messages count as seen when the chat opens
   property var emojiState: ({ tone: 0, recents: ({}) })   // the skin tone, and the emoji you use most
   property string soundStyle: "drop"       // what makes each person's notification sound, or "off"
@@ -128,6 +147,16 @@ Scope {
     service.request("settings.autoDownload", { rules: rules })
   }
   property var chats: []
+  property var pendingChats: ({})
+  Timer {
+    id: chatFlush
+    interval: 100
+    onTriggered: {
+      var updates = Object.keys(omagram.pendingChats).map(function (key) { return omagram.pendingChats[key] })
+      omagram.pendingChats = ({})
+      omagram.chats = Model.mergeChatUpdates(omagram.chats, updates, "")
+    }
+  }
   property var messages: ({})
   property int messagesRevision: 0
   property real openChatId: 0
@@ -157,6 +186,12 @@ Scope {
   // A notification's Open or Reply, or `omagram --chat <id>`.
   function openFromService(target) {
     if (!target || !target.chatId) return
+    if (target.account && target.account !== omagram.activeAccount) {
+      service.request("account.switch", { accountId: target.account }, function (answer) {
+        if (answer.ok) { omagram.applyAccountSnapshot(answer.result); omagram.openFromService(target) }
+      })
+      return
+    }
     omagram.openChatById(target.chatId, false)
     if (screen.item && screen.item.focusComposer) Qt.callLater(function () { screen.item.focusComposer() })
   }
@@ -244,6 +279,7 @@ Scope {
   // A chat's stories from its first unread one; with no chat given, the first chat with unread
   // stories, or the first with any.
   function openStories(chatId) {
+    if (!omagram.showStories) return
     var list = omagram.storyChats
     var active = chatId ? Model.findStories(list, chatId) : (list.filter(Model.storiesUnread)[0] || list[0])
     if (active) storyViewer.show(active.chatId, Model.firstStoryId(active))
@@ -296,28 +332,120 @@ Scope {
     onTriggered: omagram.nowMs = Date.now()
   }
 
+  property var accounts: []
+  property string activeAccount: "default"
+  property bool accountBusy: false
+  property string accountError: ""
+  property bool accountTransition: false
+  property int accountRevision: -1
+
+  function resetAccountView() {
+    chatFlush.stop()
+    omagram.pendingChats = ({})
+    if (screen.item && screen.item.leaveAccount) screen.item.leaveAccount()
+    service.request("ui.focus", { chatId: 0 })
+    omagram.accountTransition = true
+    screen.active = false
+    omagram.settingsOpen = false
+    omagram.viewerMessageId = 0
+    storyViewer.finish()
+    omagram.openChatId = 0
+    omagram.openTopic = null
+    omagram.messages = ({})
+    omagram.messagesRevision++
+    omagram.files = ({})
+    omagram.filesRevision++
+    omagram.lottieCache = ({})
+    omagram.customEmoji = ({})
+    omagram.customEmojiRevision++
+    omagram.noOlder = ({})
+    omagram.historyOrder = []
+    omagram.loadedLists = ({})
+    omagram.loadingOlder = false
+    omagram.listKey = "main"
+    omagram.chatActions = ({})
+    omagram.userStatuses = ({})
+    omagram.recording = { state: "idle" }
+  }
+
+  function applyAccountSnapshot(result) {
+    if (result.accountRevision !== undefined && result.accountRevision < omagram.accountRevision) return
+    omagram.accountRevision = result.accountRevision === undefined ? omagram.accountRevision : result.accountRevision
+    var changed = result.activeAccount && result.activeAccount !== omagram.activeAccount
+    if (changed) omagram.resetAccountView()
+    chatFlush.stop()
+    omagram.pendingChats = ({})
+    omagram.activeAccount = result.activeAccount || omagram.activeAccount
+    omagram.auth = result.auth || { state: "starting" }
+    omagram.meId = result.meId || 0
+    omagram.connection = result.connection || ""
+    omagram.chats = result.allChats || result.chats || []
+    omagram.folders = result.folders || []
+    omagram.mainPosition = result.mainPosition || 0
+    if (result.accounts) omagram.accounts = result.accounts
+    var calls = {}, stories = {}
+    for (var c = 0; c < (result.calls || []).length; c++) calls[result.calls[c].id] = result.calls[c]
+    for (var s = 0; s < (result.stories || []).length; s++) stories[result.stories[s].chatId] = result.stories[s]
+    omagram.calls = calls
+    omagram.activeStories = stories
+    omagram.accountTransition = false
+    screen.active = true
+  }
+
+  function reloadAccount() {
+    service.request("hello", { window: true }, function (answer) {
+      if (answer.ok) omagram.applyAccountSnapshot(answer.result)
+      else omagram.accountError = answer.error
+    })
+  }
+
+  function refreshAccounts() {
+    service.request("account.list", {}, function (ans) {
+      if (ans.ok && ans.result) {
+        omagram.accounts = ans.result.accounts || []
+      }
+    })
+  }
+
+  function switchAccount(accountId) {
+    if (!accountId || omagram.accountBusy) return
+    omagram.accountBusy = true
+    omagram.accountError = ""
+    service.request("account.switch", { accountId: accountId }, function (ans) {
+      omagram.accountBusy = false
+      if (ans.ok && ans.result) {
+        omagram.applyAccountSnapshot(ans.result)
+      } else omagram.accountError = ans.error || "Could not switch account"
+    })
+  }
+
+  function addAccount(name) {
+    if (omagram.accountBusy) return
+    omagram.accountBusy = true
+    omagram.accountError = ""
+    service.request("account.add", { name: name || "" }, function (ans) {
+      omagram.accountBusy = false
+      if (ans.ok && ans.result) {
+        omagram.reloadAccount()
+      } else omagram.accountError = ans.error || "Could not add account"
+    })
+  }
+
   // ---------------------------------------------------------------- service
 
   OmagramClient {
     id: service
     binDir: omagram.binDir
     window: true
+    accountId: omagram.activeAccount
+    uiContext: ({ focused: omagram.windowFocused, visible: window.visible, width: window.width,
+      height: window.height, chat_list_width: omagram.chatListWidth, chats: omagram.chats.length,
+      messages: omagram.openChatId ? omagram.messagesFor(omagram.openChatId).length : 0,
+      files: Object.keys(omagram.files).length, stories: omagram.storyChats.length })
 
     onHello: function (result) {
-      omagram.auth = result.auth || { state: "starting" }
-      omagram.meId = result.meId || 0
+      omagram.applyAccountSnapshot(result)
       omagram.applySettings(result)
-      var known = {}
-      var ringing = result.calls || []
-      for (var c = 0; c < ringing.length; c++) known[ringing[c].id] = ringing[c]
-      omagram.calls = known
-      var stories = {}
-      var withStories = result.stories || []
-      for (var st = 0; st < withStories.length; st++) stories[withStories[st].chatId] = withStories[st]
-      omagram.activeStories = stories
-      omagram.chats = result.allChats || result.chats || []
-      omagram.folders = result.folders || []
-      omagram.mainPosition = result.mainPosition || 0
       omagram.loadedLists = ({})
       if (omagram.auth.state === "ready" && omagram.openChatId) omagram.openChatById(omagram.openChatId, true)
       if (omagram.auth.state === "ready") {
@@ -331,6 +459,8 @@ Scope {
     onConnectedChanged: {
       if (connected) return
       omagram.auth = { state: "connecting" }
+      omagram.accountRevision = -1
+      omagram.accountBusy = false
       omagram.recording = { state: "idle" }
     }
   }
@@ -338,20 +468,32 @@ Scope {
   function onEvent(name, e) {
     // Quit, from Omagram's menu in the bar: the window closes with the service.
     if (name === "quit") { Qt.quit(); return }
+    if (name === "accounts") { omagram.accounts = e.accounts || []; return }
+    if (name === "accountSwitched") {
+      omagram.reloadAccount()
+      return
+    }
+    if (name === "accountAdded" || name === "accountRemoved") {
+      omagram.reloadAccount()
+      return
+    }
+    if (name === "open") { omagram.openFromService(e); return }
+    if (e.account && e.account !== omagram.activeAccount) return
     if (name === "connection") { omagram.connection = e.state || ""; return }
     if (name === "auth") {
-      omagram.auth = e.auth
-      if (e.auth.state !== "ready") {
-        omagram.chats = []
-        omagram.messages = ({})
-        omagram.activeStories = ({})
-        omagram.openTopic = null
-        omagram.openChatId = 0
-        omagram.folders = []
-        omagram.listKey = "main"
+      if (!e.account || e.account === omagram.activeAccount) {
+        omagram.auth = e.auth
+        if (e.auth.state !== "ready") {
+          omagram.chats = []
+          omagram.messages = ({})
+          omagram.activeStories = ({})
+          omagram.openTopic = null
+          omagram.openChatId = 0
+          omagram.folders = []
+          omagram.listKey = "main"
+        }
       }
-    } else if (name === "open") {
-      omagram.openFromService(e)
+      omagram.refreshAccounts()
     } else if (name === "folders") {
       omagram.folders = e.folders || []
       omagram.mainPosition = e.mainPosition || 0
@@ -361,7 +503,8 @@ Scope {
     } else if (name === "me") {
       omagram.meId = e.meId || 0
     } else if (name === "chat") {
-      omagram.chats = Model.upsertKnown(omagram.chats, e.chat)
+      omagram.pendingChats[e.chat.id] = e.chat
+      if (!chatFlush.running) chatFlush.start()
     } else if (name === "message") {
       var m = e.message
       if (m.sendAt) {   // scheduled: part of no history until it goes out
@@ -600,6 +743,8 @@ Scope {
       omagram.openChatAt(topic.from.chatId, topic.from.messageId)
       return
     }
+    // The forum view is now visible again; refresh it even when the chat itself did not change.
+    if (omagram.openChat && omagram.openChat.forum) omagram.topicsChanged(omagram.openChatId)
     Qt.callLater(function () { if (screen.item && screen.item.focusMessages) screen.item.focusMessages() })
   }
 
@@ -634,7 +779,11 @@ Scope {
     var args = { chatId: chatId, fromMessageId: fromMessageId, limit: 50 }
     service.request(omagram.historyCommand(topic, args), args, function (answer) {
       if (fromMessageId) omagram.loadingOlder = false
-      if (!answer.ok) return
+      if (!answer.ok) {
+        if (key === omagram.openKey && screen.item && screen.item.notify)
+          screen.item.notify(answer.error || "Could not load messages")
+        return
+      }
       var incoming = answer.result.messages || []
       var before = (omagram.messages[key] || []).length
       var merged = Model.mergeMessages(omagram.messages[key] || [], incoming)
@@ -657,7 +806,7 @@ Scope {
     var chat = omagram.openChat
     var topic = chat && omagram.openTopic && omagram.openTopic.chatId === chat.id ? omagram.openTopic : null
     var thread = !!topic && topic.thread === true
-    if (!chat || !omagram.windowFocused || !(chat.unread > 0 || thread)) return
+    if (!chat || !omagram.windowFocused || !(chat.unread > 0 || topic)) return
     omagram.markRead(chat.id, Model.incomingIds(omagram.messages[omagram.openKey] || [], 100), topic ? topic.id : 0, thread)
   }
 
@@ -687,6 +836,7 @@ Scope {
       anchors.fill: parent
       focus: true
       sourceComponent: {
+        if (omagram.accountTransition) return statusView
         var s = omagram.auth.state
         if (s === "ready") return mainView
         if (s === "needCredentials") return setupView
@@ -702,13 +852,15 @@ Scope {
       onActivated: omagram.settingsOpen = true
     }
 
-    SettingsView {
+    Loader {
       anchors.fill: parent
-      app: omagram
-      visible: omagram.settingsOpen
-      onClosed: {
-        omagram.settingsOpen = false
-        if (screen.item) screen.item.forceActiveFocus()
+      active: omagram.settingsOpen
+      sourceComponent: SettingsView {
+        app: omagram
+        onClosed: {
+          omagram.settingsOpen = false
+          if (screen.item) screen.item.forceActiveFocus()
+        }
       }
     }
 
@@ -820,6 +972,7 @@ Scope {
       function focusMessages() { chatView.focusMessages() }
       function focusMessage(id) { return chatView.focusMessage(id) }
       function notify(text) { chatView.flash(text) }
+      function leaveAccount() { chatView.leaveAccount() }
       function openFile(message) { chatView.openFile(message) }
 
       // A menu or the forward dialog has the keyboard: the window's shortcuts wait.
@@ -873,7 +1026,10 @@ Scope {
         ChatList {
           id: chatList
           app: omagram
-          Layout.preferredWidth: Math.max(280, Math.min(380, mainScope.width * 0.32))
+          menuHost: mainScope
+          Layout.minimumWidth: Math.min(omagram.chatListWidth, mainScope.width * 0.45)
+          Layout.preferredWidth: Layout.minimumWidth
+          Layout.maximumWidth: Layout.minimumWidth
           Layout.fillHeight: true
           chats: omagram.listChats
           allChats: omagram.chats
@@ -905,11 +1061,23 @@ Scope {
           onToChat: chatView.focusComposer()
         }
 
-        Rectangle {
+        SidebarHandle {
+          z: 20
+          app: omagram
+          compact: chatList.compact
+          currentWidth: chatList.width
+          maximumWidth: Math.min(1200, mainScope.width * 0.45)
+          onWidthEdited: function (value) { omagram.chatListWidth = value }
+          onWidthCommitted: {
+            if (omagram.chatListWidth < 180) omagram.chatListWidth = 72
+            service.request("settings.chatListWidth", { width: omagram.chatListWidth })
+          }
+          onToggleRequested: omagram.toggleChatList(chatList.compact)
           Layout.preferredWidth: 1
+          Layout.minimumWidth: Layout.preferredWidth
+          Layout.maximumWidth: Layout.preferredWidth
           Layout.fillHeight: true
-          color: omagram.border
-          opacity: 0.35
+
         }
 
         ChatView {

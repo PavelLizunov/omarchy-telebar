@@ -176,14 +176,13 @@ FocusScope {
       }
 
       // md-close U+F0156
-      Text {
+      Icon {
         anchors.right: parent.right
         anchors.rightMargin: Style.space(16)
         anchors.verticalCenter: parent.verticalCenter
-        text: String.fromCodePoint(0xF0156)
+        name: "close"
         color: closeArea.containsMouse ? info.app.foreground : info.app.muted
-        font.family: info.app.glyphFamily
-        font.pixelSize: Style.font.title
+        size: Style.font.title
         MouseArea {
           id: closeArea
           anchors.fill: parent

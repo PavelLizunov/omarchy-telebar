@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Dialogs
 import QtQuick.Layouts
 import qs.Commons
 import "Model.js" as Model
@@ -32,6 +31,7 @@ FocusScope {
   property var profile: null         // what profile.get last said
   property var editing: null         // { field, label }: a field of your profile being changed
   property bool photoBusy: false
+  readonly property bool narrow: width < Style.space(600)
   readonly property var profileChat: Model.profileChat(settings.profile)
 
   readonly property var overrides: settings.app ? settings.app.shortcuts : ({})
@@ -42,12 +42,12 @@ FocusScope {
   readonly property var accountKinds: ["profilePhoto", "profileField", "profilePhone", "privacy", "blocked", "blockedSender", "password",
                                        "passwordOff", "passwordCode", "accountTtl", "autoDelete", "proxy", "proxyAdd", "reactionsSeen", "sound", "soundHear", "scope", "previews", "download", "folder", "newFolder",
                                        "folderName", "folderFlag", "folderChat", "folderAdd", "folderSave", "folderDelete",
-                                       "storage", "sessions", "session", "otherSessions", "logout"]
+                                       "storage", "sessions", "session", "otherSessions", "logout", "bridge", "bridgeTest", "showStories"]
 
   signal closed()
 
-  onVisibleChanged: {
-    if (!visible) return
+  function loadVisibleSettings() {
+    if (!settings.visible) return
     settings.recording = ""
     settings.error = ""
     settings.confirm = null
@@ -65,6 +65,8 @@ FocusScope {
     settings.loadStorage()
     settings.loadSessions()
   }
+  onVisibleChanged: settings.loadVisibleSettings()
+  Component.onCompleted: settings.loadVisibleSettings()
 
   function loadProfile() {
     settings.app.request("profile.get", {}, function (answer) { if (answer.ok) settings.profile = answer.result })
@@ -114,6 +116,7 @@ FocusScope {
              { kind: "soundHear", label: "Hear yours" },
              { kind: "header", title: "Chats", note: "" },
              { kind: "reactionsSeen", label: "Reactions to your messages" },
+             { kind: "showStories", label: "Show Telegram stories" },
              { kind: "header", title: "Automatic downloads", note: "Stickers and voice messages always download: they are small" },
              { kind: "download", id: "photos", label: "Photos" },
              { kind: "download", id: "gifs", label: "GIFs and round video messages" },
@@ -127,7 +130,9 @@ FocusScope {
                      + "Enter uses a proxy or stops using it  ·  Backspace removes it" })
     for (var p = 0; p < settings.proxies.length; p++)
       out.push({ kind: "proxy", proxy: settings.proxies[p], label: settings.proxies[p].server + ":" + settings.proxies[p].port })
-    out.push({ kind: "proxyAdd", type: "socks5", label: "Add a SOCKS5 proxy" },
+    out.push({ kind: "bridge", label: "Built-in MTProto → WebSocket bridge" },
+             { kind: "bridgeTest", label: "Test the built-in bridge without switching" },
+             { kind: "proxyAdd", type: "socks5", label: "Add a SOCKS5 proxy" },
              { kind: "proxyAdd", type: "mtproto", label: "Add an MTProto proxy" },
              { kind: "proxyAdd", type: "http", label: "Add an HTTP proxy" },
              { kind: "proxyAdd", type: "link", label: "Add a proxy from its link" },
@@ -270,7 +275,7 @@ FocusScope {
     settings.flow = null          // with what was typed for two-step verification
     settings.editorError = ""
     editor.text = ""
-    settings.forceActiveFocus()
+    list.forceActiveFocus()
   }
 
   function saveEditing() {
@@ -601,11 +606,12 @@ FocusScope {
     })
   }
 
-  FileDialog {
+  FilePicker {
     id: photoDialog
+    objectName: "profile-photo-file-dialog"
+    app: settings.app
     title: "Your new profile photo"
-    fileMode: FileDialog.OpenFile
-    nameFilters: ["Pictures (*.jpg *.jpeg *.png *.webp *.gif *.bmp)"]
+    nameFilters: ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.gif", "*.bmp"]
     onAccepted: settings.setPhoto(settings.urlToPath(selectedFile))
     onRejected: settings.forceActiveFocus()
   }
@@ -624,13 +630,27 @@ FocusScope {
   // ---------------------------------------------------------------- proxies
 
   property var proxies: []           // what proxies.list said: never a password or secret
+  property var bridge: ({ running: false, enabled: false })
+  property bool bridgeBusy: false
+  property string bridgeTestResult: ""
   property var proxyPings: ({})      // proxy id -> { seconds } or { error: true }
 
   function loadProxies() {
+    settings.app.request("bridge.status", {}, function (answer) { if (answer.ok) settings.bridge = answer.result })
     settings.app.request("proxies.list", {}, function (answer) {
       if (!answer.ok) return
       settings.proxies = answer.result.proxies || []
       settings.proxies.forEach(function (p) { settings.pingProxy(p.id) })
+    })
+  }
+
+  function toggleBridge() {
+    if (settings.bridgeBusy) return
+    settings.bridgeBusy = true
+    settings.app.request("bridge.set", { enabled: !settings.bridge.enabled }, function (answer) {
+      settings.bridgeBusy = false
+      if (!answer.ok) settings.error = answer.error || "Could not change the built-in bridge"
+      settings.loadProxies()
     })
   }
 
@@ -689,6 +709,7 @@ FocusScope {
   function ask(text, run) {
     settings.error = ""
     settings.confirm = { text: text, run: run }
+    list.forceActiveFocus()
   }
 
   function answer(yes) {
@@ -726,6 +747,17 @@ FocusScope {
       settings.changeDefaultAutoDelete()
     } else if (row.kind === "proxy") {
       settings.toggleProxy(row.proxy)
+    } else if (row.kind === "bridge") {
+      settings.toggleBridge()
+    } else if (row.kind === "bridgeTest") {
+      if (settings.bridgeBusy) return
+      settings.bridgeBusy = true
+      settings.bridgeTestResult = "Testing…"
+      settings.app.request("bridge.test", {}, function (answer) {
+        settings.bridgeBusy = false
+        settings.bridgeTestResult = answer.ok ? "Telegram responded in " + Math.round(answer.result.seconds * 1000) + " ms" : (answer.error || "Could not reach Telegram through the bridge")
+        settings.loadProxies()
+      })
     } else if (row.kind === "proxyAdd") {
       settings.startProxyFlow(row.type)
     } else if (row.kind === "reactionsSeen") {
@@ -735,6 +767,11 @@ FocusScope {
     } else if (row.kind === "sound") {
       settings.app.request("settings.sounds", { style: Model.nextSoundStyle(settings.app.soundStyle) }, function (answer) {
         if (!answer.ok) settings.error = answer.error || "The setting could not be saved"
+      })
+    } else if (row.kind === "showStories") {
+      settings.app.request("settings.set", { settings: { showStories: !settings.app.showStories } }, function (answer) {
+        if (!answer.ok) settings.error = answer.error || "Could not change story visibility"
+        else settings.app.showStories = answer.result.settings.showStories
       })
     } else if (row.kind === "soundHear") {
       settings.app.request("sounds.play", { userId: settings.app.meId }, function () {})
@@ -789,7 +826,7 @@ FocusScope {
         })
       })
     } else if (row.kind === "logout") {
-      settings.ask("Sign out of Telegram here? Your chats stay on Telegram; what Omagram keeps on this computer is removed.", function () {
+      settings.ask("Sign out of Telegram here? Your local profile and encryption key stay available for signing in again.", function () {
         settings.app.request("auth.logout", {}, function (answer) {
           if (!answer.ok) settings.error = answer.error || "Could not sign out"
           else settings.closed()
@@ -801,6 +838,7 @@ FocusScope {
   }
 
   Keys.onPressed: function (event) {
+    if (photoDialog.visible) return
     if (settings.recording !== "") {
       settings.capture(event)
       event.accepted = true
@@ -859,6 +897,8 @@ FocusScope {
           font.bold: true
         }
         Text {
+          width: parent.width
+          wrapMode: Text.Wrap
           text: "↑↓ choose  ·  Enter open or change  ·  A add a key  ·  Backspace remove  ·  R reset  ·  Esc close"
           color: settings.app.muted
           font.family: settings.app.fontFamily
@@ -867,11 +907,10 @@ FocusScope {
       }
 
       // md-close (U+F0156)
-      Text {
-        text: String.fromCodePoint(0xF0156)
+      Icon {
+        name: "close"
         color: closeArea.containsMouse ? settings.app.foreground : settings.app.muted
-        font.family: settings.app.glyphFamily
-        font.pixelSize: Style.font.title
+        size: Style.font.title
         MouseArea {
           id: closeArea
           anchors.fill: parent
@@ -887,7 +926,7 @@ FocusScope {
     Rectangle {
       Layout.fillWidth: true
       visible: !!settings.confirm
-      Layout.preferredHeight: visible ? Math.max(Style.space(46), confirmText.implicitHeight + Style.space(20)) : 0
+      Layout.preferredHeight: visible ? Math.max(Style.space(46), confirmText.implicitHeight + (settings.narrow ? confirmButtons.height + Style.space(30) : Style.space(20))) : 0
       radius: Style.cornerRadius
       color: Qt.rgba(settings.app.urgent.r, settings.app.urgent.g, settings.app.urgent.b, 0.1)
       border.width: 1
@@ -895,11 +934,14 @@ FocusScope {
 
       Text {
         id: confirmText
+        objectName: "settings-confirmation-text"
         anchors.left: parent.left
-        anchors.right: confirmButtons.left
+        anchors.right: settings.narrow ? parent.right : confirmButtons.left
         anchors.leftMargin: Style.space(14)
         anchors.rightMargin: Style.space(10)
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenter: settings.narrow ? undefined : parent.verticalCenter
+        anchors.top: settings.narrow ? parent.top : undefined
+        anchors.topMargin: Style.space(10)
         wrapMode: Text.Wrap
         textFormat: Text.PlainText
         text: settings.confirm ? settings.confirm.text : ""
@@ -912,7 +954,9 @@ FocusScope {
         id: confirmButtons
         anchors.right: parent.right
         anchors.rightMargin: Style.space(10)
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenter: settings.narrow ? undefined : parent.verticalCenter
+        anchors.bottom: settings.narrow ? parent.bottom : undefined
+        anchors.bottomMargin: Style.space(6)
         spacing: Style.space(4)
 
         Repeater {
@@ -1008,7 +1052,7 @@ FocusScope {
         readonly property var clashes: modelData.kind === "action" ? Keymap.conflictsFor(settings.overrides, modelData.id) : []
 
         width: list.width
-        height: header ? Style.space(modelData.note ? 58 : 44)
+        height: header ? Math.max(Style.space(modelData.note ? 58 : 44), sectionHeading.implicitHeight + Style.space(16))
               : (account ? Style.space(modelData.kind === "profilePhoto" ? 66
                                        : (["session", "storage", "profileField", "profilePhone", "privacy", "blocked", "password", "accountTtl", "autoDelete", "proxy", "reactionsSeen", "sound",
                                            "scope", "previews", "download", "folder", "folderName", "folderFlag"]
@@ -1019,13 +1063,18 @@ FocusScope {
              : (rowArea.containsMouse && !row.header ? Qt.rgba(settings.app.foreground.r, settings.app.foreground.g, settings.app.foreground.b, 0.04) : "transparent")
 
         Column {
+          id: sectionHeading
           visible: row.header
           anchors.left: parent.left
           anchors.bottom: parent.bottom
           anchors.leftMargin: Style.space(4)
+          anchors.right: parent.right
+          anchors.rightMargin: Style.space(4)
           anchors.bottomMargin: Style.space(6)
           spacing: Style.space(2)
           Text {
+            width: parent.width
+            wrapMode: Text.Wrap
             text: row.modelData.title || ""
             color: settings.app.foreground
             font.family: settings.app.fontFamily
@@ -1033,6 +1082,8 @@ FocusScope {
             font.bold: true
           }
           Text {
+            width: parent.width
+            wrapMode: Text.Wrap
             visible: !!row.modelData.note
             text: row.modelData.note || ""
             color: settings.app.muted
@@ -1078,9 +1129,12 @@ FocusScope {
               font.pixelSize: ["session", "blockedSender", "folderChat"].indexOf(row.modelData.kind) >= 0 ? Style.font.bodySmall : Style.font.body
             }
             Text {
+              visible: !settings.narrow || row.isCursor
+              Layout.maximumWidth: row.width * 0.4
+              elide: Text.ElideRight
               textFormat: Text.PlainText
               text: ({ profileField: "Enter changes it", privacy: "Enter changes it", accountTtl: "Enter changes it", autoDelete: "Enter changes it", proxy: "Enter uses it or stops", proxyAdd: "Enter", reactionsSeen: "Enter changes it", sound: "Enter changes it", soundHear: "Enter plays it",
-                       scope: "Enter changes it", previews: "Enter changes it", download: "Enter changes it",
+                        bridge: "Enter enables or restores the previous connection", scope: "Enter changes it", previews: "Enter changes it", download: "Enter changes it",
                        folder: "Enter opens it", newFolder: "Enter", folderName: "Enter changes it", folderFlag: "Enter changes it",
                        folderChat: "Enter takes it off", folderAdd: "Enter", folderSave: "Enter", folderDelete: "Enter",
                        blocked: settings.blockedOpen ? "Enter hides them" : "Enter shows them", blockedSender: "Enter unblocks",
@@ -1111,8 +1165,11 @@ FocusScope {
                 : row.modelData.kind === "password" ? Model.passwordText(settings.password)
                 : row.modelData.kind === "accountTtl" ? Model.ttlText(settings.accountTtl)
                 : row.modelData.kind === "autoDelete" ? (settings.defaultAutoDelete < 0 ? "Loading…" : Model.autoDeleteText(settings.defaultAutoDelete))
-                : row.modelData.kind === "proxy" ? Model.proxyText(row.modelData.proxy, settings.proxyPings[row.modelData.proxy.id], settings.app.connection)
+                 : row.modelData.kind === "proxy" ? Model.proxyText(row.modelData.proxy, settings.proxyPings[row.modelData.proxy.id], settings.app.connection)
+                 : row.modelData.kind === "bridge" ? (settings.bridgeBusy ? "Changing connection…" : (settings.bridge.enabled ? (settings.bridge.running ? "Enabled for this account · localhost:" + settings.bridge.port : "Enabled, but process stopped · toggle off/on to retry") : "Off · Telegram WebSocket hosts only · no external server list"))
+                 : row.modelData.kind === "bridgeTest" ? (settings.bridgeTestResult || "Checks Telegram connectivity; leaves your current connection unchanged")
                 : row.modelData.kind === "reactionsSeen" ? (settings.app.reactionsSeen ? "Seen when you open the chat" : "Kept until you scroll to them")
+                : row.modelData.kind === "showStories" ? (settings.app.showStories ? "Shown" : "Hidden")
                 : row.modelData.kind === "sound" ? Model.soundStyleText(settings.app.soundStyle)
                 : row.modelData.kind === "scope" ? Model.scopeText(settings.scopes[row.modelData.id])
                 : row.modelData.kind === "previews" ? Model.previewsText(settings.scopes)

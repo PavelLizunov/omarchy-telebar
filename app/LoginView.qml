@@ -61,6 +61,7 @@ FocusScope {
   }
 
   function submit() {
+    if (view.busy) return
     var value = field.text
     if (view.proxyInstead) {
       if (!Model.isProxyLink(value)) { view.error = "A proxy link starts with t.me/proxy or t.me/socks."; return }
@@ -115,7 +116,7 @@ FocusScope {
     spacing: Style.spacing.md
 
     Text {
-      text: "Omagram"
+      text: "Omagram — sign in"
       color: app.foreground
       font.family: app.fontFamily
       font.pixelSize: Style.font.displayLarge
@@ -137,7 +138,7 @@ FocusScope {
           var via = app.auth.via === "TelegramMessage" ? "in your Telegram app" : (app.auth.via === "Sms" ? "by SMS" : "")
           return "Telegram sent a code " + (via ? via + " " : "") + "to " + (app.auth.phone || "your phone") + "."
         }
-        if (view.step === "password") return "This account has a cloud password." + (app.auth.hint ? " Hint: " + app.auth.hint : "")
+        if (view.step === "password") return "Telegram accepted the sign-in. Enter this account's two-step verification password." + (app.auth.hint ? " Hint: " + app.auth.hint : "")
         return "Open Telegram on your phone, go to Settings → Devices → Link Desktop Device, and scan this code."
       }
     }
@@ -165,7 +166,8 @@ FocusScope {
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
         textFormat: Text.PlainText
-        text: "Showing the code needs qrencode (sudo pacman -S qrencode). Or use your phone number."
+        text: app.auth.imagePending ? "Preparing the QR code…"
+          : "The QR code is unavailable. Use your phone number or check that qrencode is installed (sudo pacman -S qrencode)."
         color: "black"
         font.family: app.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -205,6 +207,16 @@ FocusScope {
       spacing: Style.space(10)
 
       Button {
+        app: view.app
+        visible: app.accounts && app.accounts.length > 1
+        text: "Back to another account"
+        onClicked: {
+          var other = app.accounts.filter(function (a) { return a.id !== app.activeAccount })[0]
+          if (other) app.switchAccount(other.id)
+        }
+      }
+
+      Button {
         id: submitButton
         app: view.app
         visible: !view.showingQr
@@ -232,6 +244,13 @@ FocusScope {
         text: view.proxyInstead ? "Back" : "Use a proxy"
         KeyNavigation.tab: field.visible ? field : methodButton
         onClicked: view.toggleProxy()
+      }
+      Button {
+        app: view.app
+        visible: view.step === "phone" || view.step === "qr"
+        text: "Use built-in bridge"
+        busy: view.busy
+        onClicked: view.send("bridge.set", { enabled: true })
       }
     }
 
