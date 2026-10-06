@@ -25,6 +25,11 @@ jobs:
         run: python3 -B tests/rename_test.py
       - name: Run inert Python and JavaScript contracts
         run: |
+          # Namespace-mapped users cannot traverse the runner's private home.
+          CI_SOURCE=$(mktemp -d /tmp/telebar-ci.XXXXXX)
+          trap 'rm -rf -- "$CI_SOURCE"' EXIT
+          cp -a "$GITHUB_WORKSPACE/." "$CI_SOURCE/"
+          chmod 755 "$CI_SOURCE"
           # Ubuntu restricts unprivileged namespace setup. Privilege is used only
           # for bwrap setup; the suite runs as the runner uid/gid with no caps.
           sudo -- prlimit --cpu=125 --as=8589934592 --nofile=256 --fsize=8388608 -- \
@@ -32,7 +37,7 @@ jobs:
             --uid "$(id -u)" --gid "$(id -g)" \
             --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib \
             --symlink usr/lib64 /lib64 --proc /proc --dev /dev --tmpfs /tmp \
-            --dir /home --dir /home/worker --ro-bind "$GITHUB_WORKSPACE" /workspace \
+            --dir /home --dir /home/worker --ro-bind "$CI_SOURCE" /workspace \
             --chdir /workspace --clearenv --setenv PATH /usr/bin \
             --setenv HOME /home/worker --setenv LANG C.UTF-8 \
             --setenv PYTHONDONTWRITEBYTECODE 1 --setenv TELEBAR_INERT_WORKER 1 \
