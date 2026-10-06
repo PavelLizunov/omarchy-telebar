@@ -29,11 +29,130 @@ class EventLoop(unittest.TestCase):
         self.assertLessEqual(len(processed), 128, "A busy TDLib stream must yield before starving sockets")
         self.assertFalse(self.daemon.events.empty())
 
+    def test_malformed_state_scalars_do_not_stop_following_updates(self):
+        session = self.daemon.session_for()
+        received = []
+        self.daemon.broadcast = received.append
+        for mid, text, location in (("--1", "bad id", None), (1, "bad\ud800 text", None),
+                                    (2, "", {"@type": "location", "latitude": 10 ** 400, "longitude": 0})):
+            with self.subTest(mid=mid):
+                content = {"@type": "messageLocation", "location": location} if location else {
+                    "@type": "messageText", "text": {"text": text}}
+                self.daemon.events.put({"@type": "updateNewMessage", "@client_id": session.client_id,
+                                        "message": {"@type": "message", "id": mid, "chat_id": 7, "content": content}})
+                self.daemon.process_events()
+        self.daemon.events.put({"@type": "updateNewMessage", "@client_id": session.client_id,
+                                "message": {"@type": "message", "id": 3, "chat_id": 7,
+                                            "content": {"@type": "messageText", "text": {"text": "still responsive"}}}})
+        self.daemon.process_events()
+        self.assertTrue(self.daemon.events.empty())
+        self.assertEqual(received[-1]["message"]["content"]["text"], "still responsive")
+        self.assertEqual(received[-1]["account"], session.id)
+        self.assertEqual(len(received), 4)
+
+    def test_malformed_title_is_encodable_by_actual_ipc_consumer(self):
+        from types import SimpleNamespace
+        session = self.daemon.session_for()
+        client = SimpleNamespace(outbox=bytearray(), pid=0)
+        self.daemon.clients[1] = client
+        try:
+            self.daemon.events.put({"@type": "updateNewChat", "@client_id": session.client_id,
+                                    "chat": {"@type": "chat", "id": 7, "title": "bad\ud800 title",
+                                             "type": {"@type": "chatTypePrivate", "user_id": 7}}})
+            with mock.patch.object(self.daemon, "flush"):
+                self.daemon.process_events()
+            import json
+            event = json.loads(client.outbox)
+            self.assertEqual(event["chat"]["title"], "bad? title")
+            self.assertEqual(event["account"], session.id)
+        finally:
+            self.daemon.clients.pop(1, None)
+
+    def test_malformed_entity_url_is_encodable_by_actual_ipc_consumer(self):
+        import json
+        from types import SimpleNamespace
+        session = self.daemon.session_for()
+        client = SimpleNamespace(outbox=bytearray(), pid=0)
+        self.daemon.clients[1] = client
+        try:
+            self.daemon.events.put({"@type": "updateNewMessage", "@client_id": session.client_id,
+                "message": {"@type": "message", "id": 4, "chat_id": 7,
+                    "content": {"@type": "messageText", "text": {"text": "link", "entities": [
+                        {"offset": 0, "length": 4, "type": {"@type": "textEntityTypeTextUrl",
+                            "url": "https://example.com/\ud800/path"}}]}}}})
+            with mock.patch.object(self.daemon, "flush"):
+                self.daemon.process_events()
+            event = json.loads(client.outbox)
+            entity = event["message"]["content"]["entities"][0]
+            self.assertEqual(entity, {"type": "textUrl", "offset": 0, "length": 4,
+                                      "url": "https://example.com/?/path"})
+            self.assertEqual(event["account"], session.id)
+        finally:
+            self.daemon.clients.pop(1, None)
+
+    def test_malformed_callback_data_cannot_break_actual_ipc_consumer(self):
+        import json
+        from types import SimpleNamespace
+        session = self.daemon.session_for()
+        client = SimpleNamespace(outbox=bytearray(), pid=0)
+        self.daemon.clients[1] = client
+        try:
+            for data, expected in (("eWVz", "callback"), ("bad\ud800", "unsupported"),
+                                   ("café", "unsupported"), ("действие", "unsupported")):
+                client.outbox.clear()
+                self.daemon.events.put({"@type": "updateNewMessage", "@client_id": session.client_id,
+                    "message": {"@type": "message", "id": 5, "chat_id": 7,
+                        "content": {"@type": "messageText", "text": {"text": "pick"}},
+                        "reply_markup": {"@type": "replyMarkupInlineKeyboard", "rows": [[{
+                            "@type": "inlineKeyboardButton", "text": "Synthetic button",
+                            "type": {"@type": "inlineKeyboardButtonTypeCallback", "data": data}}]]}}})
+                with mock.patch.object(self.daemon, "flush"):
+                    self.daemon.process_events()
+                event = json.loads(client.outbox)
+                button = event["message"]["markup"]["rows"][0][0]
+                self.assertEqual(button["kind"], expected)
+                if expected == "callback":
+                    self.assertEqual(button["data"], data)
+                else:
+                    self.assertNotIn("data", button)
+        finally:
+            self.daemon.clients.pop(1, None)
+
+    def test_malformed_media_strings_cannot_break_actual_ipc_consumer(self):
+        import json
+        from types import SimpleNamespace
+        session = self.daemon.session_for()
+        session.state.files_root = "/synthetic/files"
+        client = SimpleNamespace(outbox=bytearray(), pid=0)
+        self.daemon.clients[1] = client
+        try:
+            for data, path in (("bad\ud800", "/synthetic/files/photo.jpg"),
+                               ("AAAA", "/synthetic/files/bad\ud800.jpg")):
+                client.outbox.clear()
+                self.daemon.events.put({"@type": "updateNewMessage", "@client_id": session.client_id,
+                    "message": {"@type": "message", "id": 6, "chat_id": 7,
+                        "content": {"@type": "messagePhoto", "photo": {"@type": "photo",
+                            "minithumbnail": {"@type": "minithumbnail", "data": data},
+                            "sizes": [{"@type": "photoSize", "width": 320, "height": 200,
+                                "photo": {"@type": "file", "id": 9, "local": {
+                                    "path": path, "is_downloading_completed": True}}}]}}}})
+                with mock.patch.object(self.daemon, "flush"):
+                    self.daemon.process_events()
+                media = json.loads(client.outbox)["message"]["content"]["media"]
+                if not data.isascii():
+                    self.assertIsNone(media["mini"])
+                    self.assertEqual(media["file"]["path"], path)
+                else:
+                    self.assertEqual(media["mini"]["data"], data)
+                    self.assertEqual(media["file"]["path"], "")
+        finally:
+            self.daemon.clients.pop(1, None)
+
     def test_sticker_conversion_is_deferred_and_bounded(self):
         work = []
         responses = []
         self.daemon.respond = lambda *args: responses.append(args)
-        self.daemon.background = lambda task, done: work.append((task, done))
+        self.daemon.background = lambda task, done, **kwargs: work.append((task, done))
         self.daemon.td_send = lambda query, client, rid, transform: setattr(self, "convert", transform)
         with mock.patch.object(self.module.model, "file_view", return_value={"path": "/synthetic/sticker.tgs"}), \
                 mock.patch.object(self.module, "lottie_json", return_value="/synthetic/sticker.json") as inflate:

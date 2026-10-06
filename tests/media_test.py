@@ -221,6 +221,10 @@ class NoteAnimations(unittest.TestCase):
         self.assertEqual(list((self.root / "notes").iterdir()), [])
 
     def test_only_a_regular_file_of_a_round_videos_size(self):
+        self.assertEqual(media.NOTE_ANIMATION_SOURCE_MAX, 64 * 1024 * 1024)
+        patch = mock.patch.object(media, "NOTE_ANIMATION_SOURCE_MAX", 1024)
+        patch.start()
+        self.addCleanup(patch.stop)
         big = self.root / "video_notes" / "big.mp4"
         with open(big, "wb") as f:
             f.truncate(media.NOTE_ANIMATION_SOURCE_MAX + 1)

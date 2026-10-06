@@ -108,13 +108,15 @@ def _int(value, default=0):
     if isinstance(value, int):
         return value
     # int64 values arrive as strings in TDLib's JSON.
-    if isinstance(value, str) and 0 < len(value) <= 20 and value.lstrip("-").isdigit():
-        return int(value)
+    if isinstance(value, str) and 0 < len(value) <= 20:
+        digits = value[1:] if value.startswith("-") else value
+        if digits.isascii() and digits.isdigit():
+            return int(value)
     return default
 
 
 def _str(value, limit):
-    return value[:limit] if isinstance(value, str) else ""
+    return value[:limit].encode("utf-8", "replace").decode("utf-8") if isinstance(value, str) else ""
 
 
 def _obj(value, type_name=None):
@@ -132,8 +134,7 @@ def _list(value, limit):
 def _float(value, low, high):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    number = float(value)
-    return number if low <= number <= high else None   # NaN fails both comparisons
+    return float(value) if low <= value <= high else None   # NaN fails both comparisons
 
 
 def utf16_length(text):
@@ -471,7 +472,7 @@ def _inline_button(b):
     button = {"text": _str(b.get("text"), BUTTON_TEXT_MAX), "kind": INLINE_BUTTONS.get(kind_obj.get("@type"), "unsupported")}
     if button["kind"] == "callback":
         data = kind_obj.get("data")
-        if isinstance(data, str) and 0 < len(data) <= CALLBACK_DATA_MAX:
+        if isinstance(data, str) and 0 < len(data) <= CALLBACK_DATA_MAX and data.isascii():
             button["data"] = data
         else:
             button["kind"] = "unsupported"
@@ -834,6 +835,10 @@ def local_path(value, files_root):
         return ""
     if any(ord(ch) < 32 or ch == "\x7f" for ch in value):
         return ""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return ""
     parts = value.split("/")
     if ".." in parts or "." in parts or "" in parts[1:]:
         return ""
@@ -859,7 +864,7 @@ def file_view(value, files_root):
 def minithumbnail(value):
     m = _obj(value, "minithumbnail")
     data = m.get("data")
-    if not isinstance(data, str) or not 0 < len(data) <= MINI_MAX:
+    if not isinstance(data, str) or not 0 < len(data) <= MINI_MAX or not data.isascii():
         return None
     return {"width": max(0, _int(m.get("width"))), "height": max(0, _int(m.get("height"))), "data": data}
 

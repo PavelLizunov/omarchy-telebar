@@ -198,6 +198,12 @@ class Harness(unittest.TestCase):
         self.thread.join(5)
         for conn in self.conns:
             conn.sock.close()
+        if self.thread.is_alive():
+            raise AssertionError("isolated daemon did not stop")
+        self.daemon.sel.close()
+        for fd in (self.daemon.wake_r, self.daemon.wake_w, self.daemon.lock_fd):
+            if fd is not None:
+                os.close(fd)
 
     def wait(self, predicate, timeout=5):
         end = time.monotonic() + timeout
@@ -523,6 +529,13 @@ class MediaCommands(Harness):
             players.append((argv, FakePlayer()))
             return players[-1][1]
         self.daemon.start_helper = start_helper
+        # Playback is fake; executable discovery must not require host ffplay.
+        patch = mock.patch.object(self.d.safe, "has_tool", return_value=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+        patch = mock.patch.object(self.d.safe, "tool", side_effect=lambda name: pathlib.Path("/usr/bin") / name)
+        patch.start()
+        self.addCleanup(patch.stop)
         self.daemon.prefs = dict(self.daemon.prefs, playbackRate=1.5)
         voice = self.files / "voice" / "v.ogg"
         voice.parent.mkdir(mode=0o700)
@@ -697,8 +710,11 @@ class Sending(Harness):
         content = q["input_message_content"]
         self.assertEqual((content["@type"], content["photo"]["photo"], content["caption"]["text"], q["reply_to"]["message_id"]),
                          ("inputMessagePhoto", {"@type": "inputFileLocal", "path": str(photo)}, "look", 9))
-        big = self.file("huge.png", self.d.PHOTO_MAX + 1)
-        self.assertEqual(self.sent(2, chatId=42, path=str(big))["input_message_content"]["@type"], "inputMessageDocument")
+        self.assertEqual(self.d.PHOTO_MAX, 10 * 1024 ** 2)
+        # Exercise the same strict boundary without allocating a large fixture.
+        with mock.patch.object(self.d, "PHOTO_MAX", 1024):
+            big = self.file("huge.png", self.d.PHOTO_MAX + 1)
+            self.assertEqual(self.sent(2, chatId=42, path=str(big))["input_message_content"]["@type"], "inputMessageDocument")
         pdf = self.file("report.pdf")
         self.assertEqual(self.sent(3, chatId=42, path=str(pdf))["input_message_content"]["document"]["document"]["path"], str(pdf))
         self.assertEqual(self.sent(4, chatId=42, path=str(photo), asPhoto=False)["input_message_content"]["@type"], "inputMessageDocument")
@@ -708,6 +724,10 @@ class Sending(Harness):
 
     def test_what_cannot_be_sent_is_refused_before_tdlib_sees_it(self):
         empty = self.file("empty.txt", 0)
+        self.assertEqual(self.d.DOCUMENT_MAX, 2 * 1024 ** 3)
+        patch = mock.patch.object(self.d, "DOCUMENT_MAX", 2048)
+        patch.start()
+        self.addCleanup(patch.stop)
         too_big = self.file("disk.img", self.d.DOCUMENT_MAX + 1)
         database = self.root / "database"
         database.mkdir(mode=0o700)
@@ -1136,8 +1156,19 @@ class MessageActions(Harness):
         self.assertFalse(r["ok"], "not downloaded yet")
         _, r = self.call(72, "file.open", "getFile", dict(done, local={"path": "/etc/passwd", "is_downloading_completed": True}), fileId=5)
         self.assertFalse(r["ok"], "outside Omagram's files")
-        _, first = self.call(73, "file.save", "getFile", done, fileId=5, fileName="../../Report.pdf")
-        _, second = self.call(74, "file.save", "getFile", done, fileId=5, fileName="../../Report.pdf")
+        def save(rid):
+            before = {kind: self.sent_count(kind) for kind in ("getFile", "getMessage", "getMessageProperties")}
+            self.send(self.conn, {"id": rid, "cmd": "file.save", "args": {
+                "fileId": 5, "fileName": "../../Report.pdf", "chatId": 42, "messageId": 7}})
+            self.answer(self.next_query("getFile", before["getFile"]), done)
+            self.answer(self.next_query("getMessage", before["getMessage"]), {
+                "@type": "message", "chat_id": 42, "id": 7, "content": {"@type": "messageDocument",
+                "document": {"@type": "document", "document": {"@type": "file", "id": 5}}}})
+            self.answer(self.next_query("getMessageProperties", before["getMessageProperties"]), {
+                "@type": "messageProperties", "can_be_saved": True})
+            return self.read(self.conn, lambda v: v.get("id") == rid)
+        first = save(73)
+        second = save(74)
         self.assertEqual((first["result"]["path"], second["result"]["path"]),
                          (str(downloads / "Report.pdf"), str(downloads / "Report (2).pdf")))
         self.assertEqual((downloads / "Report (2).pdf").read_bytes(), b"%PDF-1.7 data")
@@ -1156,6 +1187,7 @@ class MessageActions(Harness):
         self.daemon.state.files_root = (str(files),)
         with mock.patch.object(self.d.td, "MEDIA_ROOTS", (str(files),)), \
              mock.patch.object(self.d, "DOWNLOADS", self.root / "Downloads"), \
+             mock.patch.object(self.d.safe, "tool", side_effect=lambda name: pathlib.Path("/usr/bin") / name), \
              mock.patch.object(self.d.safe, "run") as run:
             run.return_value = self.d.safe.Result(0, b"", b"", False, False)
 
@@ -1195,8 +1227,10 @@ class MessageActions(Harness):
             run.assert_not_called()
             path.write_bytes(b"not an image")
             self.assertFalse(export(187)["ok"])
-            path.write_bytes(b"\xff\xd8\xff" + b"x" * self.d.CLIPBOARD_MAX)
-            self.assertFalse(export(188)["ok"], "bounded image size")
+            self.assertEqual(self.d.CLIPBOARD_MAX, 10 * 1024 * 1024)
+            with mock.patch.object(self.d, "CLIPBOARD_MAX", 1024):
+                path.write_bytes(b"\xff\xd8\xff" + b"x" * self.d.CLIPBOARD_MAX)
+                self.assertFalse(export(188)["ok"], "bounded image size")
             path.unlink()
             target = files / "target.jpg"
             target.write_bytes(b"\xff\xd8\xffdata")
@@ -1246,6 +1280,7 @@ class MessageActions(Harness):
                          {"paths": [str(photo), str(report)], "skipped": 2},
                          "copied files come before a picture; a folder and an empty file are left out and said")
         picture = paste(81, {"image/png": b"PNG bytes"})
+        self.assertEqual(set(picture), {"paths", "skipped"}, "internal output ownership stays out of IPC")
         self.assertEqual((picture["skipped"], len(picture["paths"])), (0, 1))
         self.assertEqual((os.path.dirname(picture["paths"][0]), pathlib.Path(picture["paths"][0]).read_bytes()),
                          (str(self.d.media.REC), b"PNG bytes"))
@@ -2308,6 +2343,13 @@ class Notifications(Harness):
                 self.assertEqual((query["message_id"], query["reaction_type"]["emoji"]), (60, "👍"))
 
     def test_each_person_has_a_sound_but_not_in_do_not_disturb_or_a_burst(self):
+        # spawn is inert above; sound routing must not depend on host PipeWire tools.
+        patch = mock.patch.object(self.d.safe, "has_tool", return_value=True)
+        patch.start()
+        self.addCleanup(patch.stop)
+        patch = mock.patch.object(self.d.safe, "tool", side_effect=lambda name: pathlib.Path("/usr/bin") / name)
+        patch.start()
+        self.addCleanup(patch.stop)
         def played():
             return [argv for argv, _ in self.spawned if argv and argv[0].endswith("pw-play")]
         self.td_event(self.group([self.note(7, "hi")]))
@@ -2584,11 +2626,16 @@ class MultiAccountTests(Harness):
         original = self.daemon.accounts["default"]
         finished = threading.Event()
         observed = []
-        self.daemon.current_session = original
-        self.daemon.background(lambda: finished.wait(2), lambda result, error: observed.append(self.daemon.session_for().id))
-        self.daemon.current_session = None
-        finished.set()
-        self.wait(lambda: bool(observed))
+        # Admit session-owned work on the event-loop thread, never mutate its
+        # callback context concurrently from this test thread.
+        def schedule(client, rid, args):
+            self.daemon.background(lambda: finished.wait(2),
+                lambda result, error: observed.append(self.daemon.session_for().id), session=original)
+            self.daemon.respond(client, rid, {})
+        with mock.patch.object(self.daemon, "cmd_diagnostics_ui", side_effect=schedule):
+            self.assertTrue(self.request(conn, 806, "diagnostics.ui")["ok"])
+            finished.set()
+            self.wait(lambda: bool(observed))
         self.assertEqual(observed, ["default"])
         self.assertEqual(self.daemon.active_id, aid)
 

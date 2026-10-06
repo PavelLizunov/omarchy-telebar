@@ -21,12 +21,17 @@ requires separate live checks. Sidebar.qml uses the same SidebarHandle as Main.q
 its geometry and interactions are measured offscreen. Bar.qml attempts the actual bar
 consumer; missing PopupWindow/host imports are a blocker, not a visual pass.
 
-The configured QML-preview MCP is now 0.3.0. Call healthcheck, then render with explicit
-importPaths, locale, DPR, readyProperty and dependencyPaths. measureObjects records
+Discover the currently loaded QML-preview MCP tools and call healthcheck before
+rendering; a configuration file or historical version does not prove availability.
+The recorded context/lifecycle audit preflight returned wrapper and renderer 0.3.0
+with Qt 6.11.2. That evidence applies to its recorded run, not every future session.
+Render with explicit importPaths, locale, DPR, readyProperty and dependencyPaths. measureObjects records
 named logical scene bounds. Historical reports describe the earlier legacy renderer;
 they are not evidence for subsequently changed files.
-The existing `/tmp/opencode/qml-mock` adapter supplies inert Quickshell Process/FileView
-and qs.Commons tokens. Effects/masks and media playback are not verified by software
+The bundled `tests/visual/imports` adapter supplies inert Quickshell Process/FileView
+and versioned qs.Commons tokens. Its provenance, MIT notice and limits are recorded
+in `imports/README.md` and `imports/provenance.json`. No temporary external imports
+are required for the content consumer tests. Effects/masks and media playback are not verified by software
 captures. Record dependency hashes and renderer limitations in the evidence manifest.
 
 `mcp_all_pages.py --paired-radius` covers 223 cases, including QR preparation and
@@ -55,10 +60,10 @@ Consumer keyboard/state checks (settings initial load/Escape, menu arrows/Enter/
 forum selection, QR/phone/password transitions) use the existing inert adapter:
 
 ```bash
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_consumers.qml -import /tmp/opencode/qml-mock
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_sidebar.qml -import /tmp/opencode/qml-mock
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_quick.qml -import /tmp/opencode/qml-mock
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_bar_menu.qml -import /tmp/opencode/qml-mock
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_consumers.qml -import tests/visual/imports -import tests/visual/imports/inert
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_sidebar.qml -import tests/visual/imports -import tests/visual/imports/inert
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_quick.qml -import tests/visual/imports -import tests/visual/imports/inert
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_bar_menu.qml -import tests/visual/imports -import tests/visual/imports/inert
 ```
 
 The review is a focused native UI walkthrough, not every dialog/action or every theme.
@@ -86,7 +91,7 @@ mounted media. The Qt 6.11.2 native-dialog fallback was tested and rejected beca
 Ctrl-click did not preserve multi-selection.
 
 ```sh
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QPA_PLATFORMTHEME=gtk3 QT_QUICK_CONTROLS_STYLE=Fusion /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_file_dialogs.qml -import /tmp/opencode/qml-mock
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QPA_PLATFORMTHEME=gtk3 QT_QUICK_CONTROLS_STYLE=Fusion /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_file_dialogs.qml -import tests/visual/imports -import tests/visual/imports/inert
 ```
 
 During the USB workaround review the configured MCP wrapper reported 0.2.0 while

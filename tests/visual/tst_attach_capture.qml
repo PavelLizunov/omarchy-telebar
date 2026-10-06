@@ -17,6 +17,11 @@ TestCase {
   QtObject {
     id: mediaHost
     property var keys: ({})
+    property color background: model.background
+    property color foreground: model.foreground
+    property color selected: model.selected
+    property color accent: model.accent
+    property color urgent: model.urgent
     property string fontFamily: "Sans Serif"
     property var shownChat: model.chats[0]
     function fileOf(file) { return file }

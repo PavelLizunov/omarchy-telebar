@@ -8,13 +8,26 @@ Independently maintained by [PavelLizunov](https://github.com/PavelLizunov),
 based on [Omagram by ReidenXerx](https://github.com/ReidenXerx/omarchy-omagram).
 Upstream changes are adopted selectively; this project has its own development direction.
 
-> **Development snapshot, not a verified release.** Rich-post rendering, Telegram-link
+> **Development checkpoint 1.2.1-dev.1, not a verified stable release.** See
+> [checkpoint notes and known limitations](CHANGELOG.md). Rich-post rendering, Telegram-link
 > forwarding, mention navigation, quick-view account selection and main-window audio
 > routing are under development. Isolated Python, JavaScript and QML tests pass, but
 > the installed client and real account/device transitions have not been checked.
 > Quick-view audio still uses `ffplay`; output-device following is not established.
-> Required QML-preview MCP acceptance and independent review are outstanding.
+> Sixteen current strict offscreen captures at theme radii 0 and 8 were inspected,
+> and 164 QML consumer checks passed across 17 suites. An isolated snapshot passed
+> 279 Python checks with two unavailable-tool skips, plus eight JavaScript suites.
+> Bounded advisory reviews covered selected corrective contracts only; full
+> independent source/security acceptance is outstanding.
 > The full repository audit will precede any decision to rewrite the backend.
+> Local corrective candidates now cover file-export permission, rejected-send
+> composition and rejected-edit retention, mention-context invalidation,
+> startup-parameter errors, bounded request/stale-job lifecycle, stale reaction
+> navigation, malformed callback/scalar failures, recording-finalization admission,
+> delayed edit-Markdown ownership, exactly-once mention completion, video target
+> allocation, fail-closed opaque callback/media data, and voice/auxiliary reply retention.
+> These changes are not deployed or independently accepted; see
+> [executable correctness contracts](BACKEND-DESIGN.md#executable-correctness-contracts-local-p1-candidate).
 
 <p align="center">
   <b>An unofficial Telegram client that lives in your <a href="https://omarchy.org">Omarchy</a> desktop, not in another window.</b><br>
@@ -359,7 +372,11 @@ and their recovery. It cannot distinguish a compositor/GPU stall from a blocked 
 on its own, and cannot produce native TDLib/Qt stacks. A stopped TDLib receive thread is
 reported to the UI rather than failing silently. Ordinary UI callbacks are capped at 512
 and expire after three minutes; an expired send is not automatically retried, since it
-may already have reached Telegram.
+may already have reached Telegram. The daemon independently expires pending IPC and
+tracked TDLib requests after three minutes. It admits at most 512 pending commands per
+connection and 1024 tracked TDLib requests overall. Reusing an outstanding request ID
+closes the ambiguous connection. Expiry retires local callbacks, not Telegram's operation;
+late results cannot satisfy a newer command that reused the ID.
 
 No message bodies, account names/numbers, file paths, passwords, login codes, API hashes,
 request arguments, exception messages or frame-local variables are recorded. Operation
@@ -515,7 +532,10 @@ a video in your video player, `o` opens the chat in the window and `Esc` closes.
   checks every connection's user id.
 - **The microphone and camera are used only while you record.** A voice or round video message
   records from the moment you start it until you send it or throw it away, in the window or in
-  the quick view, which shows a bar the whole time; one you throw away is deleted at once.
+  the quick view, which shows a bar the whole time. If preparation is busy, stopping is rejected
+  without consuming the recording; retry once capacity returns. An outgoing video allocation
+  failure also leaves the recording available to stop again. A discarded recording is deleted
+  when its admitted finalization completes.
 - **Telegram content is shown as text.** Names and previews are rendered as plain text, message
   formatting is escaped before it is drawn, and notification bodies are escaped, because
   Omarchy's notifications render markup and links. Links lead only to web and mail addresses
@@ -531,6 +551,9 @@ a video in your video player, `o` opens the chat in the window and `Esc` closes.
 `bin/plugin_safety.py` is a shared safety library vendored unchanged into each of these plugins.
 
 ```bash
+python3 -B tests/lifecycle_contract_test.py # pending limits, expiry and stale-resource cleanup
+python3 -B tests/auth_contract_test.py      # bounded startup errors and attempt/account isolation
+python3 -B tests/export_contract_test.py    # message-backed file-export permission
 python3 tests/state_test.py     # TDLib objects → what the UI sees, hostile values
 python3 tests/rich_test.py      # rich posts, full-content requests and photo permission checks
 python3 tests/daemon_test.py    # the service on a sandboxed socket with a fake TDLib
@@ -552,7 +575,14 @@ node tests/ui-batch-test.js     # batched chat correctness; synthetic timing is 
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_morph.qml
 ```
 
-`tests/visual/README.md` describes inert consumer fixtures, reviewed screens and the
+`.github/workflows/inert-checks.yml` defines per-push/pull-request Python and
+JavaScript checks inside a network-isolated read-only worker. Hosted results are
+available in [GitHub Actions](https://github.com/PavelLizunov/omarchy-telebar/actions);
+local suite results do not establish hosted exact-commit acceptance. Large-file boundary fixtures assert
+production constants before substituting small test thresholds; worker limits
+are not increased. `tests/inert_suite.py` requires that isolated environment.
+
+`tests/visual/README.md` describes bundled inert consumer imports, reviewed screens and the
 limitations of the configured QML-preview MCP. Rendered PNGs do not prove desktop
 placement, all theme contrasts, media playback or every interactive route.
 

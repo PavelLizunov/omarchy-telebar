@@ -1,0 +1,36 @@
+name: Inert contract checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install isolated-test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap nodejs qrencode desktop-file-utils libssl3t64
+          # The vendored Arch transport uses this reviewed system-library path.
+          test -e /usr/lib/libcrypto.so.3 || sudo ln -s x86_64-linux-gnu/libcrypto.so.3 /usr/lib/libcrypto.so.3
+      - name: Check identity and preserved compatibility
+        run: python3 -B tests/rename_test.py
+      - name: Run inert Python and JavaScript contracts
+        run: |
+          prlimit --cpu=125 --as=8589934592 --nofile=256 --fsize=8388608 -- \
+            bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL \
+            --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib \
+            --symlink usr/lib /lib64 --proc /proc --dev /dev --tmpfs /tmp \
+            --dir /home --dir /home/worker --ro-bind "$GITHUB_WORKSPACE" /workspace \
+            --chdir /workspace --clearenv --setenv PATH /usr/bin \
+            --setenv HOME /home/worker --setenv LANG C.UTF-8 \
+            --setenv PYTHONDONTWRITEBYTECODE 1 --setenv TELEBAR_INERT_WORKER 1 \
+            -- /usr/bin/python3 /workspace/tests/inert_suite.py

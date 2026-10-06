@@ -64,6 +64,9 @@ TEXT_MAX = 4096
 MARKDOWN_TEXT_MAX = 2 * TEXT_MAX    # as typed, markers included: TEXT_MAX applies once they are read
 IDS_MAX = 100
 CLOSE_TIMEOUT = 5.0
+REQUEST_TIMEOUT = 180.0
+TD_PENDING_MAX = 1024
+IPC_PENDING_MAX = 512
 
 LOTTIE = pathlib.Path(safe.home_dir()) / ".cache/omagram/lottie"
 NOTIFY_IMAGES = pathlib.Path(safe.home_dir()) / ".cache/omagram/notify"   # pictures handed to notifications
@@ -534,6 +537,7 @@ class AccountSession:
         self.unread = None
         self.gif_bot_id = 0
         self.bridge_ready = False
+        self.parameters_serial = 0
 
 
 class Daemon:
@@ -566,6 +570,8 @@ class Daemon:
         self.active_id = td.DEFAULT_ACCOUNT_ID
         self.account_revision = 0
         self.current_session = None
+        self.current_request = None
+        self.next_request = 1
         self.accounts[td.DEFAULT_ACCOUNT_ID] = AccountSession(td.DEFAULT_ACCOUNT_ID, "Account 1")
         self.td = None
         self.clients = {}
@@ -843,6 +849,7 @@ class Daemon:
             self.process_events()
             self.diagnostic_log.progress("background_results")
             self.run_tasks()
+            self.expire_requests()
             self.diagnostic_log.progress("dbus_notifications")
             self.notifier.pump()
             self.diagnostic_log.progress("children")
@@ -895,26 +902,98 @@ class Daemon:
 
     # ---------------------------------------------------------------- TDLib
 
-    def td_send(self, query, client=None, rid=None, transform=None, failed=None, session=None):
-        if self.td is None:
-            if client is not None:
-                self.respond_error(client, rid, "Telegram is not available")
-            return
+    def td_send(self, query, client=None, rid=None, transform=None, failed=None, session=None, cancelled=None):
         sess = session or self.current_session or self.session_for()
+        entry = (client, rid, transform, failed, sess.id, sess, sess.client_id, cancelled, self.current_request)
+        tracked = client is not None or transform is not None or failed is not None or cancelled is not None
+        if not self.request_business_current(self.current_request):
+            self.fail_td(entry, "the request expired", cancelled=True)
+            return
+        if not self.session_current(sess, entry[6]):
+            self.fail_td(entry, "the account session changed", cancelled=True)
+            return
+        if self.td is None:
+            self.fail_td(entry, "Telegram is not available")
+            return
+        if tracked and len(self.pending) >= TD_PENDING_MAX:
+            self.fail_td(entry, "Too many pending Telegram requests; wait for the service")
+            return
         extra = self.next_extra
         self.next_extra += 1
-        # A request with no client but a transform is the service's own: its answer is
-        # handed to the transform instead of a socket.
-        if client is not None or transform is not None:
-            self.pending[extra] = (client, rid, transform, failed, sess.id)
+        if tracked:
+            self.pending[extra] = entry
             self.td_times[extra] = (time.monotonic(), query.get("@type", "unknown"))
             self.diagnostic_log.emit("td_request", extra=extra, command=query.get("@type"), client_id=sess.client_id)
         query = dict(query)
         query["@extra"] = extra
-        if hasattr(self.td, "send_client") and sess.client_id is not None:
-            self.td.send_client(sess.client_id, query)
-        else:
-            self.td.send(query)
+        try:
+            if hasattr(self.td, "send_client") and sess.client_id is not None:
+                self.td.send_client(sess.client_id, query)
+            else:
+                self.td.send(query)
+        except Exception as error:
+            self.diagnostic_log.failure("td_send", error)
+            self.pending.pop(extra, None)
+            self.td_times.pop(extra, None)
+            self.fail_td(entry, "Telegram transport failed; the operation may still complete; check before retrying")
+
+    def session_current(self, session, client_id):
+        return self.accounts.get(session.id) is session and session.client_id == client_id
+
+    def fail_td(self, entry, reason, cancelled=False):
+        client, rid, _transform, failed, _aid, session, client_id, cleanup, request = entry
+        previous, previous_request = self.current_session, self.current_request
+        self.current_request = request
+        try:
+            if cancelled or not self.session_current(session, client_id) or not self.request_business_current(request):
+                if cleanup is not None:
+                    cleanup()
+                if request is not None:
+                    owner, request_id, _token = request
+                    self.respond_error(owner, request_id, reason)
+                elif client is not None and cleanup is None and client.sock.fileno() in self.clients:
+                    self.respond_error(client, rid, reason)
+                return
+            self.current_session = session
+            if client is not None:
+                self.respond_error(client, rid, reason)
+            elif failed is not None:
+                failed({"@type": "error", "code": 0, "message": reason})
+        except Exception as error:
+            self.diagnostic_log.failure("td_failure_callback", error)
+            if request is not None:
+                self.respond_error(request[0], request[1], "The request could not be completed; check before retrying")
+        finally:
+            self.current_session = previous
+            self.current_request = previous_request
+
+    def request_current(self, request):
+        if request is None:
+            return True
+        client, rid, token = request
+        timing = self.request_times.get((client, rid))
+        return timing is not None and timing[4] == token
+
+    def request_business_current(self, request):
+        if request is None:
+            return True
+        timing = self.request_times.get(request[:2])
+        return (self.request_current(request) and timing is not None
+                and self.session_current(timing[2], timing[3]))
+
+    def expire_requests(self, now=None):
+        now = time.monotonic() if now is None else now
+        expired = [extra for extra, (started, _command) in self.td_times.items()
+                   if now - started >= REQUEST_TIMEOUT]
+        for extra in expired:
+            entry = self.pending.pop(extra, None)
+            timing = self.td_times.pop(extra, None)
+            if entry is not None:
+                self.diagnostic_log.emit("td_timeout", extra=extra, command=timing[1])
+                self.fail_td(entry, "Telegram did not answer within three minutes; the operation may still complete; check before retrying")
+        for (client, rid), timing in list(self.request_times.items()):
+            if now - timing[0] >= REQUEST_TIMEOUT:
+                self.respond_error(client, rid, "The service did not answer within three minutes; the operation may still complete; check before retrying")
 
     def process_events(self):
         deadline = time.monotonic() + EVENT_BATCH_SECONDS
@@ -953,25 +1032,34 @@ class Daemon:
                 return
             self.pending.pop(extra)
             timing = self.td_times.pop(extra, None)
+            if not self.session_current(entry[5], entry[6]) or not self.request_business_current(entry[8]):
+                self.fail_td(entry, "the account session changed", cancelled=True)
+                return
             if timing:
                 self.diagnostic_log.emit("td_response", extra=extra, command=timing[1],
                                          duration_ms=round((time.monotonic() - timing[0]) * 1000),
                                          ok=event.get("@type") != "error", code=model._int(event.get("code")))
             client, rid, transform, failed = entry[0], entry[1], entry[2], entry[3]
             req_sess = sess
+            previous_session, previous_request = self.current_session, self.current_request
+            self.current_request = entry[8]
             if client is None:
                 # The service's own request (often the first step of a command): an error goes to
                 # `failed`, so whoever is waiting still hears back.
                 try:
                     self.current_session = req_sess
                     if event.get("@type") != "error":
-                        transform(event)
+                        if transform is not None:
+                            transform(event)
                     elif failed is not None:
                         failed(event)
                 except Exception as error:   # a malformed answer must not take the service down
                     self.diagnostic_log.failure("td_transform", error)
+                    if entry[8] is not None:
+                        self.respond_error(entry[8][0], entry[8][1], "Telegram returned an invalid response; check before retrying")
                 finally:
-                    self.current_session = None
+                    self.current_session = previous_session
+                    self.current_request = previous_request
                 return
             if client.sock.fileno() in self.clients:
                 if event.get("@type") == "error":
@@ -982,14 +1070,17 @@ class Daemon:
                         result = transform(event) if transform else {}
                     except BadRequest as e:
                         self.respond_error(client, rid, str(e))
+                        self.current_request = previous_request
                         return
                     except Exception as error:   # a malformed answer must not take the service down
                         self.diagnostic_log.failure("td_transform", error)
-                        result = {}
+                        self.respond_error(client, rid, "Telegram returned an invalid response; check before retrying")
+                        result = DEFERRED
                     finally:
-                        self.current_session = None
+                        self.current_session = previous_session
                     if result is not DEFERRED:
                         self.respond(client, rid, result)
+            self.current_request = previous_request
             return
         if event.get("@type") == "updateAuthorizationState":
             self.on_auth(sess, event.get("authorization_state"))
@@ -1071,6 +1162,9 @@ class Daemon:
                 self.closed.set()
                 return
             # Logged out or the session was terminated elsewhere: start over, signed out.
+            for (client, rid), timing in list(self.request_times.items()):
+                if timing[2] is sess:
+                    self.respond_error(client, rid, "the account session was closed")
             sess.state = model.State(td.media_roots_for(sess.id))
             sess.me_id = 0
             sess.phone = ""
@@ -1080,8 +1174,7 @@ class Daemon:
                 if entry[4] == sess.id:
                     del self.pending[extra]
                     self.td_times.pop(extra, None)
-                    if entry[0] is not None:
-                        self.respond_error(entry[0], entry[1], "the account session was closed")
+                    self.fail_td(entry, "the account session was closed", cancelled=True)
             self.set_auth(sess, {"state": "starting"})
             if hasattr(self.td, "create_client"):
                 new_cid = self.td.create_client()
@@ -1105,6 +1198,10 @@ class Daemon:
 
     def send_parameters(self, sess=None):
         sess = sess or self.session_for()
+        sess.parameters_serial += 1
+        token = sess.parameters_serial
+        client_id = sess.client_id
+        auth = sess.auth
         try:
             credentials = self.keyring.load_credentials()
             if credentials is None:
@@ -1123,11 +1220,26 @@ class Daemon:
         except (td.TdUnavailable, safe.UnsafeError, OSError) as e:
             self.set_auth(sess, {"state": "error", "reason": str(e)[:200]})
             return
+        def current_attempt():
+            return (self.accounts.get(sess.id) is sess and sess.client_id == client_id
+                    and sess.parameters_serial == token)
+
         def configured(_event):
+            if not current_attempt():
+                return
             sess.bridge_ready = True
             if self.bridge is not None and sess.id in self.bridge.metadata:
                 self.bridge_restore.add(sess.id)
-        self.td_send(query, transform=configured, session=sess)
+
+        def rejected(event):
+            if not current_attempt() or sess.auth is not auth:
+                return
+            code = model._int(event.get("code"))
+            reason = "Telegram rejected the startup parameters"
+            if 0 < code <= INT32_MAX:
+                reason += f" (error {code})"
+            self.set_auth(sess, {"state": "error", "reason": reason + "; check API credentials and TDLib compatibility"})
+        self.td_send(query, transform=configured, failed=rejected, session=sess)
 
     def on_me(self, sess_or_user, user=None):
         if user is None:
@@ -1382,11 +1494,22 @@ class Daemon:
         except OSError:
             return None
 
-    def background(self, work, done, session=None):
-        """Slow work (ffmpeg) off the loop; `done(result, error)` then runs back on the loop."""
+    def cancel_work(self, client, rid, *paths):
+        for path in paths:
+            if path:
+                try:
+                    media.remove(path)
+                except OSError as error:
+                    self.diagnostic_log.failure("cancel_cleanup", error)
+        if client is not None and client.sock.fileno() in self.clients:
+            self.respond_error(client, rid, "the account session changed or request expired; the result was not applied")
+
+    def background(self, work, done, session=None, cancelled=None):
+        """Slow work off-loop; stale sessions run cleanup, never business completion."""
         self.jobs += 1
         session = session or self.session_for()
         client_id = session.client_id
+        request = self.current_request
         started = time.monotonic()
         self.diagnostic_log.emit("job_start", jobs=self.jobs)
 
@@ -1397,26 +1520,35 @@ class Daemon:
                 result, error = None, e
                 self.diagnostic_log.failure("background_work", e)
             self.diagnostic_log.emit("job_end", duration_ms=round((time.monotonic() - started) * 1000), ok=error is None)
-            self.tasks.put((done, result, error, session, client_id))
+            self.tasks.put((done, result, error, session, client_id, cancelled, request))
             self.wake()
         threading.Thread(target=run, daemon=True).start()
 
     def run_tasks(self):
         while True:
             try:
-                done, result, error, session, client_id = self.tasks.get_nowait()
+                done, result, error, session, client_id, cancelled, request = self.tasks.get_nowait()
             except queue.Empty:
                 return
             self.jobs -= 1
+            previous, previous_request = self.current_session, self.current_request
+            self.current_request = request
             try:
-                if session.client_id != client_id:
+                if not self.session_current(session, client_id) or not self.request_business_current(request):
+                    if cancelled is not None:
+                        cancelled(result, error)
+                    if request is not None:
+                        self.respond_error(request[0], request[1], "the account session changed or request expired")
                     continue
                 self.current_session = session
                 done(result, error)
             except Exception as error:
                 self.diagnostic_log.failure("background_callback", error)
+                if request is not None:
+                    self.respond_error(request[0], request[1], "The request could not be completed; check before retrying")
             finally:
-                self.current_session = None
+                self.current_session = previous
+                self.current_request = previous_request
 
     def reap_children(self):
         now = time.monotonic()
@@ -1509,8 +1641,9 @@ class Daemon:
             except (KeyError, ValueError):
                 pass
         for extra in [e for e, entry in self.pending.items() if entry[0] is client]:
-            del self.pending[extra]
+            entry = self.pending.pop(extra)
             self.td_times.pop(extra, None)
+            self.fail_td(entry, "the connection was closed", cancelled=True)
         for key in [key for key in self.request_times if key[0] is client]:
             del self.request_times[key]
         client.sock.close()
@@ -1580,12 +1713,20 @@ class Daemon:
             self.send_to(client, value)
 
     def respond(self, client, rid, result):
+        if not self.response_current(client, rid):
+            return
         self.finish_request(client, rid, True)
         self.send_to(client, {"id": rid, "ok": True, "result": result})
 
     def respond_error(self, client, rid, message, code=0):
+        if not self.response_current(client, rid):
+            return
         self.finish_request(client, rid, False, code)
         self.send_to(client, {"id": rid, "ok": False, "error": message or "failed", "code": code})
+
+    def response_current(self, client, rid):
+        request = self.current_request
+        return not (request is not None and request[:2] == (client, rid)) or self.request_current(request)
 
     def finish_request(self, client, rid, ok, code=0):
         timing = self.request_times.pop((client, rid), None)
@@ -1610,6 +1751,9 @@ class Daemon:
         if isinstance(rid, bool) or not isinstance(rid, int):
             self.respond_error(client, None, "id must be an integer")
             return
+        if (client, rid) in self.request_times:
+            self.drop(client)   # Reused live IDs cannot receive unambiguous terminal replies.
+            return
         cmd = request.get("cmd")
         args = request.get("args", {})
         handler = COMMANDS.get(cmd) if isinstance(cmd, str) else None
@@ -1617,9 +1761,13 @@ class Daemon:
             self.respond_error(client, rid, "unknown command")
             return
         name, needs_ready = handler
+        if sum(key[0] is client for key in self.request_times) >= IPC_PENDING_MAX:
+            self.respond_error(client, rid, "Too many pending requests; wait for the service")
+            return
         started = time.monotonic()
         if cmd != "diagnostics.ui":
-            self.request_times[(client, rid)] = (started, cmd)
+            self.request_times[(client, rid)] = (started, cmd, None, None, self.next_request)
+            self.next_request += 1
             self.diagnostic_log.emit("ipc_request", request_id=rid, peer_pid=client.pid, command=cmd)
             self.diagnostic_log.counters["ipc_requests"] += 1
         self.diagnostic_log.progress("ipc:" + cmd)
@@ -1633,6 +1781,10 @@ class Daemon:
             self.respond_error(client, rid, "not signed in")
             return
         self.current_session = sess
+        timing = self.request_times.get((client, rid))
+        if timing is not None:
+            self.request_times[(client, rid)] = (timing[0], timing[1], sess, sess.client_id, timing[4])
+            self.current_request = (client, rid, timing[4])
         try:
             getattr(self, name)(client, rid, args)
         except BadRequest as e:
@@ -1642,6 +1794,7 @@ class Daemon:
             self.respond_error(client, rid, "the request failed")
         finally:
             self.current_session = None
+            self.current_request = None
             elapsed = (time.monotonic() - started) * 1000
             if elapsed > 100:
                 self.diagnostic_log.emit("slow_ipc_handler", command=cmd, duration_ms=round(elapsed))
@@ -2125,20 +2278,24 @@ class Daemon:
         self.td_send({"@type": "getFile", "file_id": arg_int(args, "fileId", 1, INT32_MAX)}, client, rid, opened)
 
     def checked_photo_action(self, client, rid, args, action):
-        """Viewer exports recheck TDLib permission and bind the file to that photo."""
+        return self.checked_file_action(client, rid, args, action, photo_only=True)
+
+    def checked_file_action(self, client, rid, args, action, photo_only=False):
+        """Exports require server permission and the message's original media file."""
         chat_id = arg_int(args, "chatId")
         message_id = arg_int(args, "messageId", 1)
         file_id = arg_int(args, "fileId", 1, INT32_MAX)
 
         def check(body):
             candidates = body.get("blocks", []) if body.get("kind") == "rich" else [body]
-            if not any(c.get("kind") == "photo" and model._obj(model._obj(c.get("media")).get("file")).get("id") == file_id
+            if not any((not photo_only or c.get("kind") == "photo")
+                       and model._obj(model._obj(c.get("media")).get("file")).get("id") == file_id
                        for c in candidates):
-                raise BadRequest("that file is not this message's photo")
+                raise BadRequest("that file is not this message's media")
 
             def permitted(properties):
                 if properties.get("can_be_saved") is not True:
-                    raise BadRequest("this photo cannot be saved or copied")
+                    raise BadRequest("this message's media cannot be saved or copied")
                 return action()
             self.td_send({"@type": "getMessageProperties", "chat_id": chat_id, "message_id": message_id},
                          client, rid, permitted)
@@ -2146,7 +2303,7 @@ class Daemon:
 
         def message_found(event):
             if event.get("chat_id") != chat_id or event.get("id") != message_id:
-                raise BadRequest("that file is not this message's photo")
+                raise BadRequest("that file is not this message's media")
             body = model.content(event.get("content"), self.state.files_root)
             if body.get("kind") == "rich" and not body.get("full"):
                 self.td_send({"@type": "getFullRichMessage", "chat_id": chat_id, "message_id": message_id}, client, rid,
@@ -2157,9 +2314,14 @@ class Daemon:
         return DEFERRED
 
     def cmd_file_save(self, client, rid, args):
+        arg_int(args, "chatId")
+        arg_int(args, "messageId", 1)
+        file_id = arg_int(args, "fileId", 1, INT32_MAX)
         name = download_name(args.get("fileName"))
 
         def located(event):
+            if event.get("id") != file_id:
+                raise BadRequest("that is not the requested file")
             path = self.downloaded_path(event)
             def save():
                 if self.jobs >= JOBS_MAX:
@@ -2170,19 +2332,21 @@ class Daemon:
                         self.respond_error(client, rid, "the file could not be saved to Downloads")
                     else:
                         self.respond(client, rid, {"path": saved})
-                self.background(lambda: str(copy_out(path, DOWNLOADS, name)), done)
+                self.background(lambda: str(copy_out(path, DOWNLOADS, name)), done,
+                                cancelled=lambda *_: self.cancel_work(client, rid))
                 return DEFERRED
-            if "chatId" in args or "messageId" in args:
-                return self.checked_photo_action(client, rid, args, save)
-            return save()
-        self.td_send({"@type": "getFile", "file_id": arg_int(args, "fileId", 1, INT32_MAX)}, client, rid, located)
+            return self.checked_file_action(client, rid, args, save)
+        self.td_send({"@type": "getFile", "file_id": file_id}, client, rid, located)
 
     def cmd_file_copy_image(self, client, rid, args):
         # Validate message context before even asking for the file.
         arg_int(args, "chatId")
         arg_int(args, "messageId", 1)
+        file_id = arg_int(args, "fileId", 1, INT32_MAX)
 
         def located(event):
+            if event.get("id") != file_id:
+                raise BadRequest("that is not the requested file")
             path = self.downloaded_path(event)
 
             def copy():
@@ -2215,10 +2379,10 @@ class Daemon:
                                            else "the image could not be copied (maximum 10 MiB)")
                     else:
                         self.respond(client, rid, result)
-                self.background(work, done)
+                self.background(work, done, cancelled=lambda *_: self.cancel_work(client, rid))
                 return DEFERRED
             return self.checked_photo_action(client, rid, args, copy)
-        self.td_send({"@type": "getFile", "file_id": arg_int(args, "fileId", 1, INT32_MAX)}, client, rid, located)
+        self.td_send({"@type": "getFile", "file_id": file_id}, client, rid, located)
 
     def cmd_clipboard_image(self, client, rid, args):
         self.clipboard_job(client, rid, self.clipboard_image)
@@ -2230,8 +2394,14 @@ class Daemon:
             if error is not None:
                 self.respond_error(client, rid, "the clipboard could not be read")
             else:
-                self.respond(client, rid, result)
-        self.background(work, done)
+                output = dict(model._obj(result))
+                output.pop("_generated", None)
+                self.respond(client, rid, output)
+        def cancelled(result, _error):
+            output = model._obj(result)
+            path = output.get("path") if work == self.clipboard_image else output.get("_generated")
+            self.cancel_work(client, rid, path)
+        self.background(work, done, cancelled=cancelled)
 
     def clipboard_image(self):
         """An image on the clipboard, saved privately to send; "" when there is none."""
@@ -2286,7 +2456,7 @@ class Daemon:
                     break
                 path = media.new_path("paste", suffix)
                 safe.write_file(path, data, mode=0o600)
-                return {"paths": [str(path)], "skipped": 0}
+                return {"paths": [str(path)], "skipped": 0, "_generated": str(path)}
         except (safe.UnsafeError, OSError):
             pass
         return {"paths": [], "skipped": 0}
@@ -2607,8 +2777,9 @@ class Daemon:
                 return
             self.td_send({"@type": "setProfilePhoto", "is_public": False,
                           "photo": {"@type": "inputChatPhotoStatic", "photo": {"@type": "inputFileLocal", "path": str(target)}}},
-                         transform=done, failed=refused)
-        self.background(lambda: media.prepare_profile_photo(source, target), converted)
+                         transform=done, failed=refused, cancelled=lambda: self.cancel_work(client, rid, target))
+        self.background(lambda: media.prepare_profile_photo(source, target), converted,
+                        cancelled=lambda *_: self.cancel_work(client, rid, target))
 
     def cmd_profile_delete_photo(self, client, rid, args):
         def got(user):
@@ -2747,7 +2918,8 @@ class Daemon:
                      "type": {"@type": "proxyTypeMtproto", "secret": "dd" + self.bridge.secret}}
             self.td_send({"@type": "pingProxy", "proxy": proxy}, client, rid,
                          lambda event: {"seconds": max(0, float(event.get("seconds") or 0))}, session=sess)
-        self.background(self.bridge.start, ready, session=sess)
+        self.background(self.bridge.start, ready, session=sess,
+                        cancelled=lambda *_: self.cancel_work(client, rid))
 
     def cmd_bridge_set(self, client, rid, args):
         if not isinstance(args.get("enabled"), bool):
@@ -2767,6 +2939,10 @@ class Daemon:
             return
         self.bridge_busy.add(sess.id)
         self.bridge_idle_at = time.monotonic() + 180
+
+        def cancelled(*_):
+            self.bridge_busy.discard(sess.id)
+            self.cancel_work(client, rid)
 
         def fail(error=None):
             self.bridge_busy.discard(sess.id)
@@ -2809,9 +2985,9 @@ class Daemon:
                     self.bridge_restore.discard(sess.id)
                     if client is not None:
                         self.respond(client, rid, self.bridge.status(sess.id))
-                self.td_send(command, transform=configured, failed=fail, session=sess)
-            self.td_send({"@type": "getProxies"}, transform=listed, failed=fail, session=sess)
-        self.background(self.bridge.start, ready, session=sess)
+                self.td_send(command, transform=configured, failed=fail, session=sess, cancelled=cancelled)
+            self.td_send({"@type": "getProxies"}, transform=listed, failed=fail, session=sess, cancelled=cancelled)
+        self.background(self.bridge.start, ready, session=sess, cancelled=cancelled)
 
     def disable_bridge(self, client, rid, sess):
         entry = self.bridge.metadata.get(sess.id)
@@ -2819,6 +2995,10 @@ class Daemon:
             self.respond(client, rid, self.bridge.status(sess.id))
             return
         self.bridge_busy.add(sess.id)
+
+        def cancelled():
+            self.bridge_busy.discard(sess.id)
+            self.cancel_work(client, rid)
 
         def fail(_error=None):
             self.bridge_busy.discard(sess.id)
@@ -2853,8 +3033,8 @@ class Daemon:
                 command = {"@type": "enableProxy", "proxy_id": previous}
             else:
                 command = {"@type": "disableProxy"}
-            self.td_send(command, transform=finished, failed=fail, session=sess)
-        self.td_send({"@type": "getProxies"}, transform=listed, failed=fail, session=sess)
+            self.td_send(command, transform=finished, failed=fail, session=sess, cancelled=cancelled)
+        self.td_send({"@type": "getProxies"}, transform=listed, failed=fail, session=sess, cancelled=cancelled)
 
     def cmd_proxies_list(self, client, rid, args):
         """The proxies you added, the one in use marked, and how TDLib is reaching Telegram right now."""
@@ -3287,6 +3467,8 @@ class Daemon:
             raise BadRequest("no voice message is being recorded")
         if rec.get("account") != self.session_for().id:
             raise BadRequest("the recording belongs to another account")
+        if self.jobs >= JOBS_MAX:
+            raise BadRequest("still preparing an earlier message; try stopping again in a moment")
         send = args.get("send") is True
         reply = self.reply_args(args) if send else {}
         self.recording = None
@@ -3322,7 +3504,7 @@ class Daemon:
                 "voice_note": {"@type": "inputVoiceNote", "voice_note": {"@type": "inputFileLocal", "path": str(path)},
                                "duration": duration, "waveform": waveform},
                 "caption": None, "self_destruct_type": None}, reply)
-        self.background(work, done)
+        self.background(work, done, cancelled=lambda *_: self.cancel_work(client, rid, path))
 
     def cmd_videonote_record(self, client, rid, args):
         """A round video message recorded by the service itself, from the camera and the microphone, for the quick
@@ -3353,8 +3535,11 @@ class Daemon:
             raise BadRequest("no video message is being recorded")
         if rec.get("account") != self.session_for().id:
             raise BadRequest("the recording belongs to another account")
+        if self.jobs >= JOBS_MAX:
+            raise BadRequest("still preparing an earlier message; try stopping again in a moment")
         send = args.get("send") is True
         reply = self.reply_args(args) if send else {}
+        target = media.new_sent_path("note", ".mp4", self.session_for().id) if send else None
         self.recording = None
         self.broadcast({"event": "recording", "state": "idle"})
         proc, source, preview, chat_id = rec["proc"], rec["path"], rec["preview"], rec["chatId"]
@@ -3362,7 +3547,6 @@ class Daemon:
             proc.send_signal(signal.SIGINT)   # ffmpeg finishes both files on its first interrupt
         except OSError:
             pass
-        target = media.new_sent_path("note", ".mp4", self.session_for().id) if send else None
 
         def work():
             try:
@@ -3390,7 +3574,7 @@ class Daemon:
                                "thumbnail": None, "duration": max(1, min(media.NOTE_MAX_SECONDS, int(duration))),
                                "length": media.NOTE_SIZE},
                 "self_destruct_type": None}, reply)
-        self.background(work, done)
+        self.background(work, done, cancelled=lambda *_: self.cancel_work(client, rid, target))
 
     def cmd_media_play(self, client, rid, args):
         """Listen to a voice or round video message without a window: the file is fetched when it is not here yet,
@@ -3466,7 +3650,7 @@ class Daemon:
                                "thumbnail": None, "duration": max(1, min(media.NOTE_MAX_SECONDS, int(duration))),
                                "length": media.NOTE_SIZE},
                 "self_destruct_type": None}, reply)
-        self.background(work, done)
+        self.background(work, done, cancelled=lambda *_: self.cancel_work(client, rid, target))
 
     def cmd_videonote_discard(self, client, rid, args):
         try:
@@ -3506,7 +3690,8 @@ class Daemon:
                     self.respond_error(client, rid, "that round video could not be shown")
                 else:
                     self.respond(client, rid, {"path": str(path), "fps": media.NOTE_ANIMATION_RATE})
-            self.background(lambda: media.make_note_animation(source), done)
+            self.background(lambda: media.make_note_animation(source), done,
+                            cancelled=lambda *_: self.cancel_work(client, rid))
             return DEFERRED
         self.td_send({"@type": "downloadFile", "file_id": file_id, "priority": 32, "offset": 0, "limit": 0, "synchronous": True},
                      client, rid, fetched)
@@ -3730,6 +3915,7 @@ class Daemon:
             return
         self.respond(client, rid, {})
         if self.auth.get("state") in ("needCredentials", "error"):
+            self.current_request = None   # Startup belongs to the session, not the acknowledged save.
             self.set_auth({"state": "starting"})
             self.send_parameters()
 
@@ -3908,7 +4094,8 @@ class Daemon:
         # A video's length and size, and music's length, are read first, as Telegram's player needs them.
         self.background(lambda: media.probe_media(path),
                         lambda probed, error: self.send_content(
-                            client, rid, chat_id, file_content(path, kind, text, probed if error is None else (0, 0, 0)), reply))
+                            client, rid, chat_id, file_content(path, kind, text, probed if error is None else (0, 0, 0)), reply),
+                        cancelled=lambda *_: self.cancel_work(client, rid))
 
     def cmd_message_send_files(self, client, rid, args):
         """Up to ten files at once, as Telegram's apps send them: photos and videos in albums, files
@@ -3940,7 +4127,8 @@ class Daemon:
         if self.jobs >= JOBS_MAX:
             raise BadRequest("still preparing an earlier message; try again in a moment")
         self.background(lambda: [media.probe_media(path) if kind in ("video", "audio") else (0, 0, 0) for path, kind in files],
-                        lambda probed, error: send(probed if error is None else [(0, 0, 0)] * len(files)))
+                        lambda probed, error: send(probed if error is None else [(0, 0, 0)] * len(files)),
+                        cancelled=lambda *_: self.cancel_work(client, rid))
 
     def send_groups(self, client, rid, chat_id, groups, contents, reply):
         """Each group as an album, or as a message when it holds one file; answered once all are sent."""
@@ -4157,7 +4345,8 @@ class Daemon:
 
             def done(path, error):
                 self.respond(client, rid, {"path": path if error is None else ""})
-            self.background(lambda: lottie_json(view["path"]), done)
+            self.background(lambda: lottie_json(view["path"]), done,
+                            cancelled=lambda *_: self.cancel_work(client, rid))
             return DEFERRED
         self.td_send({"@type": "getFile", "file_id": arg_int(args, "fileId", 1, FILE_ID_MAX)}, client, rid, convert)
 

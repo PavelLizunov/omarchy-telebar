@@ -42,7 +42,9 @@ QtObject {
   signal accountChanging()
   property string sendError: ""
   property bool holdSend: false
+  property bool synchronousSend: false
   property var pendingSend: null
+  property var pendingMarkdown: null
   property var readLog: []
   function sendText(chatId, text, callback) { request("message.send", { chatId: chatId, text: text }, callback) }
   function completeSend() {
@@ -70,7 +72,7 @@ QtObject {
       unread: 17, mentions: 2, muted: false, order: "200", lists: ["main"], positions: { main: { order: "200", pinned: true } },
       myStatus: "member", memberCount: 284, draft: "", lastMessage: { id: 9, date: 1790726300, text: "Design discussion", outgoing: false } },
     { id: 900, title: "Saved Messages", kind: "private", userId: 900, unread: 0, muted: false,
-      markedUnread: false,
+      markedUnread: false, mentions: 0,
       order: "100", lists: ["main"], positions: { main: { order: "100", pinned: false } },
       draft: "", lastMessage: { id: 10, date: 1790726100, text: "A note to self", outgoing: true } }
   ]
@@ -99,6 +101,10 @@ QtObject {
   property var lastRequest: null
   function request(cmd, args, callback) {
     lastRequest = { cmd: cmd, args: args }
+    if (cmd === "message.markdown") {
+      pendingMarkdown = callback
+      return
+    }
     if (cmd === "message.properties") {
       pendingPhotoRequest = callback
       if (!holdPhotoRequest) Qt.callLater(completePhotoRequest)
@@ -109,9 +115,14 @@ QtObject {
       return
     }
     if (cmd === "chat.read") readLog = readLog.concat([args])
-    if (cmd === "message.send" || cmd === "message.sendFiles" || cmd === "voice.stop" || cmd === "videonote.stop" || cmd === "message.sendSticker") {
+    if (cmd === "message.send" || cmd === "message.sendFiles" || cmd === "message.edit" || cmd === "voice.stop" || cmd === "videonote.stop" || cmd === "message.sendSticker"
+        || cmd === "message.sendDice" || cmd === "message.sendPoll"
+        || cmd === "message.sendContact" || cmd === "message.sendLocation") {
       pendingSend = callback
-      if (!holdSend) Qt.callLater(completeSend)
+      if (!holdSend) {
+        if (synchronousSend) completeSend()
+        else Qt.callLater(completeSend)
+      }
       return
     }
     var result = {}
@@ -146,6 +157,11 @@ QtObject {
   function openFile() {}
   function openChatById() {}
   function openChatAt() {}
+  function markRead(chatId, ids, topicId, thread) {
+    var args = { chatId: chatId, messageIds: ids }
+    if (topicId) args[thread ? "threadId" : "topicId"] = topicId
+    request("chat.read", args)
+  }
   function openThread() {}
   function expandChatList() {}
   function switchAccount(id) { activeAccount = id }

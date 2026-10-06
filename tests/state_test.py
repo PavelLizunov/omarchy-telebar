@@ -255,6 +255,36 @@ class Formatting(unittest.TestCase):
         self.assertEqual(entities, [{"type": "bold", "offset": 6, "length": 4},
                                     {"type": "textUrl", "offset": 11, "length": 4, "url": "https://x.org"}])
 
+    def test_malformed_scalars_have_safe_defaults(self):
+        for value in ("--1", "-", "²", "١", "+1", " 1", "1_0", True, "1" * 21):
+            with self.subTest(value=value):
+                self.assertEqual(model._int(value, -7), -7)
+        for value, expected in (("0", 0), ("-1", -1), ("001", 1), ("9223372036854775807", 2 ** 63 - 1)):
+            self.assertEqual(model._int(value, -7), expected)
+        for value in (10 ** 400, -(10 ** 400), float("nan"), float("inf"), True):
+            self.assertIsNone(model._float(value, -90, 90))
+        self.assertEqual(model._float(90, -90, 90), 90.0)
+        self.assertIsNone(model.location_view({"location": {"@type": "location", "latitude": 10 ** 400,
+                                                          "longitude": 0}}))
+
+    def test_unpaired_surrogates_are_replaced_without_shifting_entities(self):
+        text, entities = model.formatted({"text": "A\ud800😀B", "entities": [
+            {"offset": 2, "length": 2, "type": {"@type": "textEntityTypeBold"}}]})
+        self.assertEqual(text, "A?😀B")
+        self.assertEqual(model.utf16_length(text), 5)
+        self.assertEqual(entities, [{"type": "bold", "offset": 2, "length": 2}])
+        self.assertEqual(model.formatted({"text": "\udfff"})[0], "?")
+        self.assertEqual(model._str("bad\ud800 title", 100), "bad? title")
+        state = model.State()
+        event = state.apply({"@type": "updateNewChat", "chat": chat(7, "bad\ud800 title")})
+        self.assertEqual(event[0]["chat"]["title"], "bad? title")
+        import json
+        json.dumps(event, ensure_ascii=False).encode("utf-8")
+        out = model.State().apply({"@type": "updateNewMessage", "message": text_message(1, 7, "hi\ud800")})
+        self.assertEqual(out[0]["message"]["content"]["text"], "hi?")
+        out = model.State().apply({"@type": "updateNewMessage", "message": text_message("--1", 7, "hi")})
+        self.assertEqual(out[0]["message"]["id"], 0)
+
     def test_hostile_values_do_not_break_anything(self):
         for value in (None, 5, "text", [], {"text": 5}, {"text": "x" * 100000, "entities": "nope"}):
             text, entities = model.formatted(value)
@@ -482,8 +512,11 @@ class Media(unittest.TestCase):
         inside = ROOT_FILES + "/photos/1.jpg"
         self.assertEqual(model.file_view(tdfile(1, inside, done=True), ROOT_FILES)["path"], inside)
         self.assertEqual(model.file_view(tdfile(1, inside, done=False), ROOT_FILES)["path"], "")
+        unicode_path = ROOT_FILES + "/photos/Фото😀.jpg"
+        self.assertEqual(model.local_path(unicode_path, ROOT_FILES), unicode_path)
         for bad in ("/etc/passwd", ROOT_FILES + "/../../../.ssh/id_ed25519", ROOT_FILES + "x/a.jpg",
-                    "photos/1.jpg", ROOT_FILES + "/a\nb.jpg", ROOT_FILES + "//a.jpg", 5):
+                    "photos/1.jpg", ROOT_FILES + "/a\nb.jpg", ROOT_FILES + "//a.jpg",
+                    ROOT_FILES + "/bad\ud800.jpg", 5):
             self.assertEqual(model.file_view(tdfile(1, bad, done=True), ROOT_FILES)["path"], "", bad)
         self.assertEqual(model.file_view(tdfile(1, inside, done=True), "")["path"], "")
         self.assertIsNone(model.file_view({"@type": "file", "id": 0}, ROOT_FILES))
@@ -526,6 +559,8 @@ class Media(unittest.TestCase):
         for bad in ("!!!", "A" * 1000, 5, ""):
             self.assertEqual(model.waveform(bad), [], bad)
         self.assertIsNone(model.minithumbnail({"@type": "minithumbnail", "data": "A" * (model.MINI_MAX + 1)}))
+        for data in ("bad\ud800", "café", "действие"):
+            self.assertIsNone(model.minithumbnail({"@type": "minithumbnail", "data": data}))
 
     def test_file_progress_is_throttled(self):
         s = model.State(ROOT_FILES)

@@ -9,8 +9,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests/visual"
-SERVER = Path("/home/slovn/Work/qml-preview-mcp/mcp-qml-preview.py")
-IMPORTS = Path("/tmp/opencode/qml-mock")
+IMPORTS = FIXTURES / "imports"
 
 
 def cases():
@@ -59,9 +58,12 @@ def cases():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--server", type=Path, required=True, help="Reviewed local QML-preview MCP Python entry point")
     parser.add_argument("--only", help="Comma-separated case names")
     parser.add_argument("--paired-radius", action="store_true", help="Render every state at radii 0 and 8")
     args = parser.parse_args()
+    if not args.server.is_absolute() or not args.server.is_file():
+        parser.error("Server must be an explicit absolute reviewed file")
     if not args.output.parent.is_dir() or args.output.exists():
         parser.error("Output must be new with an existing parent")
     args.output.mkdir(mode=0o700)
@@ -84,7 +86,7 @@ def main():
     dependencies += [FIXTURES / name for name in ["FixtureApp.qml", "Preview.qml", "Readiness.js", "sample-photo.svg"]]
     dependencies += sorted(p for p in IMPORTS.rglob("*") if p.is_file())
     assert len(dependencies) <= 127, "MCP dependency limit; current root is hashed separately"
-    process = subprocess.Popen([sys.executable, str(SERVER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    process = subprocess.Popen([sys.executable, str(args.server)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     rid = 0
     def request(method, params):
         nonlocal rid
@@ -109,7 +111,7 @@ def main():
         (args.output / "healthcheck.json").write_text(json.dumps(health, ensure_ascii=False, indent=2))
         for case in run:
             path = FIXTURES / case["fixture"]
-            options = {"qmlPath": str(path), "outputPath": str(args.output / (case["name"] + ".png")), "width": case["width"], "height": case["height"], "dpr": 2 if case["name"].startswith("quick-light") else 1, "locale": "ru_RU", "imageMode": "path", "warningsPolicy": "error", "initialProperties": case["props"], "importPaths": [str(IMPORTS)], "dependencyPaths": [str(p) for p in dependencies], "timeoutMs": 5000}
+            options = {"qmlPath": str(path), "outputPath": str(args.output / (case["name"] + ".png")), "width": case["width"], "height": case["height"], "dpr": 2 if case["name"].startswith("quick-light") else 1, "locale": "ru_RU", "imageMode": "path", "warningsPolicy": "error", "initialProperties": case["props"], "importPaths": [str(IMPORTS / "qs"), str(IMPORTS / "inert")], "dependencyPaths": [str(p) for p in dependencies], "timeoutMs": 5000}
             options["snapshot"] = {"maxDepth": 8, "maxItems": 128}
             if case["name"] != "bar-host":
                 options["readyProperty"] = "ready"

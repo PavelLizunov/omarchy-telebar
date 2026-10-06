@@ -168,9 +168,8 @@ FocusScope {
   }
 
   function resetForChat() {
-    root.mentionSerial++
-    root.mentionBusy = false
-    root.pendingMention = 0
+    root.invalidateSend()
+    root.invalidateMention()
     messageMenu.close()
     muteMenu.close()
     sendMenu.close()
@@ -218,6 +217,8 @@ FocusScope {
   // Into a forum topic, or back to the topic list: what was being written stays with the topic
   // it was written in, and the topic opened brings back its own draft.
   function switchTopic() {
+    root.invalidateSend()
+    root.invalidateMention()
     root.leaveChat()
     root.closeScheduled()
     root.draftTopicId = root.topicId
@@ -261,15 +262,15 @@ FocusScope {
 
   // What the + button sends goes where a message would: into the open topic or thread, as a reply.
   function sendExtra(command, args, what) {
-    if (!root.chat) return
+    if (!root.chat || root.sendPending) return
     args.chatId = root.chat.id
     root.target(args)
     if (root.replyToId) args.replyToMessageId = root.replyToId
+    var snapshot = root.beginSend()
+    snapshot.failurePrefix = "Could not send " + what + ": "
     client.request(command, args, function (answer) {
-      if (!answer.ok) root.flash("Could not send " + what + ": " + (answer.error || "unknown error"))
+      root.completeSend(snapshot, answer, 0, true)
     })
-    root.replyToId = 0
-    root.stickToBottom = true
   }
 
   function sendDice(emoji) {
@@ -379,6 +380,7 @@ FocusScope {
 
   // Photos and videos go as albums, files and music as albums of their own, the caption on the first.
   function sendAttachments(options) {
+    if (!root.chat || root.sendPending) return
     var caption = composer.text.replace(/\s+$/, "")
     if (caption.length > 2048) { root.flash("That caption is too long."); return }
     var args = root.target({ chatId: root.chat.id, paths: root.attachments.map(function (a) { return a.path }),
@@ -386,17 +388,10 @@ FocusScope {
     if (root.replyToId) args.replyToMessageId = root.replyToId
     if (options && typeof options.silent === "boolean") args.silent = options.silent
     if (options && options.sendAt) args.sendAt = options.sendAt
+    var snapshot = root.beginSend()
     client.request("message.sendFiles", args, function (answer) {
-      if (!answer.ok) root.flash("Could not send: " + (answer.error || "unknown error"))
+      root.completeSend(snapshot, answer, options && options.sendAt ? options.sendAt : 0)
     })
-    root.attachments = []
-    draftTimer.stop()
-    root.savedDraft = ""
-    root.lastTypingMs = 0
-    root.setComposerText("")
-    root.replyToId = 0
-    root.forgetLinkPreview()
-    root.stickToBottom = true
   }
 
   function toggleStickers() {
@@ -461,15 +456,14 @@ FocusScope {
   }
 
   function stopVoice(send) {
+    if (send && (!root.chat || root.sendPending)) return
     var args = root.target({ send: send })
     if (send && root.replyToId) args.replyToMessageId = root.replyToId
+    var snapshot = send ? root.beginSend() : null
     client.request("voice.stop", args, function (answer) {
-      if (!answer.ok) root.flash(answer.error || "Could not send the voice message")
+      if (snapshot) root.completeSend(snapshot, answer, 0, true)
+      else if (!answer.ok) root.flash(answer.error || "Could not discard the voice message")
     })
-    if (send) {
-      root.replyToId = 0
-      root.stickToBottom = true
-    }
     Qt.callLater(root.focusComposer)
   }
 
@@ -542,6 +536,7 @@ FocusScope {
     }
   }
   onTopicIdChanged: if (root.chat && root.chat.id === root.draftChatId && root.topicId !== root.draftTopicId) root.switchTopic()
+  onThreadOpenChanged: if (root.chat && root.chat.id === root.draftChatId && root.threadOpen !== root.draftThread) root.switchTopic()
   property real lastChatId: 0
 
   // The rows shown, one per message id, edited in place as the messages change. A new array as
@@ -1068,7 +1063,8 @@ FocusScope {
     var file = root.fileOf(message)
     if (!file) return
     if (!file.path) { app.download(file.id, 32); root.flash("Downloading… save it again when it is done"); return }
-    client.request("file.save", { fileId: file.id, fileName: Model.saveName(message) }, function (answer) {
+    client.request("file.save", { fileId: file.id, chatId: message.chatId, messageId: message.id,
+                                  fileName: Model.saveName(message) }, function (answer) {
       if (answer.ok) root.flash("Saved to Downloads as " + String(answer.result.path).split("/").pop())
       else root.flash(answer.error || "Could not save the file")
     })
@@ -1083,6 +1079,12 @@ FocusScope {
   property bool mentionBusy: false
   property int mentionSerial: 0
   property real pendingMention: 0
+  function invalidateMention() {
+    root.reactionSerial++
+    root.mentionSerial++
+    root.mentionBusy = false
+    root.pendingMention = 0
+  }
   function finishMention() {
     if (!pendingMention || !root.chat || !root.focusMessage(pendingMention)) return
     var id = pendingMention
@@ -1096,13 +1098,15 @@ FocusScope {
     if (!root.chat || mentionBusy) return
     var chatId = root.chat.id
     var topic = root.topicId
+    var thread = root.threadOpen
     var account = app.activeAccount
     var token = ++mentionSerial
     mentionBusy = true
     client.request("chat.nextMention", root.target({ chatId: chatId }), function (answer) {
       if (token !== root.mentionSerial) return
+      root.mentionSerial++
       root.mentionBusy = false
-      if (!root.chat || root.chat.id !== chatId || root.topicId !== topic || app.activeAccount !== account) return
+      if (!root.chat || root.chat.id !== chatId || root.topicId !== topic || root.threadOpen !== thread || app.activeAccount !== account) return
       if (!answer.ok) { root.flash(answer.error || "Could not find the next mention"); return }
       if (answer.result.messageId) {
         root.pendingMention = answer.result.messageId
@@ -1117,14 +1121,21 @@ FocusScope {
   }
 
   // The next message of yours with a reaction you have not seen; seeing it reads its reactions.
+  property int reactionSerial: 0
   function nextReaction() {
     if (!root.chat) return
     var chatId = root.chat.id
+    var topic = root.topicId
+    var thread = root.threadOpen
+    var account = app.activeAccount
+    var token = ++root.reactionSerial
     client.request("chat.nextReaction", root.target({ chatId: chatId }), function (answer) {
-      if (!answer.ok || !root.chat || root.chat.id !== chatId) return
+      if (token !== root.reactionSerial) return
+      root.reactionSerial++
+      if (!answer.ok || !root.chat || root.chat.id !== chatId || root.topicId !== topic || root.threadOpen !== thread || app.activeAccount !== account) return
       if (answer.result.messageId) {
         root.jumpTo(answer.result.messageId)
-        app.markRead(chatId, [answer.result.messageId])
+        app.markRead(chatId, [answer.result.messageId], topic, thread)
       } else {
         client.request("chat.readReactions", root.target({ chatId: chatId }))
       }
@@ -1402,6 +1413,7 @@ FocusScope {
   }
 
   function composerEdited() {
+    root.compositionRevision++
     suggestLater.restart()
     previewLater.restart()
     if (root.settingText || !root.chat) return
@@ -1460,6 +1472,8 @@ FocusScope {
   }
 
   function leaveAccount() {
+    root.invalidateSend()
+    root.invalidateMention()
     root.leaveChat()
     if (root.recordingVoice) root.stopVoice(false)
     videoNote.finish(false)
@@ -1478,22 +1492,78 @@ FocusScope {
     return args
   }
 
+  property bool sendPending: false
+  property int sendSerial: 0
+  property int compositionRevision: 0
+  onAttachmentsChanged: root.compositionRevision++
+  onAttachAsMediaChanged: root.compositionRevision++
+  onReplyToIdChanged: root.compositionRevision++
+  onEditingIdChanged: root.compositionRevision++
+  onLinkPreviewModeChanged: root.compositionRevision++
+
+  function invalidateSend() {
+    root.sendSerial++
+    root.sendPending = false
+  }
+
+  function beginSend() {
+    root.sendPending = true
+    return { serial: ++root.sendSerial, revision: root.compositionRevision,
+             chatId: root.chat.id, topicId: root.topicId, thread: root.threadOpen,
+             account: app.activeAccount, editingId: root.editingId, scheduled: root.scheduledOpen }
+  }
+
+  function completeSend(snapshot, answer, later, replyOnly) {
+    if (snapshot.serial !== root.sendSerial) return
+    root.sendSerial++
+    root.sendPending = false
+    if (!root.chat || root.chat.id !== snapshot.chatId || root.topicId !== snapshot.topicId
+        || root.threadOpen !== snapshot.thread || app.activeAccount !== snapshot.account) return
+    if (!answer.ok) {
+      root.flash((snapshot.failurePrefix || (snapshot.editingId && !replyOnly ? "Could not edit: " : "Could not send: ")) + (answer.error || "unknown error"))
+      return
+    }
+    if (replyOnly) {
+      if (snapshot.revision === root.compositionRevision) {
+        root.replyToId = 0
+        root.stickToBottom = true
+      }
+      return
+    }
+    if (snapshot.editingId) {
+      if (snapshot.revision === root.compositionRevision && root.editingId === snapshot.editingId) {
+        root.finishEdit()
+        if (snapshot.scheduled && root.scheduledOpen) root.focusMessages()
+      }
+      if (snapshot.scheduled && root.scheduledOpen) root.loadScheduled()
+      return
+    }
+    if (snapshot.revision === root.compositionRevision) {
+      root.attachments = []
+      draftTimer.stop()
+      root.savedDraft = ""
+      root.lastTypingMs = 0
+      root.setComposerText("")
+      root.replyToId = 0
+      root.forgetLinkPreview()
+      root.stickToBottom = true
+    }
+    if (later) root.flash("It will be sent " + Model.scheduleText(later, Date.now()))
+  }
+
   // `options`: { silent } sends without sound; { sendAt } at a date in seconds, or with -1 once the
   // other person is online.
   function send(options) {
     var text = composer.text.replace(/\s+$/, "")
-    if (!root.chat) return
+    if (!root.chat || root.sendPending) return
     if (root.editingId) {
       if (!root.editingCaption && !text.trim()) return
       // The service checks the length once the formatting markers are read.
       if (text.length > (root.editingCaption ? 2048 : 8192)) { root.flash((root.editingCaption ? "That caption" : "That message") + " is too long."); return }
-      var scheduled = root.scheduledOpen
+      var editSnapshot = root.beginSend()
       client.request("message.edit", { chatId: root.chat.id, messageId: root.editingId, text: text, caption: root.editingCaption }, function (answer) {
-        if (!answer.ok) root.flash("Could not edit: " + (answer.error || "unknown error"))
-        else if (scheduled) root.loadScheduled()
+        root.completeSend(editSnapshot, answer, 0)
       })
-      root.finishEdit()
-      if (scheduled) root.focusMessages()
       return
     }
     if (root.attachments.length) {
@@ -1508,18 +1578,10 @@ FocusScope {
     var later = options && options.sendAt ? options.sendAt : 0
     if (options && typeof options.silent === "boolean") args.silent = options.silent
     if (later) args.sendAt = later
+    var snapshot = root.beginSend()
     client.request("message.send", args, function (answer) {
-      if (!answer.ok) root.flash("Could not send: " + (answer.error || "unknown error"))
-      else if (later) root.flash("It will be sent " + Model.scheduleText(later, Date.now()))
+      root.completeSend(snapshot, answer, later)
     })
-    // Sending clears the draft on Telegram's side and ends "typing…".
-    draftTimer.stop()
-    root.savedDraft = ""
-    root.lastTypingMs = 0
-    root.setComposerText("")
-    root.replyToId = 0
-    root.forgetLinkPreview()
-    root.stickToBottom = true
   }
 
   function startReply(message) {
@@ -1544,9 +1606,16 @@ FocusScope {
     // Its formatting comes back as the Markdown it can be typed in, once the service has written it.
     var id = message.id
     var plain = composer.text
+    var revision = root.compositionRevision
+    var account = app.activeAccount
+    var chatId = root.chat ? root.chat.id : 0
+    var topic = root.topicId
+    var thread = root.threadOpen
     if (message.sending || !(message.content.entities || []).length) return
     client.request("message.markdown", { chatId: message.chatId, messageId: id }, function (answer) {
-      if (!answer.ok || root.editingId !== id || composer.text !== plain) return
+      if (!answer.ok || root.editingId !== id || composer.text !== plain || root.compositionRevision !== revision
+          || app.activeAccount !== account || !root.chat || root.chat.id !== chatId
+          || root.topicId !== topic || root.threadOpen !== thread) return
       root.setComposerText(answer.result.text)
       composer.cursorPosition = composer.length
     })
@@ -2978,6 +3047,7 @@ FocusScope {
 
       // Recording a voice message: replaces the composer until it is sent or cancelled.
       Rectangle {
+        objectName: "voice-recording-bar"
         visible: root.recordingVoice
         anchors.fill: parent
         anchors.margins: Style.space(10)
@@ -3007,6 +3077,7 @@ FocusScope {
           }
           Text {
             anchors.verticalCenter: parent.verticalCenter
+            objectName: "voice-recording-label"
             text: "Recording  " + Model.formatDuration(root.recordingSeconds)
             color: app.foreground
             font.family: app.fontFamily
@@ -3024,6 +3095,7 @@ FocusScope {
         }
 
         Row {
+          objectName: "voice-recording-actions"
           anchors.right: parent.right
           anchors.rightMargin: Style.space(6)
           anchors.verticalCenter: parent.verticalCenter

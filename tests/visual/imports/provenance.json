@@ -1,0 +1,119 @@
+{
+  "scope": "Test-only inert imports, never runtime shell modules",
+  "files": [
+    {
+      "path": "qs/Commons/Border.qml",
+      "sha256": "b98c82530126fc10a287845e8df574ae26fa05b6064d93451d93d0ee9c3f7166",
+      "origin": "previous reviewed inert adapter",
+      "installedSource": "/usr/share/omarchy/shell/Commons/Border.qml",
+      "installedSha256": "b98c82530126fc10a287845e8df574ae26fa05b6064d93451d93d0ee9c3f7166",
+      "sameAsInstalled": true,
+      "package": "omarchy 4.0.4-1 (MIT)"
+    },
+    {
+      "path": "qs/Commons/BorderGeometry.js",
+      "sha256": "8b99fb8d32a2f4ccb72f09a1c6421771d7329555c59bff69d181f1218033c85d",
+      "origin": "previous reviewed inert adapter",
+      "installedSource": "/usr/share/omarchy/shell/Commons/BorderGeometry.js",
+      "installedSha256": "8b99fb8d32a2f4ccb72f09a1c6421771d7329555c59bff69d181f1218033c85d",
+      "sameAsInstalled": true,
+      "package": "omarchy 4.0.4-1 (MIT)"
+    },
+    {
+      "path": "qs/Commons/Color.qml",
+      "sha256": "cc9b62e2eaf8c307aa02206d9320c3d0ca349cf8feed452a6eddf387adaa5320",
+      "origin": "previous reviewed inert adapter",
+      "installedSource": "/usr/share/omarchy/shell/Commons/Color.qml",
+      "installedSha256": "cc9b62e2eaf8c307aa02206d9320c3d0ca349cf8feed452a6eddf387adaa5320",
+      "sameAsInstalled": true,
+      "package": "omarchy 4.0.4-1 (MIT)"
+    },
+    {
+      "path": "qs/Commons/Style.qml",
+      "sha256": "f5901092617ae62645597199270afd4dfb0644d596bdfff16e1834fca6ad7243",
+      "origin": "previous reviewed inert adapter",
+      "installedSource": "/usr/share/omarchy/shell/Commons/Style.qml",
+      "installedSha256": "f5901092617ae62645597199270afd4dfb0644d596bdfff16e1834fca6ad7243",
+      "sameAsInstalled": true,
+      "package": "omarchy 4.0.4-1 (MIT)"
+    },
+    {
+      "path": "qs/Commons/Util.qml",
+      "sha256": "6894c63190973b5dbe50b13b3f7a99dd5770e143699f3aae1650fb65ca3ebe9b",
+      "origin": "previous reviewed inert adapter",
+      "installedSource": "/usr/share/omarchy/shell/Commons/Util.qml",
+      "installedSha256": "6894c63190973b5dbe50b13b3f7a99dd5770e143699f3aae1650fb65ca3ebe9b",
+      "sameAsInstalled": true,
+      "package": "omarchy 4.0.4-1 (MIT)"
+    },
+    {
+      "path": "qs/Commons/qmldir",
+      "sha256": "5593fa25d33b1e2d3ed8628ca2e0dce5074497608f2bad6652689e390727e5e8",
+      "origin": "previous reviewed inert adapter",
+      "installedSource": "/usr/share/omarchy/shell/Commons/qmldir",
+      "installedSha256": "5593fa25d33b1e2d3ed8628ca2e0dce5074497608f2bad6652689e390727e5e8",
+      "sameAsInstalled": true,
+      "package": "omarchy 4.0.4-1 (MIT)"
+    },
+    {
+      "path": "inert/Quickshell/IpcHandler.qml",
+      "sha256": "234ffca7e7f74906a8fc2632cf234a4d20c24e24d2fc563e8cbd101251e02fe9",
+      "origin": "previous reviewed inert adapter"
+    },
+    {
+      "path": "inert/Quickshell/Quickshell.qml",
+      "sha256": "dd78ac3fb84c103c8505b7ba05042050a37ef18f96bbab1c088c6aae6866bd2b",
+      "origin": "previous reviewed inert adapter"
+    },
+    {
+      "path": "inert/Quickshell/qmldir",
+      "sha256": "f18ee1e3b225a5e6ce3b346e603f8bf97578957b887b78745b9a974ce271dc2d",
+      "origin": "previous reviewed inert adapter"
+    },
+    {
+      "path": "inert/Quickshell/Io/FileView.qml",
+      "sha256": "fe90a7fca1264d1f15531e83d9b6191ce2b614d14a20a681100f9834ce3415d2",
+      "origin": "previous reviewed inert adapter"
+    },
+    {
+      "path": "inert/Quickshell/Io/Process.qml",
+      "sha256": "1a0de36cbd3274b2b64dfef91d4735a5860a5c1c221f8e30d1d17190eb6ed6be",
+      "origin": "previous reviewed inert adapter"
+    },
+    {
+      "path": "inert/Quickshell/Io/SplitParser.qml",
+      "sha256": "c021dabc1a2559fb71b6100ca73dd180c6623adefbe19b9882151e4d7a1af976",
+      "origin": "previous reviewed inert adapter"
+    },
+    {
+      "path": "inert/Quickshell/Io/StdioCollector.qml",
+      "sha256": "3eefbce8563e82eaecf93761c5e20a286016583cc999e5888e7f488705d09cae",
+      "origin": "previous reviewed inert adapter"
+    },
+    {
+      "path": "inert/Quickshell/Io/qmldir",
+      "sha256": "39b3bc1d1629d052e99faa83e33b7531e63876ae4c8dd39a100b0b42cd1e4aa3",
+      "origin": "previous reviewed inert adapter"
+    },
+    {
+      "path": "qs/Ui/qmldir",
+      "sha256": "745e0d780d8e3837229788ce4bf90633ed5653286accf7780ef0677a841630f3",
+      "origin": "Telebar-authored inert namespace registration"
+    },
+    {
+      "path": "qs/Ui/FixtureNamespace.qml",
+      "sha256": "2f963de9ecb4b8f75d5311fa822be65f9d6cc9936e9fe94402902d6419421c3b",
+      "origin": "Telebar-authored inert namespace registration"
+    },
+    {
+      "path": "qs/shell.qml",
+      "sha256": "339f792f422f3c640d8a6f917c05bd0606988499e145a71ee695ac28f9864677",
+      "origin": "Telebar-authored inert scanner anchor"
+    }
+  ],
+  "modifications": [
+    "Quickshell env uses synthetic /inert-home and fixture user",
+    "qs.Ui contains a namespace anchor only; no host surface types",
+    "MCP uses imports/qs plus imports/inert, excludes imports root to avoid duplicate Commons singleton URLs"
+  ]
+}
