@@ -3,6 +3,7 @@
 import json
 import os
 import pathlib
+import socket
 import subprocess
 import sys
 import unittest
@@ -10,6 +11,15 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 if os.environ.get("TELEBAR_INERT_WORKER") != "1":
     raise SystemExit("Run this suite inside the documented inert worker, not on the workstation")
+if os.geteuid() == 0:
+    raise SystemExit("Inert tests must run as an unprivileged user")
+status = pathlib.Path("/proc/self/status").read_text()
+if any(line.startswith("CapEff:") and int(line.split()[1], 16) for line in status.splitlines()):
+    raise SystemExit("Inert tests must run without effective capabilities")
+if any(name != "lo" for _, name in socket.if_nameindex()):
+    raise SystemExit("Inert tests require an isolated network namespace")
+if not os.statvfs(ROOT).f_flag & os.ST_RDONLY:
+    raise SystemExit("Inert tests require a read-only workspace")
 os.chdir(ROOT)
 os.environ["XDG_RUNTIME_DIR"] = "/tmp/runtime"
 os.environ.pop("HYPRLAND_INSTANCE_SIGNATURE", None)

@@ -25,10 +25,13 @@ jobs:
         run: python3 -B tests/rename_test.py
       - name: Run inert Python and JavaScript contracts
         run: |
-          prlimit --cpu=125 --as=8589934592 --nofile=256 --fsize=8388608 -- \
+          # Ubuntu restricts unprivileged namespace setup. Privilege is used only
+          # for bwrap setup; the suite runs as the runner uid/gid with no caps.
+          sudo -- prlimit --cpu=125 --as=8589934592 --nofile=256 --fsize=8388608 -- \
             bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL \
+            --uid "$(id -u)" --gid "$(id -g)" \
             --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib \
-            --symlink usr/lib /lib64 --proc /proc --dev /dev --tmpfs /tmp \
+            --symlink usr/lib64 /lib64 --proc /proc --dev /dev --tmpfs /tmp \
             --dir /home --dir /home/worker --ro-bind "$GITHUB_WORKSPACE" /workspace \
             --chdir /workspace --clearenv --setenv PATH /usr/bin \
             --setenv HOME /home/worker --setenv LANG C.UTF-8 \
