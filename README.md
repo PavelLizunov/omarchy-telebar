@@ -8,7 +8,7 @@ Independently maintained by [PavelLizunov](https://github.com/PavelLizunov),
 based on [Omagram by ReidenXerx](https://github.com/ReidenXerx/omarchy-omagram).
 Upstream changes are adopted selectively; this project has its own development direction.
 
-> **Development checkpoint 1.2.1-dev.1, not a verified stable release.** See
+> **Development checkpoint 1.2.1-dev.2, not a verified stable release.** See
 > [checkpoint notes and known limitations](CHANGELOG.md). Rich-post rendering, Telegram-link
 > forwarding, mention navigation, quick-view account selection and main-window audio
 > routing are under development. Isolated Python, JavaScript and QML tests pass, but

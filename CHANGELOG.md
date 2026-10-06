@@ -1,5 +1,21 @@
 # Checkpoints
 
+## 1.2.1-dev.2 (2026-10-07)
+
+Final checkpoint for this batch; supersedes the preliminary dev.1 tag.
+Application and QML fixture bytes are unchanged. Ubuntu hosted checks now stage
+input outside the private runner home and use privilege only for namespace setup.
+The payload runs with the runner uid/gid and no effective capabilities. The runner
+asserts an isolated network and read-only workspace before importing the suite.
+Resource, network and filesystem restrictions remain intact.
+
+[Hosted run 37536497815](https://github.com/PavelLizunov/omarchy-telebar/actions/runs/37536497815)
+passed on commit `910fbb82d5f674b4543d1fe38ac1944604a8156d`: three identity checks,
+279 Python checks (two skipped) and eight JavaScript suites. Final version metadata
+is checked again on the published dev.2 commit. Local omissions and live/audit
+limitations below remain; hosted success is not installed-client acceptance.
+The initial dev.1 and first setup-correction CI failures are retained in Actions.
+
 ## 1.2.1-dev.1 (2026-10-07)
 
 Development checkpoint of the current Python/QML implementation. This is not a
