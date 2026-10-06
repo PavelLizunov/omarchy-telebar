@@ -94,7 +94,7 @@ def clean_stale(max_age=STALE_SECONDS, now=None):
 
 
 def recorded_file(path):
-    """A recording the window made in Omagram's recording directory, and nothing else: no
+    """A recording the window made in Telebar's recording directory, and nothing else: no
     other directory, no symbolic link, a regular non-empty file of yours of bounded size."""
     if not isinstance(path, str) or not path.startswith("/") or "\0" in path or len(path) > 4096:
         raise safe.UnsafeError("not a recording")

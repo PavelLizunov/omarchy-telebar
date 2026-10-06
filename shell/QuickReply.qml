@@ -7,9 +7,9 @@ import qs.Ui
 // Quick switch and reply, summoned with a key: the quick view (QuickView.qml) in the middle of the screen, the
 // chats beside the chat.
 //
-//   omarchy-shell shell toggle reidenxerx.omagram '{}'              find a chat
-//   omarchy-shell shell toggle reidenxerx.omagram '{"chatId":<id>}'  answer that chat
-//   omarchy-shell shell toggle reidenxerx.omagram '{"chatId":<id>,"messageId":<id>}'  and show that message's
+//   omarchy-shell shell toggle io.github.pavellizunov.telebar '{}'              find a chat
+//   omarchy-shell shell toggle io.github.pavellizunov.telebar '{"chatId":<id>}'  answer that chat
+//   omarchy-shell shell toggle io.github.pavellizunov.telebar '{"chatId":<id>,"messageId":<id>}'  and show that message's
 //                                                                       photo or video over the whole screen
 Item {
   id: overlay
@@ -19,7 +19,7 @@ Item {
   property var service: null
   property bool opened: false
 
-  readonly property string pluginId: (manifest && manifest.id) || "reidenxerx.omagram"
+  readonly property string pluginId: (manifest && manifest.id) || "io.github.pavellizunov.telebar"
   readonly property var borderSpec: Border.surfaceSpec("menu", "border", Color.menu.border, Math.max(1, Style.space(2)))
 
   // The shell hands `service` over when this overlay loads, which can be before the plugin's service entry

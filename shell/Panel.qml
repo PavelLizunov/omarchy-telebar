@@ -7,10 +7,10 @@ import qs.Ui
 // one puts the chat in their place, and Esc or the arrow goes back to them.
 Panel {
   id: root
-  moduleName: "reidenxerx.omagram"
-  // Summon from a key binding: omarchy-shell reidenxerx.omagram.panel toggle
+  moduleName: "io.github.pavellizunov.telebar"
+  // Summon from a key binding: omarchy-shell io.github.pavellizunov.telebar.panel toggle
   // (its own target, apart from the overlay, which the shell toggles by plugin id).
-  ipcTarget: "reidenxerx.omagram.panel"
+  ipcTarget: "io.github.pavellizunov.telebar.panel"
   manageIpc: true
 
   property var anchorItem: null

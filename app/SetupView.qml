@@ -50,7 +50,7 @@ FocusScope {
         }
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: "Omagram"
+          text: "Telebar"
           color: app.foreground
           font.family: app.fontFamily
           font.pixelSize: Style.font.displayLarge

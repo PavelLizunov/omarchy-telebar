@@ -12,14 +12,19 @@ FocusScope {
   property var app
   property var messages: []
   property real messageId: 0
+  property real fileId: 0
+  property var extraMessage: null
 
   signal closed()
 
-  readonly property var photos: (viewer.messages || []).filter(function (m) {
-    return m && m.content && m.content.kind === "photo" && m.content.media
-  })
+  readonly property var photos: {
+    var items = Model.mediaMessages(viewer.messages).filter(function (m) { return m.content.kind === "photo" })
+    if (viewer.extraMessage && viewer.extraMessage.id === viewer.messageId && !items.some(function (m) { return m.id === viewer.messageId && m.content.media.file.id === viewer.fileId }))
+      items.push(viewer.extraMessage)
+    return items
+  }
   readonly property int index: {
-    for (var i = 0; i < viewer.photos.length; i++) if (viewer.photos[i].id === viewer.messageId) return i
+    for (var i = 0; i < viewer.photos.length; i++) if (viewer.photos[i].id === viewer.messageId && (!viewer.fileId || viewer.photos[i].content.media.file.id === viewer.fileId)) return i
     return -1
   }
   readonly property var current: viewer.index >= 0 ? viewer.photos[viewer.index] : null

@@ -2,7 +2,19 @@
   <img src="assets/omagram.svg" alt="" width="112">
 </p>
 
-<h1 align="center">Omagram</h1>
+<h1 align="center">Telebar</h1>
+
+Independently maintained by [PavelLizunov](https://github.com/PavelLizunov),
+based on [Omagram by ReidenXerx](https://github.com/ReidenXerx/omarchy-omagram).
+Upstream changes are adopted selectively; this project has its own development direction.
+
+> **Development snapshot, not a verified release.** Rich-post rendering, Telegram-link
+> forwarding, mention navigation, quick-view account selection and main-window audio
+> routing are under development. Isolated Python, JavaScript and QML tests pass, but
+> the installed client and real account/device transitions have not been checked.
+> Quick-view audio still uses `ffplay`; output-device following is not established.
+> Required QML-preview MCP acceptance and independent review are outstanding.
+> The full repository audit will precede any decision to rewrite the backend.
 
 <p align="center">
   <b>An unofficial Telegram client that lives in your <a href="https://omarchy.org">Omarchy</a> desktop, not in another window.</b><br>
@@ -10,19 +22,21 @@
   act on a message from its notification. Keyboard-first, in your theme.
 </p>
 
-![Omagram: the quick view under the bar, a notification, and a sound of their own for each person](preview.png)
+![Original Omagram interface: quick view, notification and per-person sounds](preview.png)
+
+The image above predates the Telebar rename.
 
 ![service](https://img.shields.io/badge/omarchy-service-blue) ![bar widget](https://img.shields.io/badge/omarchy-bar--widget-blue) ![overlay](https://img.shields.io/badge/omarchy-overlay-blue)
 
-> **Unofficial, and a risk to know about.** Omagram is not made, endorsed or supported by Telegram.
+> **Unofficial, and a risk to know about.** Telebar is not made, endorsed or supported by Telegram.
 > It is built on TDLib, Telegram's own client library, and you sign in with an API id of your own.
 > Telegram places accounts that sign in from unofficial clients "under observation" and may limit
-> accounts that misuse the API. Omagram uses the API as an ordinary client does, but the risk is
+> accounts that misuse the API. Telebar uses the API as an ordinary client does, but the risk is
 > yours to take.
 
 ## What makes it different
 
-- **Answer from the bar.** The quick view opens under Omagram's mark, or over everything on a key.
+- **Answer from the bar.** The quick view opens under Telebar's mark, or over everything on a key.
   Find a chat by typing, then reply in words, with files or a picture you copied (`Ctrl+V`), with
   one of your recent stickers, or with a voice or round video message recorded on the spot. Voice and round video messages play right there, a round
   video moving in a big circle while you point at it or listen; photos and videos open over the
@@ -75,8 +89,12 @@
   `__italic__`, `~~strikethrough~~`, `||spoiler||`, `` `code` ``, `[text](address)`, or with the keys
   below), links, mentions and hashtags, spoilers, link previews (shown as you type, under or above the text, or left out), polls
   you can vote in, places, contacts, albums, service messages ("Ann joined the group"), and
-  bots' buttons and keyboards. Web links open in your browser; Telegram links open in Omagram.
+  bots' buttons and keyboards. Web links open in your browser; Telegram links open in Telebar.
   Typing `@` in a group suggests who to mention, and `/` suggests the commands of the chat's bots.
+  Telegram rich posts (`messageRichMessage`) keep text and embedded media in reading order
+  in the window and quick view, with formatting, links and full-size photo viewing. Partial
+  posts load their full content on demand. Unsupported blocks have an explicit placeholder;
+  embedded HTML is not executed. Tables are shown as successive cell texts rather than grids.
 - **Media** — photos (with a full-size viewer), videos, GIFs, files, round video notes and
   voice messages with a waveform, played at 1×, 1.5× or 2× (`.`, or the chip beside them). Send photos, videos, music and files with `Ctrl+O`, by dropping
   them on the chat, or by pasting files copied in a file manager or a copied picture (`Ctrl+V`): they wait
@@ -98,7 +116,7 @@
   deletes the account, and after how long messages disappear in chats you start; notifications for private chats, groups and channels, and whether they show
   the message text; whether reactions to your messages count as seen once you open the chat (they do, unless you say
   otherwise); what downloads by itself (photos, GIFs and round video messages; videos and files
-  up to 10 or 50 MB); how much Omagram keeps on this computer (and clears the cache), every device
+  up to 10 or 50 MB); how much Telebar keeps on this computer (and clears the cache), every device
   signed in to your account (sign any of them out), and signs you out here.
 - **Proxies** — Settings → Connection adds SOCKS5, HTTP and MTProto proxies, or one from its
   t.me/proxy link, shows how fast each answers and which is in use; `Backspace` removes one. The
@@ -125,13 +143,13 @@
   so you can tell who wrote without looking and a busy day never rings in your ears; Settings picks
   what makes them (Drop, Pop or Knock, or none) and a person's info can play theirs or give them
   another. Not while Do Not Disturb is on.
-  Telegram's own mute settings, Omarchy's Do Not Disturb and Omagram's own **Mute
+  Telegram's own mute settings, Omarchy's Do Not Disturb and Telebar's own **Mute
   notifications** (in the bar menu) all apply.
-- **In the bar** — Omagram's mark, with a dot while unmuted chats have unread messages. Left
-  click opens the quick view under it; right click opens a menu: **Open Omagram**, **Mute
+- **In the bar** — Telebar's mark, with a dot while unmuted chats have unread messages. Left
+  click opens the quick view under it; right click opens a menu: **Open Telebar**, **Mute
   notifications** (nothing pops up and nothing sounds until you turn it back on — the unread
   dot carries on, and Telegram's own settings are untouched) and **Quit**, which closes the
-  window and lets the background service go until you reach for Omagram again.
+  window and lets the background service go until you reach for Telebar again.
 - **Quick view** — in the bar's panel, or as an overlay on a key: find a chat by typing, read its
   latest messages and answer without leaving what you are doing — in words, with files or a picture
   you copied (`Ctrl+V`, or `Ctrl+Shift+V` to send them as files; they wait above the message box and
@@ -141,7 +159,7 @@
   to it, and photos, videos and GIFs show as small sharp pictures that open
   over the whole screen (a video plays in your own video player). Scroll up for older messages.
   Close it in a chat and for the next hour it opens there again, with anything you had not sent;
-  Omagram's mark in its corner opens the whole window.
+  Telebar's mark in its corner opens the whole window.
   Sending text, files or recordings keeps the quick view open for another reply.
   Incoming messages shown in the quick view are marked read, including forum
   messages grouped by topic. Topics outside the visible history stay unread.
@@ -151,7 +169,7 @@
   Selected files wait with their caption until Enter sends them. In narrow quick
   views the tools sit below the text so the editor keeps its width.
 
-Calls cannot be taken in Omagram: TDLib carries a call's signalling but no voice engine. An
+Calls cannot be taken in Telebar: TDLib carries a call's signalling but no voice engine. An
 incoming call is shown so you can decline it or answer in another Telegram app.
 
 ## Requirements
@@ -162,7 +180,7 @@ Omarchy with Hyprland 0.56 or newer, and these packages (most are already on a s
 sudo pacman -S --needed qt6-multimedia qt6-multimedia-ffmpeg qt6-lottie libsecret python-gobject qrencode
 ```
 
-TDLib is not packaged for Arch, so Omagram builds the exact version it was tested with (1.8.67)
+TDLib is not packaged for Arch, so Telebar builds the exact version it was tested with (1.8.67)
 into your home directory. That needs, once:
 
 ```bash
@@ -172,8 +190,8 @@ sudo pacman -S --needed git cmake gperf clang openssl zlib
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/PavelLizunov/omarchy-tg.git --enable
-~/.config/omarchy/plugins/reidenxerx.omagram/bin/omagram-build-tdlib
+omarchy plugin add https://github.com/PavelLizunov/omarchy-telebar.git --enable
+~/.config/omarchy/plugins/io.github.pavellizunov.telebar/bin/omagram-build-tdlib
 ```
 
 The build takes about ten minutes and roughly 2 GB of memory per parallel job (it picks the
@@ -181,22 +199,22 @@ job count from your memory). Nothing is installed system-wide and nothing needs 
 the library ends up in `~/.local/share/omagram/lib/`. `omagram-build-tdlib --check` tells you
 whether a usable library is installed.
 
-Omagram shows up in the app launcher (Super + Space) by itself: when the shell starts it, it writes
+Telebar shows up in the app launcher (Super + Space) by itself: when the shell starts it, it writes
 `~/.local/share/applications/omagram.desktop`, which opens this copy of the plugin.
 
-Optionally add Omagram to the Omarchy menu (Trigger → Omagram):
+Optionally add Telebar to the Omarchy menu (Trigger → Telebar):
 
 ```bash
-~/.config/omarchy/plugins/reidenxerx.omagram/bin/omagram-menu-install
+~/.config/omarchy/plugins/io.github.pavellizunov.telebar/bin/omagram-menu-install
 ```
 
 ## Sign in
 
 1. Create your own API id at [my.telegram.org](https://my.telegram.org) → *API development
-   tools*. Telegram requires every client to use its own id; Omagram does not ship one.
-2. Open Omagram — search for it in the app launcher (Super + Space), from the menu, by
+   tools*. Telegram requires every client to use its own id; Telebar does not ship one.
+2. Open Telebar — search for it in the app launcher (Super + Space), from the menu, by
    right-clicking the bar icon, or with
-   `/usr/bin/python3 ~/.config/omarchy/plugins/reidenxerx.omagram/bin/omagram`.
+   `/usr/bin/python3 ~/.config/omarchy/plugins/io.github.pavellizunov.telebar/bin/omagram`.
 3. Enter the API id and hash, then your phone number, the code Telegram sends you, and your
    two-step verification password if you have one. Or choose **Use a QR code instead** and scan
    it with Telegram on your phone (Settings → Devices → Link Desktop Device); drawing the code
@@ -223,8 +241,16 @@ use `~/.local/share/omagram/accounts/<id>/` and separate encryption keys. Applic
 credentials are shared. **Log out** lets TDLib close its session; it does not delete files
 or encryption keys behind TDLib's back. The local profile remains available for sign-in.
 
-This fork retains the upstream plugin ID `reidenxerx.omagram`: install it as a replacement,
-not alongside the upstream copy. Do not run both copies against the same session directories.
+Telebar uses its own plugin ID, `io.github.pavellizunov.telebar`. It retains the
+`omagram` executable names, window class, socket, configuration/data directories and
+keyring identifiers for compatibility with existing accounts. The legacy managed
+desktop entry can be refreshed to show Telebar without replacing an unrelated entry.
+
+**Do not run Telebar and Omagram together against the same session directories.**
+Stop and disable the old installation before deploying the replacement; a different
+plugin ID does not isolate the database. Deployment and any desktop/menu migration
+are separate from editing this checkout. Existing Omagram menu entries need explicit
+removal with the old installer before adding Telebar's entries.
 
 ### Forum groups and topics
 
@@ -251,7 +277,7 @@ account. The viewer reports download/display errors and offers **Retry story**. 
 viewer stops viewing that story; the downloaded files remain managed by TDLib.
 
 Silent animated stickers, GIFs and round-video previews only animate while their message is
-in the visible viewport and the Omagram window has focus. Explicit round-video audio playback
+in the visible viewport and the Telebar window has focus. Explicit round-video audio playback
 can continue independently.
 
 ### Built-in connection bridge
@@ -286,7 +312,7 @@ attachments and the profile-photo image filter retain their existing behavior.
 
 Service controls use the original 24-unit SVG drawings in `app/Icons.js`, rendered through
 `Icon.qml`. Existing action glyph codes are aliases, not a font dependency for drawing.
-The Omagram Ring brand mark and user-provided emoji/sticker artwork retain their identity.
+The inherited Omagram Ring mark and user-provided emoji/sticker artwork retain their identity.
 Icons pulse briefly on a state change; loading spinners run only while visible. SVGs are
 rasterized by Qt at a stable small size and shared by its image cache.
 The simplified drawings use 2.4-unit rounded strokes. Play/pause and the sidebar arrow
@@ -298,7 +324,7 @@ or continuously animated decoration.
 
 **Quit** in the bar menu closes the app window and gracefully stops the daemon and its
 owned proxy. It leaves the installed bar widget in place, so clicking it can start
-Omagram again. It does not sign out your Telegram accounts. If you want the widget
+Telebar again. It does not sign out your Telegram accounts. If you want the widget
 removed from the bar, use Omarchy's plugin/widget controls separately.
 
 Full-screen photos have bounded asynchronous decode sizes and do not occupy the UI-image
@@ -440,14 +466,14 @@ the forward dialog, type to find a chat, `↑` `↓` or `Ctrl+N` `Ctrl+P` choose
 `Tab` or `Ctrl+Space` ticks as many chats as you like and `Enter` then forwards to all of them.
 
 **From anywhere** — pick keys for the quick view (as an overlay or in the bar's panel) and for
-opening Omagram in Settings → *Shortcuts that work anywhere*. Omagram registers them with Hyprland
+opening Telebar in Settings → *Shortcuts that work anywhere*. Telebar registers them with Hyprland
 while it runs, never writes them into your Hyprland config, leaves combinations you already use
 alone (Settings shows them as taken), and only ever removes bindings it made. Or bind the commands
 yourself:
 
 ```bash
-omarchy-shell shell toggle reidenxerx.omagram '{}'   # the quick view as an overlay
-omarchy-shell reidenxerx.omagram.panel toggle        # the quick view in the bar's panel
+omarchy-shell shell toggle io.github.pavellizunov.telebar '{}'   # the quick view as an overlay
+omarchy-shell io.github.pavellizunov.telebar.panel toggle        # the quick view in the bar's panel
 ```
 
 In the quick view: type to search, `↑` `↓` or `Ctrl+J` `Ctrl+K` to choose, `Enter` to answer and
@@ -477,11 +503,11 @@ a video in your video player, `o` opens the chat in the window and `Esc` closes.
   with a key kept in your keyring, downloaded files, and in `sent/` the voice and video messages you
   send, so your own messages play from them) and `~/.cache/omagram` (the
   TDLib build, unpacked animated stickers, and the small silent animations that round videos move
-  with in the quick view). Omagram sends nothing anywhere except to Telegram.
-- **Omagram in the app launcher.** The shell writes `~/.local/share/applications/omagram.desktop`.
-  It rewrites that file only while it is Omagram's own (marked `X-Omagram-Managed`) and out of
+  with in the quick view). Telebar sends nothing anywhere except to Telegram.
+- **Telebar in the app launcher.** The shell writes `~/.local/share/applications/omagram.desktop`.
+  It rewrites that file only while it is Telebar's own (marked `X-Omagram-Managed`) and out of
   date, never replaces a file there that it did not write, and keeps `NoDisplay=true` if you set
-  it to take Omagram off the launcher.
+  it to take Telebar off the launcher.
 - **Secrets are never in files, command lines or logs.** The API id, hash and database key
   move through `secret-tool` on stdin and stdout. TDLib's own log is off, because at higher
   verbosity it records message text.
@@ -493,11 +519,11 @@ a video in your video player, `o` opens the chat in the window and `Esc` closes.
 - **Telegram content is shown as text.** Names and previews are rendered as plain text, message
   formatting is escaped before it is drawn, and notification bodies are escaped, because
   Omarchy's notifications render markup and links. Links lead only to web and mail addresses
-  (opened in your browser) or inside Omagram; joining a group, starting a bot and opening a file
+  (opened in your browser) or inside Telebar; joining a group, starting a bot and opening a file
   that could run a program (a script, an executable, a `.desktop` file, a web page) ask first.
 - **Bounded and checked.** Every request is validated field by field; network strings, lists
   and animated stickers are size-capped; files you send must be regular, readable files of at
-  most 2 GB outside Omagram's own database; helpers run by absolute path as argument lists,
+  most 2 GB outside Telebar's own database; helpers run by absolute path as argument lists,
   never through a shell.
 - **The library is only loaded if it is safe to.** `libtdjson.so` is used only if it is a
   regular file you own that nobody else can write, in directories you own.
@@ -506,11 +532,13 @@ a video in your video player, `o` opens the chat in the window and `Esc` closes.
 
 ```bash
 python3 tests/state_test.py     # TDLib objects → what the UI sees, hostile values
+python3 tests/rich_test.py      # rich posts, full-content requests and photo permission checks
 python3 tests/daemon_test.py    # the service on a sandboxed socket with a fake TDLib
 python3 tests/notify_test.py    # notifications with a fake bus
 python3 tests/media_test.py     # preparing voice and video messages
 python3 tests/settings_test.py  # settings and global shortcuts, with Hyprland faked
 python3 tests/install_test.py   # the menu entries, the window's runtime root, the launcher entry
+python3 tests/rename_test.py    # Telebar identity, attribution and legacy account/runtime compatibility
 node tests/model-test.js        # the window's list, message and menu logic
 node tests/keymap-test.js       # shortcuts: parsing, matching, clashes
 node tests/accounts-ui-test.js  # account event filters, stale callbacks and snapshots
@@ -532,7 +560,7 @@ placement, all theme contrasts, media playback or every interactive route.
 
 ```bash
 bin/omagram-menu-install remove                 # if you added the menu entries
-omarchy plugin remove reidenxerx.omagram
+omarchy plugin remove io.github.pavellizunov.telebar
 rm ~/.local/share/applications/omagram.desktop  # its entry in the app launcher
 rm -rf ~/.local/share/omagram ~/.cache/omagram  # the session, downloads and the TDLib build
 secret-tool clear service omagram               # the API id, hash and database key
@@ -543,10 +571,16 @@ Settings → Devices in another Telegram app.
 
 ## Support
 
-If Omagram is useful to you, you can support its development on [Donatello](https://donatello.to/DuduPhudu).
+Report Telebar issues in [this repository](https://github.com/PavelLizunov/omarchy-telebar/issues).
+The original Omagram author's [Donatello page](https://donatello.to/DuduPhudu) supports
+upstream development, not Telebar's maintainer.
 
 ## License
 
-MIT. TDLib is © Aliaksei Levin and Arseny Smirnov, under the Boost Software License 1.0;
-Omagram downloads and builds it on your machine and does not redistribute it. Omagram is an
+MIT. Original Omagram copyright © 2026 ReidenXerx; the original notice is preserved
+in [LICENSE](LICENSE). Telebar is independently maintained by PavelLizunov.
+Third-party notices remain in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+TDLib is © Aliaksei Levin and Arseny Smirnov, under the Boost Software License 1.0;
+Telebar downloads and builds it on your machine and does not redistribute it. Telebar is an
 independent project and is not affiliated with Telegram.

@@ -1,4 +1,4 @@
-"""omagram_state -- the account as Omagram's UI sees it: chats, users and messages.
+"""omagram_state -- the account as Telebar's UI sees it: chats, users and messages.
 
 Pure: it takes TDLib objects (already parsed JSON) and returns plain dicts and events, so it
 is tested without TDLib, a socket or a network. Everything TDLib delivers is network data and
@@ -166,6 +166,170 @@ def formatted(value):
     return text, entities
 
 
+RICH_NODES_MAX = 1024
+RICH_BLOCKS_MAX = 256
+RICH_DEPTH_MAX = 16
+
+
+def rich_message(value, files_root=""):
+    """TDLib PageBlocks in reading order, reusing the ordinary text/media contract.
+
+    Shared budgets bound the entire tree, not each child; embedded HTML is never rendered.
+    Text summaries serve notifications/copying, while the UI renders only blocks.
+    """
+    message = _obj(value, "richMessage")
+    blocks = []
+    budget = {"nodes": RICH_NODES_MAX, "text": TEXT_MAX, "entities": ENTITIES_MAX}
+    truncated = False
+
+    def admit(depth):
+        nonlocal truncated
+        if depth > RICH_DEPTH_MAX or budget["nodes"] <= 0 or len(blocks) >= RICH_BLOCKS_MAX:
+            truncated = True
+            return False
+        budget["nodes"] -= 1
+        return True
+
+    def rich_text(value, depth=0):
+        nonlocal truncated
+        if not admit(depth):
+            return "", []
+        node = _obj(value)
+        kind = _str(node.get("@type"), 64)
+        if kind == "richTexts":
+            parts, entities, offset = [], [], 0
+            for child in _list(node.get("texts"), RICH_NODES_MAX):
+                text, ranges = rich_text(child, depth + 1)
+                parts.append(text)
+                entities.extend(dict(e, offset=e["offset"] + offset) for e in ranges)
+                offset += utf16_length(text)
+                if budget["nodes"] <= 0:
+                    break
+            return "".join(parts), entities
+        wrappers = {"richTextBold": "bold", "richTextItalic": "italic", "richTextUnderline": "underline",
+                    "richTextStrikethrough": "strikethrough", "richTextSpoiler": "spoiler", "richTextFixed": "code",
+                    "richTextUrl": "textUrl", "richTextMentionName": "mentionName", "richTextEmailAddress": "textUrl",
+                    "richTextPhoneNumber": "textUrl", "richTextMention": "mention", "richTextHashtag": "hashtag",
+                    "richTextCashtag": "cashtag", "richTextBotCommand": "botCommand"}
+        if isinstance(node.get("text"), dict):
+            text, entities = rich_text(node["text"], depth + 1)
+            name = wrappers.get(kind)
+        else:
+            source = node.get("alternative_text") if kind == "richTextCustomEmoji" else node.get("text", node.get("expression"))
+            text = _str(source, budget["text"]).encode("utf-8", "replace").decode("utf-8")
+            if isinstance(source, str) and len(source) > len(text):
+                truncated = True
+            budget["text"] -= len(text)
+            entities = []
+            name = "customEmoji" if kind == "richTextCustomEmoji" else None
+        if name and text and budget["entities"] > 0:
+            entity = {"type": name, "offset": 0, "length": utf16_length(text)}
+            if kind == "richTextUrl":
+                entity["url"] = _str(node.get("url"), URL_MAX)
+            elif kind == "richTextEmailAddress":
+                entity["url"] = "mailto:" + _str(node.get("email_address"), URL_MAX - 7)
+            elif kind == "richTextPhoneNumber":
+                entity["url"] = "tel:" + _str(node.get("phone_number"), 64)
+            elif name == "mentionName":
+                entity["userId"] = _int(node.get("user_id"))
+            elif name == "customEmoji":
+                entity["customEmojiId"] = str(_int(node.get("custom_emoji_id")))
+            entities.append(entity)
+            budget["entities"] -= 1
+        return text, entities
+
+    def add_text(value, depth, style=""):
+        text, entities = rich_text(value, depth)
+        if not text or len(blocks) >= RICH_BLOCKS_MAX:
+            return
+        blocks.append({"kind": "text", "text": text, "entities": entities, "style": style})
+
+    def caption(value, depth):
+        cap = _obj(value, "pageBlockCaption")
+        for field in ("text", "credit"):
+            if field in cap:
+                add_text(cap[field], depth)
+
+    text_fields = {"pageBlockTitle": "title", "pageBlockSubtitle": "subtitle", "pageBlockHeader": "header",
+                   "pageBlockSubheader": "subheader", "pageBlockSectionHeading": "text", "pageBlockKicker": "kicker",
+                   "pageBlockParagraph": "text", "pageBlockPreformatted": "text", "pageBlockFooter": "footer",
+                   "pageBlockThinking": "text", "pageBlockExpandableBlockQuote": "text", "pageBlockPullQuote": "text"}
+    media_kinds = {"pageBlockPhoto": "photo", "pageBlockVideo": "video", "pageBlockAnimation": "gif",
+                   "pageBlockAudio": "audio", "pageBlockDocument": "file", "pageBlockVoiceNote": "voice"}
+
+    def walk(value, depth=0):
+        if not admit(depth):
+            return
+        block = _obj(value)
+        kind = _str(block.get("@type"), 64)
+        if kind in text_fields:
+            style = "heading" if kind in ("pageBlockTitle", "pageBlockHeader", "pageBlockSectionHeading") else ""
+            if kind == "pageBlockPreformatted":
+                style = "pre"
+            add_text(block.get(text_fields[kind]), depth + 1, style)
+            if "credit" in block:
+                add_text(block["credit"], depth + 1)
+        elif kind in media_kinds:
+            media_kind = media_kinds[kind]
+            media = media_for(media_kind, block, files_root)
+            if media and media.get("file"):
+                blocks.append({"kind": media_kind, "text": "", "entities": [], "media": media,
+                               "spoiler": block.get("has_spoiler") is True})
+            else:
+                blocks.append({"kind": "unsupported", "text": PREVIEW_LABELS[media_kind], "entities": []})
+            caption(block.get("caption"), depth + 1)
+        elif kind == "pageBlockCover":
+            walk(block.get("cover"), depth + 1)
+        elif kind == "pageBlockList":
+            for item in _list(block.get("items"), RICH_BLOCKS_MAX):
+                item = _obj(item)
+                label = _str(item.get("label"), 32)
+                children = _list(item.get("blocks"), RICH_BLOCKS_MAX)
+                for index, child in enumerate(children):
+                    start = len(blocks)
+                    walk(child, depth + 1)
+                    if index == 0 and label and len(blocks) > start and blocks[start]["kind"] == "text":
+                        entry = blocks[start]
+                        prefix = label + " "
+                        entry["text"] = prefix + entry["text"]
+                        entry["entities"] = [dict(e, offset=e["offset"] + utf16_length(prefix)) for e in entry["entities"]]
+                    if budget["nodes"] <= 0 or len(blocks) >= RICH_BLOCKS_MAX:
+                        break
+                if not admit(depth + 1):
+                    break
+        elif kind in ("pageBlockBlockQuote", "pageBlockDetails", "pageBlockEmbeddedPost", "pageBlockCollage", "pageBlockSlideshow"):
+            if "header" in block:
+                add_text(block["header"], depth + 1, "heading")
+            for child in _list(block.get("blocks"), RICH_BLOCKS_MAX):
+                walk(child, depth + 1)
+                if budget["nodes"] <= 0 or len(blocks) >= RICH_BLOCKS_MAX:
+                    break
+            caption(block.get("caption"), depth + 1)
+            if "credit" in block:
+                add_text(block["credit"], depth + 1)
+        elif kind == "pageBlockTable":
+            add_text(block.get("caption"), depth + 1, "heading")
+            for row in _list(block.get("cells"), RICH_BLOCKS_MAX):
+                for cell in _list(row, 32):
+                    add_text(_obj(cell).get("text"), depth + 1)
+                if not admit(depth + 1):
+                    break
+        elif kind == "pageBlockDivider":
+            blocks.append({"kind": "divider", "text": "", "entities": []})
+        elif kind != "pageBlockAnchor":
+            blocks.append({"kind": "unsupported", "text": "Unsupported block", "entities": [], "type": _str(kind, 64)})
+
+    if isinstance(message.get("blocks"), list) and len(message["blocks"]) > RICH_BLOCKS_MAX:
+        truncated = True
+    for block in _list(message.get("blocks"), RICH_BLOCKS_MAX):
+        walk(block)
+        if budget["nodes"] <= 0 or len(blocks) >= RICH_BLOCKS_MAX:
+            truncated = True
+            break
+    return {"kind": "rich", "text": "\n\n".join(b["text"] for b in blocks if b["kind"] == "text")[:TEXT_MAX], "entities": [], "blocks": blocks,
+            "full": message.get("is_full") is True, "rtl": message.get("is_rtl") is True, "truncated": truncated}
+
+
 SERVICE_PREFIXES = ("messageChat", "messagePin", "messageBasicGroup", "messageSupergroup", "messageContactRegistered",
                     "messageCall", "messageVideoChat", "messageScreenshotTaken", "messageForumTopic",
                     "messageCustomServiceAction")
@@ -174,6 +338,8 @@ SERVICE_PREFIXES = ("messageChat", "messagePin", "messageBasicGroup", "messageSu
 def content(value, files_root=""):
     c = _obj(value)
     kind_name = c.get("@type") if isinstance(c.get("@type"), str) else ""
+    if kind_name == "messageRichMessage":
+        return rich_message(c.get("message"), files_root)
     if kind_name == "messageText":
         text, entities = formatted(c.get("text"))
         out = {"kind": "text", "text": text, "entities": entities}
@@ -836,7 +1002,7 @@ def media_for(kind, c, files_root):
 
 def preview_text(summary):
     kind, text = summary.get("kind"), summary.get("text", "")
-    if kind in ("text", "emoji") or (kind == "service" and text):
+    if kind in ("text", "emoji", "rich") or (kind == "service" and text):
         body = text
     elif kind == "sticker":
         body = f"{summary.get('emoji', '')} Sticker".strip()

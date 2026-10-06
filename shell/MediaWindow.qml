@@ -23,6 +23,7 @@ PanelWindow {
     host: window.host
     items: window.host ? window.host.mediaItems : []
     messageId: window.host ? window.host.viewingId : 0
+    fileId: window.host ? window.host.viewingFileId : 0
     Component.onCompleted: forceActiveFocus()
     onClosed: window.host.closeMedia()
     onPlayed: {

@@ -445,7 +445,7 @@ function hexOf(color) {
 
 function contentLabel(content) {
   if (!isObject(content)) return ""
-  if (content.kind === "text" || content.kind === "emoji") return ""
+  if (content.kind === "text" || content.kind === "emoji" || content.kind === "rich") return ""
   if (content.kind === "sticker") return ((content.emoji || "") + " Sticker").trim()
   if (content.kind === "file" && content.fileName) return content.fileName
   return KIND_LABELS[content.kind] || "Message"
@@ -458,6 +458,27 @@ function previewOf(message) {
   var label = contentLabel(message.content)
   var line = label && text ? label + ", " + text : (text || label)
   return line.length > PREVIEW_MAX ? line.slice(0, PREVIEW_MAX - 1) + "…" : line
+}
+
+// Embedded media keeps the real message id for permissions and actions; file id selects the block.
+function blockMessage(message, block) {
+  var copy = {}
+  for (var key in message) copy[key] = message[key]
+  copy.content = block
+  return copy
+}
+
+function mediaMessages(messages) {
+  var out = []
+  toList(messages).forEach(function (message) {
+    if (!isObject(message) || !isObject(message.content)) return
+    var parts = message.content.kind === "rich" ? toList(message.content.blocks) : [message.content]
+    parts.forEach(function (part) {
+      if (isObject(part) && part.media && ["photo", "video", "gif"].indexOf(part.kind) >= 0)
+        out.push(blockMessage(message, part))
+    })
+  })
+  return out
 }
 
 function sameSender(a, b) {

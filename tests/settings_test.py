@@ -189,7 +189,7 @@ class Registering(unittest.TestCase):
         self.assertEqual(status, {"global.quickReply": "active", "global.panel": "off", "global.openWindow": "off"})
         self.assertEqual(self.ours(), [(72, "M", "Omagram: Quick reply")])
         bound = next(b for b in self.hypr.binds if b["description"] == "Omagram: Quick reply")
-        self.assertEqual(bound["arg"], "/usr/bin/omarchy-shell shell toggle reidenxerx.omagram '{}'")
+        self.assertEqual(bound["arg"], "/usr/bin/omarchy-shell shell toggle io.github.pavellizunov.telebar '{}'")
         evals = len(self.hypr.evals)
         prefs.apply({"global.quickReply": "SUPER + ALT + M"})
         self.assertEqual(len(self.hypr.evals), evals, "already bound: nothing to do")

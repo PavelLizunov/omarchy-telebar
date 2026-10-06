@@ -63,7 +63,7 @@ class Notifications(unittest.TestCase):
         self.assertLessEqual(len(body), notify.BODY_MAX)
         self.assertTrue(body.endswith("…"))
         self.n.show(2, "", "x")
-        self.assertEqual(self.bus.shown[1][1], "Omagram")
+        self.assertEqual(self.bus.shown[1][1], "Telebar")
 
     def test_the_chat_you_are_reading_stays_quiet_and_is_cleared(self):
         self.n.show(42, "Friends", "hi")

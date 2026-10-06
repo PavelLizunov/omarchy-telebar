@@ -1,4 +1,4 @@
-"""omagram_notify -- desktop notifications for Omagram's service, over the session bus.
+"""omagram_notify -- desktop notifications for Telebar's service, over the session bus.
 
 Notifications go to org.freedesktop.Notifications through GLib's Gio bindings, never through
 a command line, so message previews never appear in any process's arguments. On Omarchy the
@@ -6,12 +6,12 @@ shell's own notification service receives them (and applies Do Not Disturb). Tha
 renders body markup and hyperlinks, so everything taken from Telegram is escaped before it is
 sent: a message cannot add a link or an image to its own notification.
 
-The picture beside the text is one Omagram chooses and hands over as a file: the chat's photo, or a
-thumbnail of the photo, sticker or video just sent; without one, Omagram's mark. The buttons open the chat, reply to it, mark it
+The picture beside the text is one Telebar chooses and hands over as a file: the chat's photo, or a
+thumbnail of the photo, sticker or video just sent; without one, Telebar's mark. The buttons open the chat, reply to it, mark it
 read, mute it for an hour, or react to the message with a thumbs up.
 
 One notification per chat: it is replaced as messages arrive and closed when TDLib reports the
-messages read (on any device). Nothing is shown for the chat you are looking at in Omagram.
+messages read (on any device). Nothing is shown for the chat you are looking at in Telebar.
 Without PyGObject the notifier is simply unavailable and the service runs without it.
 """
 import html
@@ -28,7 +28,7 @@ QUICK_REACTION = "👍"
 ACTIONS = ["default", "Open", "reply", "Reply", "read", "Mark as read", "mute", "Mute for an hour", "react", QUICK_REACTION]
 ACTION_IDS = tuple(ACTIONS[0::2])
 HINTS = {"category": "im.received", "desktop-entry": "omagram"}
-APP_ICON = pathlib.Path(__file__).resolve().parent.parent / "assets" / "omagram.svg"   # Omagram's mark, when there is no picture
+APP_ICON = pathlib.Path(__file__).resolve().parent.parent / "assets" / "omagram.svg"   # Telebar's mark, when there is no picture
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f  ]")
 
@@ -61,7 +61,7 @@ class GioTransport:
     def notify(self, replaces, title, body, actions, hints):
         GLib = self.GLib
         icon = APP_ICON.as_uri() if APP_ICON.is_file() else ""
-        args = GLib.Variant("(susssasa{sv}i)", ("Omagram", replaces, icon, title, body, actions,
+        args = GLib.Variant("(susssasa{sv}i)", ("Telebar", replaces, icon, title, body, actions,
                                                 {k: GLib.Variant("s", v) for k, v in hints.items()}, -1))
         reply = self.bus.call_sync(BUS, PATH, BUS, "Notify", args, GLib.VariantType("(u)"),
                                    self.Gio.DBusCallFlags.NONE, CALL_TIMEOUT_MS, None)
@@ -103,7 +103,7 @@ class Notifier:
         if image:
             hints["image-path"] = pathlib.Path(image).as_uri()
         try:
-            nid = self.transport.notify(replaces, clean(title, TITLE_MAX) or "Omagram", body_markup(body),
+            nid = self.transport.notify(replaces, clean(title, TITLE_MAX) or "Telebar", body_markup(body),
                                         ACTIONS, hints)
         except Exception:
             return False

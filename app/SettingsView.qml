@@ -148,7 +148,7 @@ FocusScope {
                note: "Registered with Hyprland, never written into your config. They need Super, Ctrl or Alt." },
              { kind: "global", id: "global.quickReply", label: "The quick view, as an overlay" },
              { kind: "global", id: "global.panel", label: "The quick view, in the bar's panel" },
-             { kind: "global", id: "global.openWindow", label: "Open Omagram" })
+             { kind: "global", id: "global.openWindow", label: "Open Telebar" })
     for (var s = 0; s < Keymap.SECTIONS.length; s++) {
       var section = Keymap.SECTIONS[s]
       out.push({ kind: "header", title: section.title,

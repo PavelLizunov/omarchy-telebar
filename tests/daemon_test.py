@@ -2355,7 +2355,7 @@ class Notifications(Harness):
         self.click("reply")
         self.wait(lambda: self.spawned)
         argv, fallback = self.spawned[0]
-        self.assertEqual(argv[:4], [self.d.OMARCHY_SHELL, "shell", "summon", "reidenxerx.omagram"])
+        self.assertEqual(argv[:4], [self.d.OMARCHY_SHELL, "shell", "summon", "io.github.pavellizunov.telebar"])
         self.assertEqual(json.loads(argv[4]), {"chatId": 42, "account": "default"})
         self.assertIsNone(self.daemon.pending_open)
         self.assertEqual(self.launched_window(), [])

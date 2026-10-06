@@ -253,7 +253,7 @@ Item {
       Loader {
         anchors.fill: parent
         active: format === "webm" && view.ready && !view.still && view.animationsEnabled
-        sourceComponent: Video {
+        sourceComponent: FollowingVideo {
           source: view.url
           autoPlay: true
           muted: true
@@ -273,7 +273,7 @@ Item {
       Loader {
         anchors.fill: parent
         active: view.ready && !view.covered && view.animationsEnabled
-        sourceComponent: Video {
+        sourceComponent: FollowingVideo {
           source: view.url
           autoPlay: true
           muted: true
@@ -317,7 +317,7 @@ Item {
         id: videoLoader
         anchors.fill: parent
         active: videoItem.started && view.ready
-        sourceComponent: Video {
+        sourceComponent: FollowingVideo {
           source: view.url
           autoPlay: true
           playbackRate: Model.playbackRate(view.app.playbackRate)
@@ -385,7 +385,7 @@ Item {
           id: noteVideo
           anchors.fill: parent
           active: view.ready && (view.animationsEnabled || note.sound)
-          sourceComponent: Video {
+          sourceComponent: FollowingVideo {
             source: view.url
             autoPlay: true
             muted: !note.sound
@@ -466,7 +466,7 @@ Item {
       MediaPlayer {
         id: audio
         source: voice.started && view.ready ? view.url : ""
-        audioOutput: AudioOutput {}
+        audioOutput: FollowingAudioOutput {}
         playbackRate: Model.playbackRate(view.app.playbackRate)
         autoPlay: true
         onMediaStatusChanged: if (mediaStatus === MediaPlayer.EndOfMedia) position = 0
@@ -556,7 +556,7 @@ Item {
       MediaPlayer {
         id: track
         source: fileItem.isAudio && view.ready ? view.url : ""
-        audioOutput: AudioOutput {}
+        audioOutput: FollowingAudioOutput {}
         playbackRate: Model.playbackRate(view.app.playbackRate)
       }
 

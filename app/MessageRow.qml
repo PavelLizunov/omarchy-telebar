@@ -110,6 +110,7 @@ Item {
     // Only what is shown counts: a hidden header or card still has an implicit width.
     width: Math.min(maxWidth, Math.max(body.visible ? body.implicitWidth : 0, meta.implicitWidth,
                                        mediaView.visible ? mediaView.implicitWidth : 0,
+                                       richPost.visible ? bubble.inner : 0,
                                        albumFlow.visible ? albumFlow.wantedWidth : 0,
                                        name.visible ? name.implicitWidth : 0,
                                        forwarded.visible ? forwarded.implicitWidth : 0,
@@ -248,6 +249,25 @@ Item {
         font.italic: true
       }
 
+      RichMessageView {
+        id: richPost
+        objectName: "rich-post-" + row.mid
+        visible: row.content.kind === "rich"
+        width: parent.width
+        message: row.message
+        client: row.app
+        app: row.app
+        foreground: row.app.foreground
+        muted: row.app.muted
+        accent: row.app.accentText
+        fontFamily: row.app.fontFamily
+        codeBackground: row.codeBackground
+        revealed: row.revealed
+        animationsEnabled: row.inViewport && row.app.windowFocused
+        onLinkActivated: function (link) { row.view.openLink(link, row.message) }
+        onRevealRequested: row.view.reveal(row.message.id)
+      }
+
       Item {
         id: previewAbove
         visible: !!preview.info && preview.above
@@ -259,7 +279,7 @@ Item {
         id: body
         readonly property string source: row.textSource.content.text || ""
         readonly property var emojiIds: Model.customEmojiIds(row.textSource.content.entities)
-        visible: source !== "" && !row.cardKind
+        visible: source !== "" && !row.cardKind && row.content.kind !== "rich"
         width: Math.min(implicitWidth, bubble.inner)
         text: visible ? Model.richText(source, row.textSource.content.entities, row.revealed, row.codeBackground,
                                        body.emojiIds.length ? row.app.customEmojiImages(body.emojiIds) : null, row.linkHex) : ""

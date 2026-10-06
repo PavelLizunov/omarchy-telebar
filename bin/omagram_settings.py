@@ -1,13 +1,13 @@
 """omagram_settings -- your shortcuts: stored, checked, and the global ones given to Hyprland.
 
 Settings live in ~/.config/omagram/settings.json, a 0600 file in a 0700 directory, and hold only
-what you changed. Shortcuts inside Omagram are key sequences the window understands (its
+what you changed. Shortcuts inside Telebar are key sequences the window understands (its
 Keymap.js knows every action and its default keys), so here they are only checked for shape.
 
-Shortcuts that work anywhere -- quick reply, the bar panel, opening Omagram -- are registered with
+Shortcuts that work anywhere -- quick reply, the bar panel, opening Telebar -- are registered with
 Hyprland at runtime with `hl.bind`, never written into your Hyprland config, and only when you pick
 keys for them. A combination Hyprland already uses for something else is left alone and reported
-as taken, and Omagram only ever removes bindings it made itself (they carry its description).
+as taken, and Telebar only ever removes bindings it made itself (they carry its description).
 """
 import json
 import pathlib
@@ -39,12 +39,13 @@ ACTION_ID = re.compile(r"[a-z][A-Za-z]{0,20}\.[a-z][A-Za-z]{0,40}")
 SEQUENCE = re.compile(r"[\x21-\x7e]{1,40}")
 
 BIN = pathlib.Path(__file__).resolve().parent
-PLUGIN_ID = "reidenxerx.omagram"
+PLUGIN_ID = "io.github.pavellizunov.telebar"
+# Retain binding ownership so existing shortcuts can be safely refreshed on deployment.
 DESCRIPTION_PREFIX = "Omagram: "
 GLOBALS = {
     "global.quickReply": ("Quick reply", ["/usr/bin/omarchy-shell", "shell", "toggle", PLUGIN_ID, "{}"]),
     "global.panel": ("Bar panel", ["/usr/bin/omarchy-shell", PLUGIN_ID + ".panel", "toggle"]),
-    "global.openWindow": ("Open Omagram", ["/usr/bin/python3", str(BIN / "omagram")]),
+    "global.openWindow": ("Open Telebar", ["/usr/bin/python3", str(BIN / "omagram")]),
 }
 
 MODIFIER_ALIASES = {"SUPER": "SUPER", "META": "SUPER", "WIN": "SUPER", "CTRL": "CTRL", "CONTROL": "CTRL",

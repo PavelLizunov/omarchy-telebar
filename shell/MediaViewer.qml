@@ -14,6 +14,7 @@ FocusScope {
   property var host: null             // the quick view this belongs to: its service, files, keys and words
   property var items: []              // the quick view's messages with a photo, video or GIF, oldest first
   property real messageId: 0
+  property real fileId: 0
   property real waitingFileId: 0      // a video fetched to play the moment it is here
   property string error: ""
   property alias actions: actions
@@ -23,7 +24,7 @@ FocusScope {
   signal openInWindowRequested(real chatId)
 
   readonly property int index: {
-    for (var i = 0; i < viewer.items.length; i++) if (viewer.items[i].id === viewer.messageId) return i
+    for (var i = 0; i < viewer.items.length; i++) if (viewer.items[i].id === viewer.messageId && (!viewer.fileId || viewer.items[i].content.media.file.id === viewer.fileId)) return i
     return -1
   }
   readonly property var current: viewer.index >= 0 ? viewer.items[viewer.index] : null
@@ -34,13 +35,14 @@ FocusScope {
   readonly property var keys: viewer.host ? viewer.host.keys : ({})
   readonly property string fontFamily: viewer.host ? viewer.host.fontFamily : Style.font.family
 
-  property real fetchedFor: 0         // the message whose picture was last asked for
+  property string fetchedFor: ""         // the message whose picture was last asked for
 
   // Asked for the moment a message is chosen, and again when the list it is in first arrives.
   onMessageIdChanged: {
     viewer.error = ""
     viewer.fetch()
   }
+  onFileIdChanged: viewer.fetch()
   onItemsChanged: viewer.fetch()
   Component.onCompleted: viewer.fetch()
   onFileChanged: {
@@ -52,9 +54,11 @@ FocusScope {
   // Found from the list itself: inside a change handler, `current` can still hold the message before.
   function fetch() {
     var message = null
-    for (var i = 0; i < viewer.items.length; i++) if (viewer.items[i].id === viewer.messageId) message = viewer.items[i]
-    if (!message || !viewer.host || viewer.fetchedFor === message.id) return
-    viewer.fetchedFor = message.id
+    for (var i = 0; i < viewer.items.length; i++) if (viewer.items[i].id === viewer.messageId && (!viewer.fileId || viewer.items[i].content.media.file.id === viewer.fileId)) message = viewer.items[i]
+    if (!message || !viewer.host) return
+    var key = message.id + ":" + message.content.media.file.id
+    if (viewer.fetchedFor === key) return
+    viewer.fetchedFor = key
     var media = message.content.media
     if (message.content.kind === "photo") viewer.host.fetchNow(media.file)
     else viewer.host.fetch(viewer.host.stillThumb(media))
@@ -64,7 +68,9 @@ FocusScope {
     var next = viewer.index + delta
     if (viewer.index < 0 || next < 0 || next >= viewer.items.length) return
     viewer.waitingFileId = 0
+    viewer.fileId = viewer.items[next].content.media.file.id
     viewer.messageId = viewer.items[next].id
+    viewer.fetch()
   }
 
   function play() {

@@ -73,8 +73,8 @@ Item {
 
   readonly property bool ready: !!quick.service && quick.service.ready
   readonly property var keys: quick.service ? quick.service.shortcuts : ({})
-  readonly property string unavailableText: !quick.service ? "Omagram's service is not loaded"
-    : (!quick.service.connected ? "Connecting to Omagram…" : "Omagram is not signed in")
+  readonly property string unavailableText: !quick.service ? "Telebar's service is not loaded"
+    : (!quick.service.connected ? "Connecting to Telebar…" : "Telebar is not signed in")
   readonly property var chats: quick.ready ? quick.service.chats : []
   property string query: ""
   readonly property var results: Model.filterChats(quick.chats, quick.query).slice(0, 60)
@@ -113,7 +113,7 @@ Item {
     : quick.replyChatId
     ? quick.hints(["quickMessage.send", "sends", "quickMessage.voice", "voice", "quickMessage.videoNote", "round video",
                    "quickMessage.stickers", "stickers", "quickMessage.play", "listen", "quickMessage.back", "back"])
-    : quick.hints(["quick.reply", "answers", "quick.openInWindow", "opens in Omagram", "quick.close", "closes"])
+    : quick.hints(["quick.reply", "answers", "quick.openInWindow", "opens in Telebar", "quick.close", "closes"])
   readonly property var playing: quick.service && quick.service.playing ? quick.service.playing : ({ fileId: 0 })
   readonly property var recording: quick.service && quick.service.recording ? quick.service.recording : ({ state: "idle" })
   // The round video message playing in the chat shown, when what plays is one.
@@ -134,9 +134,14 @@ Item {
   property bool historyComplete: false   // nothing older is left in the chat shown
   property real viewingId: 0             // the message whose photo or video is open over the whole screen
   property real pendingMediaId: 0        // a message whose photo or video opens as soon as the history holds it
-  readonly property var mediaItems: quick.history.filter(function (m) {
-    return !!m && !!m.content && !!m.content.media && ["photo", "video", "gif"].indexOf(m.content.kind) >= 0
-  })
+  property real viewingFileId: 0
+  property var viewingBlock: null
+  readonly property var mediaItems: {
+    var items = Model.mediaMessages(quick.history)
+    if (quick.viewingBlock && !items.some(function (m) { return m.id === quick.viewingBlock.id && m.content.media.file.id === quick.viewingFileId }))
+      items.push(quick.viewingBlock)
+    return items
+  }
 
   onQueryChanged: quick.cursor = 0
   onShownChatIdChanged: historyDelay.restart()
@@ -556,7 +561,14 @@ Item {
       if (!answer.ok) { quick.status = answer.error || "That link cannot be opened"; return }
       var r = answer.result
       if (r.kind === "external") quick.openExternal(r.url)
-      else quick.openInWindowRequested(r.chatId || quick.shownChatId)
+      else if (r.kind === "chat" && r.chatId && !r.botStart && !r.messageId) quick.openInWindowRequested(r.chatId)
+      else {
+        // Let the existing window handle invite/proxy/bot confirmation and post navigation.
+        quick.service.request("ui.open", { url: url }, function (opened) {
+          if (opened.ok) quick.openInWindowRequested(0)
+          else quick.status = opened.error || "That link cannot be opened"
+        })
+      }
     })
   }
 
@@ -573,6 +585,11 @@ Item {
     if (!safe) { quick.status = "That link cannot be opened"; return }
     Quickshell.execDetached(["/usr/bin/xdg-open", safe])
     quick.dismissRequested()
+  }
+
+  readonly property string activeAccount: quick.service ? quick.service.activeAccount : ""
+  function request(cmd, args, callback) {
+    if (quick.service) quick.service.request(cmd, args, callback)
   }
 
   function fileOf(file) {
@@ -663,12 +680,21 @@ Item {
 
   function openMedia(message) {
     var kind = message && message.content ? message.content.kind : ""
-    if (message && message.id && ["photo", "video", "gif"].indexOf(kind) >= 0) quick.viewingId = message.id
+    if (message && message.id && ["photo", "video", "gif"].indexOf(kind) >= 0) {
+      quick.viewingBlock = message
+      quick.viewingFileId = message.content.media && message.content.media.file ? message.content.media.file.id : 0
+      quick.viewingId = message.id
+    } else if (message && message.content && message.content.media && message.content.media.file) {
+      quick.fetchNow(message.content.media.file)
+      if (quick.urlOf(message.content.media.file)) quick.service.request("file.open", { fileId: message.content.media.file.id })
+    }
   }
 
   function closeMedia() {
     if (!quick.viewingId) return
     quick.viewingId = 0
+    quick.viewingFileId = 0
+    quick.viewingBlock = null
     quick.focusReturned()
     Qt.callLater(function () { if (quick.focusItem) quick.focusItem.forceActiveFocus() })
   }
@@ -678,6 +704,7 @@ Item {
   Loader { id: mediaWindow }
 
   onViewingIdChanged: {
+    if (!quick.viewingId) { quick.viewingFileId = 0; quick.viewingBlock = null }
     if (quick.viewingId && !mediaWindow.item) mediaWindow.setSource(Qt.resolvedUrl("MediaWindow.qml"), { host: quick })
     else if (!quick.viewingId && mediaWindow.item) mediaWindow.source = ""
   }
@@ -790,6 +817,8 @@ Item {
         messageList.positionViewAtEnd()
       } else if ((name === "messageSent" || name === "messageFailed") && e.message.chatId === quick.historyChatId) {
         quick.history = Model.replaceMessage(quick.history, e.oldMessageId, e.message)
+      } else if (name === "messageContent" && e.chatId === quick.historyChatId) {
+        quick.history = Model.patchMessage(quick.history, e.messageId, { content: e.content })
       } else if (name === "messagesDeleted" && e.chatId === quick.historyChatId) {
         quick.history = Model.removeMessages(quick.history, e.messageIds)
       }
@@ -798,8 +827,85 @@ Item {
 
   // ---------------------------------------------------------------- the view
 
-  RowLayout {
+  readonly property var accounts: quick.service && quick.service.accounts ? quick.service.accounts : []
+  property bool accountBusy: false
+  readonly property string accountLabel: {
+    for (var account of quick.accounts) if (account.id === quick.activeAccount) return account.name || "Account"
+    return "Account"
+  }
+  function chooseAccount(id) {
+    if (!id || id === quick.activeAccount || quick.accountBusy || !quick.service) return
+    quick.accountBusy = true
+    quick.status = ""
+    quick.service.switchAccount(id, function (answer) {
+      quick.accountBusy = false
+      if (!answer.ok) quick.status = answer.error || "Could not switch account"
+    })
+  }
+  QtObject {
+    id: accountTheme
+    readonly property var shortcuts: quick.keys
+    readonly property string fontFamily: quick.fontFamily
+    readonly property color background: quick.background
+    readonly property color foreground: quick.text
+    readonly property color accent: quick.accentText
+    readonly property color selected: quick.selected
+    readonly property color urgent: quick.urgent
+  }
+  ContextMenu {
+    id: accountsMenu
+    objectName: "quick-accounts-menu"
     anchors.fill: parent
+    app: accountTheme
+    items: quick.accounts.map(function (a) { return { id: a.id, label: (a.id === quick.activeAccount ? "✓ " : "") + (a.name || a.id) } })
+    onPicked: function (id) { quick.chooseAccount(id) }
+    onDismissed: accountButton.forceActiveFocus()
+  }
+  Item {
+    id: accountHeader
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: parent.top
+    height: visible ? Style.space(30) : 0
+    visible: quick.accounts.length > 1
+    Rectangle {
+      id: accountButton
+      objectName: "quick-account-switch"
+      anchors.left: parent.left
+      anchors.top: parent.top
+      width: Math.min(parent.width, accountText.implicitWidth + Style.space(24))
+      height: parent.height
+      radius: Style.cornerRadius
+      color: activeFocus || accountArea.containsMouse ? Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.08) : "transparent"
+      enabled: !quick.accountBusy
+      activeFocusOnTab: true
+      Accessible.role: Accessible.Button
+      Accessible.name: "Switch account: " + quick.accountLabel
+      function activate() { accountsMenu.open(x, height) }
+      Keys.onReturnPressed: activate()
+      Keys.onSpacePressed: activate()
+      Text {
+        id: accountText
+        anchors.fill: parent
+        anchors.leftMargin: Style.space(8)
+        anchors.rightMargin: Style.space(8)
+        verticalAlignment: Text.AlignVCenter
+        elide: Text.ElideRight
+        text: quick.accountBusy ? "Switching account…" : quick.accountLabel + " ▾"
+        textFormat: Text.PlainText
+        color: quick.text
+        font.family: quick.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+      MouseArea { id: accountArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: accountButton.activate() }
+    }
+  }
+
+  RowLayout {
+    anchors.left: parent.left
+    anchors.right: parent.right
+    anchors.top: accountHeader.bottom
+    anchors.bottom: parent.bottom
     spacing: Style.spacing.md
 
     // ---------------------------------------------- the chats
@@ -904,7 +1010,7 @@ Item {
           Text {
             id: openOmagramLabel
             anchors.centerIn: parent
-            text: "Open Omagram"
+            text: "Open Telebar"
             textFormat: Text.PlainText
             color: quick.text
             font.family: quick.fontFamily
@@ -1017,7 +1123,7 @@ Item {
         Text {
           anchors.centerIn: parent
           visible: quick.results.length === 0
-          text: quick.ready ? "No chat matches" : "Enter opens Omagram"
+          text: quick.ready ? "No chat matches" : "Enter opens Telebar"
           textFormat: Text.PlainText
           color: quick.muted
           font.family: quick.fontFamily
@@ -1198,7 +1304,7 @@ Item {
 
             // Text and captions with their formatting and links; any other kind as its one-line description.
             Item {
-              visible: bodyText.text !== ""
+              visible: bodyText.text !== "" && line.kind !== "rich"
               x: Style.space(8)
               width: parent.width - Style.space(16)
               height: visible ? Math.min(bodyText.implicitHeight, Math.ceil(bodyMetrics.lineSpacing * 6)) : 0
@@ -1221,6 +1327,24 @@ Item {
 
                 HoverHandler { cursorShape: bodyText.hoveredLink ? Qt.PointingHandCursor : Qt.ArrowCursor }
               }
+            }
+
+            RichMessageView {
+              objectName: "quick-rich-post-" + line.mid
+              visible: line.kind === "rich"
+              x: Style.space(8)
+              width: parent.width - Style.space(16)
+              message: line.message
+              client: quick
+              compact: true
+              foreground: quick.text
+              muted: line.metadataColor
+              accent: quick.accentText
+              fontFamily: quick.fontFamily
+              revealed: line.revealed
+              onLinkActivated: function (link) { quick.openLink(link, line) }
+              onMediaActivated: function (message) { quick.openMedia(message) }
+              onRevealRequested: line.revealed = true
             }
 
             // A sticker, small; bigger under the pointer.

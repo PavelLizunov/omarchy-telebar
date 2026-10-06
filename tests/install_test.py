@@ -49,7 +49,7 @@ class MenuInstall(Sandbox):
 
     def test_the_plugin_path_goes_into_menu_commands_only_when_plain(self):
         installer = load("omagram-menu-install")
-        plugin = self.plugin("reidenxerx.omagram")
+        plugin = self.plugin("io.github.pavellizunov.telebar")
         self.patch(installer, "PLUGIN_DIR", plugin)
         self.assertEqual(installer.plugin_bin(), str(plugin / "bin"))
         for bad in ("with space", "semi;colon", "dollar$(x)", "quote'd", "back`tick"):
@@ -114,7 +114,7 @@ class BuildLog(Sandbox):
 
 
 class DesktopEntry(Sandbox):
-    """Omagram's entry in the app launcher: ~/.local/share/applications/omagram.desktop."""
+    """Telebar's entry in the app launcher: ~/.local/share/applications/omagram.desktop."""
 
     def make_plugin(self, where):
         (where / "bin").mkdir(parents=True)
@@ -128,7 +128,7 @@ class DesktopEntry(Sandbox):
     def setUp(self):
         super().setUp()
         self.launcher = load("omagram")
-        self.plugin = self.make_plugin(self.root / "plugins" / "reidenxerx.omagram")
+        self.plugin = self.make_plugin(self.root / "plugins" / "io.github.pavellizunov.telebar")
         self.apps = self.root / "share" / "applications"
         self.entry = self.apps / "omagram.desktop"
         self.patch(self.launcher, "PLUGIN", self.plugin)
@@ -140,13 +140,25 @@ class DesktopEntry(Sandbox):
     def test_the_entry_opens_this_copy_of_the_plugin(self):
         self.assertEqual(self.launcher.install_desktop_entry(), "written")
         fields = self.fields()
-        self.assertEqual(fields["Name"], "Omagram")
-        self.assertEqual(fields["Exec"], f"/usr/bin/python3 {self.plugin}/bin/omagram")
+        self.assertEqual(fields["Name"], "Telebar")
+        self.assertEqual(fields["Exec"], f"/usr/bin/python3 {self.plugin}/bin/omagram %u")
+        self.assertEqual(fields["MimeType"], "x-scheme-handler/tg;")
         self.assertEqual(fields["TryExec"], f"{self.plugin}/bin/omagram")
         self.assertEqual(fields["Icon"], f"{self.plugin}/assets/omagram.svg")
         self.assertEqual(fields["StartupWMClass"], "omagram")
-        self.assertEqual(fields["X-Omagram-Managed"], "reidenxerx.omagram")
+        self.assertEqual(fields["X-Omagram-Managed"], "io.github.pavellizunov.telebar")
         self.assertEqual(self.entry.stat().st_mode & 0o777, 0o644)
+
+    def test_legacy_managed_entry_is_migrated_without_losing_visibility(self):
+        self.launcher.install_desktop_entry()
+        old = self.entry.read_text().replace("Name=Telebar", "Name=Omagram").replace(
+            "X-Omagram-Managed=" + self.launcher.PLUGIN_ID,
+            "X-Omagram-Managed=" + self.launcher.LEGACY_PLUGIN_ID)
+        self.entry.write_text(old.replace("[Desktop Entry]\n", "[Desktop Entry]\nNoDisplay=true\n"))
+        self.assertEqual(self.launcher.install_desktop_entry(), "written")
+        self.assertEqual(self.fields()["Name"], "Telebar")
+        self.assertEqual(self.fields()["NoDisplay"], "true")
+        self.assertEqual(self.fields()["X-Omagram-Managed"], self.launcher.PLUGIN_ID)
 
     def test_telegram_is_named_only_as_an_unofficial_client(self):
         self.launcher.install_desktop_entry()
@@ -182,7 +194,7 @@ class DesktopEntry(Sandbox):
         self.assertEqual(self.launcher.install_desktop_entry(), "foreign")
         self.assertEqual(self.entry.read_text(), mine)
         # the mark counts only inside the [Desktop Entry] group
-        self.entry.write_text(mine + "[Desktop Action x]\nX-Omagram-Managed=reidenxerx.omagram\n")
+        self.entry.write_text(mine + "[Desktop Action x]\nX-Omagram-Managed=io.github.pavellizunov.telebar\n")
         self.assertEqual(self.launcher.install_desktop_entry(), "foreign")
 
     def test_a_symlink_or_an_oversized_file_is_not_written_through(self):
@@ -194,13 +206,13 @@ class DesktopEntry(Sandbox):
             self.launcher.install_desktop_entry()
         self.assertEqual(target.read_text(), "keep")
         self.entry.unlink()
-        huge = b"[Desktop Entry]\nX-Omagram-Managed=reidenxerx.omagram\n" + b"#" * self.launcher.DESKTOP_MAX
+        huge = b"[Desktop Entry]\nX-Omagram-Managed=io.github.pavellizunov.telebar\n" + b"#" * self.launcher.DESKTOP_MAX
         self.entry.write_bytes(huge)
         self.assertEqual(self.launcher.install_desktop_entry(), "foreign")
         self.assertEqual(self.entry.read_bytes(), huge)
 
     def test_a_plugin_path_that_would_need_quoting_gets_no_entry(self):
-        odd = self.make_plugin(self.root / "with space" / "reidenxerx.omagram")
+        odd = self.make_plugin(self.root / "with space" / "io.github.pavellizunov.telebar")
         with mock.patch.object(self.launcher, "PLUGIN", odd):
             self.assertEqual(self.launcher.install_desktop_entry(), "skipped")
         self.assertFalse(self.entry.exists())

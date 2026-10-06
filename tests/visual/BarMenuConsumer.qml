@@ -20,7 +20,7 @@ Rectangle {
     width: parent.width - 20
     x: 10
     y: 10
-    entries: [ { action: "open", label: "Open Omagram" }, { action: "switch:default", label: "✓ Alex Demo (4)" },
+    entries: [ { action: "open", label: "Open Telebar" }, { action: "switch:default", label: "✓ Alex Demo (4)" },
       { action: "switch:work", label: "Work Demo (17)" }, { action: "quiet", label: "Mute notifications" }, { action: "quit", label: "Quit" } ]
   }
 }

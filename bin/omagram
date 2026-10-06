@@ -1,10 +1,11 @@
 #!/usr/bin/python3
-"""Open Omagram's window, or focus it if it is already open.
+"""Open Telebar's window, or focus it if it is already open.
 
   omagram                  open or focus the window (starting the service if needed)
   omagram --chat <id>      the same, opened at that chat
+  omagram --link <url>     open a Telegram link (also accepts a bare tg:// or t.me URL)
   omagram --service        only make sure the background service is running
-  omagram --desktop-entry  add or refresh Omagram's entry in the app launcher
+  omagram --desktop-entry  add or refresh Telebar's entry in the app launcher
 
 The window is its own Quickshell process with the app id "omagram", so Hyprland treats it
 like any application window: it tiles, sits on a workspace and matches window rules. It
@@ -30,6 +31,7 @@ import socket
 import stat
 import sys
 import time
+import urllib.parse
 
 sys.dont_write_bytecode = True
 BIN = pathlib.Path(__file__).resolve().parent
@@ -37,7 +39,7 @@ sys.path.insert(0, str(BIN))
 import plugin_safety as safe  # noqa: E402
 
 PLUGIN = BIN.parent
-PLUGIN_ID = "reidenxerx.omagram"
+PLUGIN_ID = "io.github.pavellizunov.telebar"
 RUN = pathlib.Path(safe.runtime_dir()) / "omagram"
 SOCKET = RUN / "omagram.sock"
 APP_ROOT = RUN / "app"
@@ -56,6 +58,7 @@ SHELL_QML = 'import Quickshell\nimport "App" as App\n\nShellRoot {\n  App.Main {
 DESKTOP_FILE = "omagram.desktop"
 DESKTOP_MAX = 64 * 1024
 DESKTOP_MARK = "X-Omagram-Managed"
+LEGACY_PLUGIN_ID = "reidenxerx.omagram"
 DESKTOP_KEPT = ("NoDisplay", "Hidden")   # set to true by you, they stay when the entry is refreshed
 PLAIN_PATH = re.compile(r"/[A-Za-z0-9._+/-]+")
 
@@ -163,14 +166,15 @@ def desktop_entry(kept=()):
         "[Desktop Entry]",
         "Type=Application",
         "Version=1.5",
-        "Name=Omagram",
+        "Name=Telebar",
         "GenericName=Unofficial Telegram client",
         "Comment=Chats, voice and round video messages in your Omarchy theme",
-        f"Exec=/usr/bin/python3 {launcher}",
+        f"Exec=/usr/bin/python3 {launcher} %u",
         f"TryExec={launcher}",
         f"Icon={icon}",
         "Terminal=false",
         "Categories=Network;InstantMessaging;Chat;",
+        "MimeType=x-scheme-handler/tg;",
         "Keywords=messages;chat;messenger;telegram;",
         f"StartupWMClass={APP_ID}",
     ]
@@ -180,7 +184,7 @@ def desktop_entry(kept=()):
 
 
 def read_entry(blob):
-    """(written by Omagram, the keys you set to true that it keeps) for the file at the entry's path."""
+    """(written by Telebar, the keys you set to true that it keeps) for the file at the entry's path."""
     try:
         text = blob.decode("utf-8")
     except UnicodeDecodeError:
@@ -195,7 +199,7 @@ def read_entry(blob):
         if group != "[Desktop Entry]" or not sep:
             continue
         key, value = key.strip(), value.strip()
-        if key == DESKTOP_MARK and value == PLUGIN_ID:
+        if key == DESKTOP_MARK and value in (PLUGIN_ID, LEGACY_PLUGIN_ID):
             ours = True
         elif key in DESKTOP_KEPT and value == "true":
             kept.add(key)
@@ -203,8 +207,8 @@ def read_entry(blob):
 
 
 def install_desktop_entry():
-    """Put Omagram into the app launcher. Writes only a missing or outdated entry of its own, never
-    over a file at that path that Omagram did not write, and keeps NoDisplay or Hidden when you set
+    """Put Telebar into the app launcher. Writes only a missing or outdated entry of its own, never
+    over a file at that path that Telebar did not write, and keeps NoDisplay or Hidden when you set
     them to take it off the launcher. Answers written, unchanged, foreign or skipped."""
     path = applications_dir() / DESKTOP_FILE
     try:
@@ -241,14 +245,27 @@ def focus_existing():
     return False
 
 
-def request_open(chat_id):
+def telegram_url(value):
+    if not isinstance(value, str) or not 0 < len(value) <= 2048 or any(ord(c) <= 32 for c in value):
+        return False
+    try:
+        url = urllib.parse.urlsplit(value)
+        return (url.scheme.lower() == "tg" and bool(url.netloc)
+                or url.scheme.lower() in ("http", "https") and url.hostname in
+                ("t.me", "www.t.me", "telegram.me", "telegram.dog") and not url.username and not url.password)
+    except ValueError:
+        return False
+
+
+def request_open(chat_id=None, url=None):
     """Ask the service to open a chat: a running window hears it at once, a window started
     next picks it up when it connects."""
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC)
     sock.settimeout(2)
     try:
         sock.connect(str(SOCKET))
-        sock.sendall(json.dumps({"id": 1, "cmd": "ui.open", "args": {"chatId": chat_id}}).encode() + b"\n")
+        args = {"url": url} if url else {"chatId": chat_id}
+        sock.sendall(json.dumps({"id": 1, "cmd": "ui.open", "args": args}).encode() + b"\n")
         sock.recv(4096)
     except OSError:
         pass
@@ -262,15 +279,19 @@ def main(argv):
     if argv[1:] == ["--desktop-entry"]:
         print(f"omagram: launcher entry {install_desktop_entry()}", file=sys.stderr)
         return 0
-    chat_id = None
-    if len(argv) == 3 and argv[1] == "--chat" and re.fullmatch(r"-?[0-9]{1,20}", argv[2]):
+    chat_id, url = None, None
+    if len(argv) == 2 and telegram_url(argv[1]):
+        url = argv[1]
+    elif len(argv) == 3 and argv[1] == "--link" and telegram_url(argv[2]):
+        url = argv[2]
+    elif len(argv) == 3 and argv[1] == "--chat" and re.fullmatch(r"-?[0-9]{1,20}", argv[2]):
         chat_id = int(argv[2])
     elif argv[1:]:
         print(__doc__.strip(), file=sys.stderr)
         return 2
     start_service()   # the window shows the service's state, including "not running"
-    if chat_id is not None:
-        request_open(chat_id)
+    if chat_id is not None or url:
+        request_open(chat_id, url)
     if focus_existing():
         return 0
     prepare_root()

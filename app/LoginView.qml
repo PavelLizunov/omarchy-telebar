@@ -116,7 +116,7 @@ FocusScope {
     spacing: Style.spacing.md
 
     Text {
-      text: "Omagram — sign in"
+      text: "Telebar — sign in"
       color: app.foreground
       font.family: app.fontFamily
       font.pixelSize: Style.font.displayLarge

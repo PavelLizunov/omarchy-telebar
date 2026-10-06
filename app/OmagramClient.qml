@@ -40,7 +40,7 @@ Item {
       return
     }
     if (client.incoming.length - client.incomingOffset >= 8192 || client.incomingBytes + line.length > 16 * 1024 * 1024) {
-      console.warn("Omagram diagnostics: UI inbound queue exceeded; reconnecting")
+      console.warn("Telebar diagnostics: UI inbound queue exceeded; reconnecting")
       client.incoming = []
       client.incomingOffset = 0
       client.incomingBytes = 0
@@ -95,7 +95,7 @@ Item {
     // The socket itself, not `connected`: that binding may not have caught up yet inside the
     // socket's own connection handler, which is where hello is sent.
     if (!client.sock || !client.sock.connected) {
-      if (callback) callback({ ok: false, error: "Omagram's service is not running" })
+      if (callback) callback({ ok: false, error: "Telebar's service is not running" })
       return
     }
     var id = client.nextId++
@@ -150,7 +150,7 @@ Item {
       var lag = Math.max(0, now - client.lastHeartbeat - 1000)
       client.measure("timer_max_ms", lag)
       if (lag > 250) client.metrics.timer_late_count++
-      if (lag > 1000) console.warn("Omagram diagnostics: UI timer delay " + lag + " ms")
+      if (lag > 1000) console.warn("Telebar diagnostics: UI timer delay " + lag + " ms")
     }
     client.lastHeartbeat = now
     var oldest = 0
@@ -163,7 +163,7 @@ Item {
         if (pending.control || (pending.account === client.accountId && pending.generation === client.accountGeneration))
           pending.callback({ ok: false, error: "The service did not answer within three minutes" })
         // Command name only: never log request arguments or Telegram errors.
-        console.warn("Omagram diagnostics: request timeout " + pending.command)
+        console.warn("Telebar diagnostics: request timeout " + pending.command)
       }
     }
     if (!client.connected || now - client.lastReport < 5000) return
@@ -201,7 +201,7 @@ Item {
     for (var id in pending) {
       var entry = pending[id]
       if (entry.control || (entry.account === client.accountId && entry.generation === client.accountGeneration))
-        entry.callback({ ok: false, error: "The connection to Omagram's service was lost" })
+        entry.callback({ ok: false, error: "The connection to Telebar's service was lost" })
     }
   }
 

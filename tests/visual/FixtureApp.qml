@@ -126,7 +126,7 @@ QtObject {
     else if (cmd === "account.ttl") result = { days: 180 }
     else if (cmd === "autoDelete.default") result = { seconds: 0 }
     else if (cmd === "storage.stats") result = { size: 1234567, count: 12, byType: [] }
-    else if (cmd === "sessions.list") result = { sessions: [{ id: "1", current: true, device: "Preview desktop", platform: "Linux", application: "Omagram", date: 1790726000 }] }
+    else if (cmd === "sessions.list") result = { sessions: [{ id: "1", current: true, device: "Preview desktop", platform: "Linux", application: "Telebar", date: 1790726000 }] }
     else if (cmd === "proxies.list") result = { proxies: [{ id: 1, server: "127.0.0.1", port: 1443, type: "mtproto", enabled: true }], connection: "ready" }
     else if (cmd === "bridge.status") result = { running: true, enabled: false, port: 1443 }
     else if (cmd === "proxy.ping") result = { seconds: 0.045 }

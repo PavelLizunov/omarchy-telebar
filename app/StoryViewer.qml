@@ -179,7 +179,7 @@ FocusScope {
           id: player
           source: viewer.url
           videoOutput: output
-          audioOutput: AudioOutput {}
+          audioOutput: FollowingAudioOutput {}
           onErrorOccurred: function (error, message) { viewer.error = message || "Could not play the downloaded story" }
           onMediaStatusChanged: if (mediaStatus === MediaPlayer.EndOfMedia) Qt.callLater(function () { viewer.step(1) })
         }

@@ -9,9 +9,9 @@ import "../app" as App
 // right click opens a menu: the window, notifications on or off, or quit.
 BarWidget {
   id: root
-  moduleName: "reidenxerx.omagram"
+  moduleName: "io.github.pavellizunov.telebar"
 
-  readonly property string pluginId: "reidenxerx.omagram"
+  readonly property string pluginId: "io.github.pavellizunov.telebar"
 
   // The plugin's service entry, found through the bar's shell facade. The shell may create
   // services after bar widgets, so the lookup is retried until it succeeds.
@@ -63,7 +63,7 @@ BarWidget {
 
   readonly property var menuEntries: {
     var entries = [
-      { action: "open", label: "Open Omagram" }
+      { action: "open", label: "Open Telebar" }
     ]
     if (root.omagram && root.omagram.accounts && root.omagram.accounts.length > 1) {
       for (var i = 0; i < root.omagram.accounts.length; i++) {
@@ -138,8 +138,8 @@ BarWidget {
         }
       }
     }
-    tooltipText: !root.ready ? "Omagram"
-               : (root.unread > 0 ? "Omagram: " + root.unread + " unread" : "Omagram: no unread messages")
+    tooltipText: !root.ready ? "Telebar"
+               : (root.unread > 0 ? "Telebar: " + root.unread + " unread" : "Telebar: no unread messages")
     onPressed: function (b) {
       if (b === Qt.RightButton) root.menuOpen = !root.menuOpen
       else {

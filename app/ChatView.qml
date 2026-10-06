@@ -168,6 +168,9 @@ FocusScope {
   }
 
   function resetForChat() {
+    root.mentionSerial++
+    root.mentionBusy = false
+    root.pendingMention = 0
     messageMenu.close()
     muteMenu.close()
     sendMenu.close()
@@ -1077,16 +1080,38 @@ FocusScope {
     muteMenu.open(at.x - Style.space(260), at.y)
   }
 
+  property bool mentionBusy: false
+  property int mentionSerial: 0
+  property real pendingMention: 0
+  function finishMention() {
+    if (!pendingMention || !root.chat || !root.focusMessage(pendingMention)) return
+    var id = pendingMention
+    pendingMention = 0
+    client.request("chat.read", root.target({ chatId: root.chat.id, messageIds: [id] }), function (answer) {
+      if (!answer.ok) root.flash(answer.error || "Could not mark the mention read")
+    })
+  }
+  onHistoryChanged: Qt.callLater(root.finishMention)
   function nextMention() {
-    if (!root.chat) return
+    if (!root.chat || mentionBusy) return
     var chatId = root.chat.id
+    var topic = root.topicId
+    var account = app.activeAccount
+    var token = ++mentionSerial
+    mentionBusy = true
     client.request("chat.nextMention", root.target({ chatId: chatId }), function (answer) {
-      if (!answer.ok || !root.chat || root.chat.id !== chatId) return
+      if (token !== root.mentionSerial) return
+      root.mentionBusy = false
+      if (!root.chat || root.chat.id !== chatId || root.topicId !== topic || app.activeAccount !== account) return
+      if (!answer.ok) { root.flash(answer.error || "Could not find the next mention"); return }
       if (answer.result.messageId) {
-        root.jumpTo(answer.result.messageId)
-        app.markRead(chatId, [answer.result.messageId])   // seen now, so the mention is read
+        root.pendingMention = answer.result.messageId
+        if (root.focusMessage(root.pendingMention)) root.finishMention()
+        else app.openChatAt(chatId, root.pendingMention)
       } else {
-        client.request("chat.readMentions", root.target({ chatId: chatId }))
+        client.request("chat.readMentions", root.target({ chatId: chatId }), function (cleared) {
+          if (!cleared.ok) root.flash(cleared.error || "Could not clear unread mentions")
+        })
       }
     })
   }
@@ -2041,6 +2066,9 @@ FocusScope {
           onActivated: root.nextReaction()
         }
         FloatButton {
+          objectName: "unread-mentions-button"
+          enabled: !root.mentionBusy
+          label: root.mentionBusy ? "Finding next mention" : "Next unread mention"
           visible: !!root.chat && root.chat.mentions > 0 && !root.scheduledOpen
           glyph: String.fromCodePoint(0xF0065)   // md-at
           count: root.chat ? root.chat.mentions : 0
@@ -3236,6 +3264,12 @@ FocusScope {
     id: floatButton
     property string glyph: ""
     property int count: 0
+    property string label: "Jump to message"
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: label
+    Keys.onReturnPressed: activated()
+    Keys.onSpacePressed: activated()
     signal activated()
 
     width: Style.space(42)
@@ -3243,7 +3277,7 @@ FocusScope {
     radius: width / 2
     color: root.app.background
     border.width: 1
-    border.color: Qt.rgba(root.app.foreground.r, root.app.foreground.g, root.app.foreground.b, floatArea.containsMouse ? 0.4 : 0.18)
+    border.color: activeFocus ? root.app.accent : Qt.rgba(root.app.foreground.r, root.app.foreground.g, root.app.foreground.b, floatArea.containsMouse ? 0.4 : 0.18)
 
     Icon {
       anchors.centerIn: parent

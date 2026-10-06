@@ -184,15 +184,28 @@ Scope {
   onWindowFocusedChanged: if (omagram.windowFocused) omagram.markOpenChatRead()
 
   // A notification's Open or Reply, or `omagram --chat <id>`.
+  property string pendingLink: ""
+  function deliverLink() {
+    if (!pendingLink || !screen.item || !screen.item.openLink) return
+    var url = pendingLink
+    pendingLink = ""
+    screen.item.openLink(url)
+  }
   function openFromService(target) {
-    if (!target || !target.chatId) return
+    if (!target || (!target.chatId && !target.url)) return
     if (target.account && target.account !== omagram.activeAccount) {
       service.request("account.switch", { accountId: target.account }, function (answer) {
         if (answer.ok) { omagram.applyAccountSnapshot(answer.result); omagram.openFromService(target) }
       })
       return
     }
-    omagram.openChatById(target.chatId, false)
+    if (target.url) {
+      omagram.pendingLink = target.url
+      Qt.callLater(omagram.deliverLink)
+      return
+    }
+    if (target.messageId) omagram.openChatAt(target.chatId, target.messageId)
+    else omagram.openChatById(target.chatId, false)
     if (screen.item && screen.item.focusComposer) Qt.callLater(function () { screen.item.focusComposer() })
   }
 
@@ -749,9 +762,16 @@ Scope {
   }
 
   property real viewerMessageId: 0
+  property real viewerFileId: 0
+  property var viewerBlock: null
+  onViewerMessageIdChanged: if (!viewerMessageId) { viewerFileId = 0; viewerBlock = null }
 
   function openPhoto(message) {
-    if (message && message.id) omagram.viewerMessageId = message.id
+    if (message && message.id) {
+      omagram.viewerBlock = message
+      omagram.viewerFileId = message.content && message.content.media && message.content.media.file ? message.content.media.file.id : 0
+      omagram.viewerMessageId = message.id
+    }
   }
 
   // `topic`: a forum's topic or a thread to open the chat at.
@@ -821,7 +841,7 @@ Scope {
 
   FloatingWindow {
     id: window
-    title: omagram.openChat ? Model.chatTitle(omagram.openChat, omagram.meId) + " — Omagram" : "Omagram"
+    title: omagram.openChat ? Model.chatTitle(omagram.openChat, omagram.meId) + " — Telebar" : "Telebar"
     color: omagram.background
     implicitWidth: 1100
     implicitHeight: 760
@@ -843,7 +863,7 @@ Scope {
         if (s === "phone" || s === "code" || s === "password" || s === "qr") return loginView
         return statusView
       }
-      onLoaded: if (item) item.forceActiveFocus()
+      onLoaded: if (item) { item.forceActiveFocus(); Qt.callLater(omagram.deliverLink) }
     }
 
     Shortcut {
@@ -883,6 +903,8 @@ Scope {
       app: omagram
       messages: omagram.openChat ? omagram.messagesFor(omagram.openChatId) : []
       messageId: omagram.viewerMessageId
+      fileId: omagram.viewerFileId
+      extraMessage: omagram.viewerBlock
       onClosed: {
         omagram.viewerMessageId = 0
         if (screen.item && screen.item.focusMessages) screen.item.focusMessages()
@@ -923,7 +945,7 @@ Scope {
         Text {
           width: parent.width
           horizontalAlignment: Text.AlignHCenter
-          text: "Omagram"
+          text: "Telebar"
           color: omagram.foreground
           font.family: omagram.fontFamily
           font.pixelSize: Style.font.displayLarge
@@ -939,7 +961,7 @@ Scope {
           font.pixelSize: Style.font.body
           text: {
             var s = omagram.auth.state
-            if (s === "connecting") return "Connecting to Omagram's service…"
+            if (s === "connecting") return "Connecting to Telebar's service…"
             if (s === "starting") return "Starting…"
             if (s === "noLibrary") return "TDLib is not installed yet. Build it with:\n" + omagram.binDir + "omagram-build-tdlib"
             if (s === "loggingOut") return "Signing out…"
@@ -974,6 +996,7 @@ Scope {
       function notify(text) { chatView.flash(text) }
       function leaveAccount() { chatView.leaveAccount() }
       function openFile(message) { chatView.openFile(message) }
+      function openLink(url) { chatView.openLink(url, null) }
 
       // A menu or the forward dialog has the keyboard: the window's shortcuts wait.
       readonly property bool modal: chatView.modalOpen || chatList.modalOpen || forwardPicker.visible || newChat.visible

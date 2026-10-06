@@ -1,11 +1,11 @@
   "trigger.omagram": {
     "icon": "󰍪",
-    "label": "Omagram",
+    "label": "Telebar",
     "aliases": ["messages", "chat", "messenger", "telegram", "unofficial telegram"]
   },
   "trigger.omagram.open": {
     "icon": "󰏌",
-    "label": "Open Omagram",
+    "label": "Open Telebar",
     "aliases": ["open messages", "open chat"],
     "action": "/usr/bin/python3 @PLUGIN_BIN@/omagram"
   },
@@ -13,5 +13,5 @@
     "icon": "󰑚",
     "label": "Quick view",
     "aliases": ["reply", "find chat", "switch chat"],
-    "action": "/usr/bin/omarchy-shell shell toggle reidenxerx.omagram '{}'"
+    "action": "/usr/bin/omarchy-shell shell toggle io.github.pavellizunov.telebar '{}'"
   },

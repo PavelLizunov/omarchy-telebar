@@ -39,7 +39,7 @@ Rectangle {
       textFormat: Text.PlainText
       text: !bar.call ? ""
           : (bar.call.name || "Someone") + (bar.call.video ? " is video calling you" : " is calling you")
-            + ". Omagram cannot take calls: answer in another Telegram app."
+            + ". Telebar cannot take calls: answer in another Telegram app."
       color: bar.app.foreground
       font.family: bar.app.fontFamily
       font.pixelSize: Style.font.bodySmall

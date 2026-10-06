@@ -1,5 +1,12 @@
 # Consumer visual review
 
+Telebar rename checks use `tst_rename.qml` with the inert import adapter below.
+Create `/tmp/telebar-rename-evidence/` before running it. It loads the actual setup,
+login, quick-view and bar-menu components, checks their displayed names, and writes
+supplemental QtTest PNGs at theme radii 0 and 8. `tst_bar_menu.qml` separately checks
+click and keyboard action routing. These captures do not verify the Main.qml window
+title, compositor placement, production account operations or MCP acceptance.
+
 Fixtures load the actual application QML components with `FixtureApp.qml` synthetic
 models. Requests are inert; no account, network, camera, microphone or production
 socket is used. `sample-photo.svg` is locally authored fixture media.
@@ -28,6 +35,13 @@ unavailable-image states at radii 0/8. `warningsPolicy: error` and explicit
 
 View each PNG through the harness. Do not start an external image viewer or production
 panel to obtain preview evidence. No global theme or renderer modifications are needed.
+
+Rich-post checks use the actual MessageRow, QuickView, shared RichMessageView and photo
+viewer with synthetic text/image/text blocks. They cover order, content updates, radii 0/8,
+partial-content failure/stale callbacks, keyboard spoiler activation and multiple photos
+with the same message id. Run `tst_rich.qml` with the same inert import adapter below.
+`tst_rich_capture.qml` writes supplemental QtTest PNGs to `/tmp/omagram-rich-evidence/`
+(create that directory first); these do not establish QML-preview MCP acceptance.
 
 Interaction check for original matched-contour transitions:
 

@@ -203,12 +203,13 @@ Item {
     })
   }
 
-  function switchAccount(accountId) {
+  function switchAccount(accountId, callback) {
     client.request("account.switch", { accountId: accountId }, function (ans) {
       if (ans.ok && ans.result) {
         service.applyAccountSnapshot(ans.result)
         service.refreshAccounts()
       }
+      if (callback) callback(ans)
     })
   }
 
@@ -287,7 +288,7 @@ Item {
     service.quitting = true
     restart.stop()
     client.request("app.quit", {}, function (answer) {
-      if (!answer.ok) { service.quitting = false; console.warn("Omagram: quit request failed") }
+      if (!answer.ok) { service.quitting = false; console.warn("Telebar: quit request failed") }
     })
   }
 

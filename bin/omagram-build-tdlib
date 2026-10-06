@@ -1,11 +1,11 @@
 #!/usr/bin/python3
-"""Build TDLib's JSON library for Omagram and install it where Omagram loads it from.
+"""Build TDLib's JSON library for Telebar and install it where Telebar loads it from.
 
   omagram-build-tdlib            fetch, build and install the pinned TDLib
   omagram-build-tdlib --check    only report whether a usable library is installed
 
 TDLib is Telegram's official client library (Boost licence). No distribution package is
-used because none is maintained for Arch; this builds the exact commit Omagram was tested
+used because none is maintained for Arch; this builds the exact commit Telebar was tested
 with. Nothing is installed system-wide and nothing needs root:
 
   source   ~/.cache/omagram/td            (git, pinned commit)

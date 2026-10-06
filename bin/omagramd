@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""omagramd -- Omagram's background service: one Telegram session, shared by every Omagram
+"""omagramd -- Telebar's background service: one Telegram session, shared by every Telebar
 surface (the app window, the bar panel, the overlay) over a private local socket.
 
   omagramd [--with-parent]
@@ -195,7 +195,7 @@ def clear_lottie_cache():
 
 def local_upload(path):
     """A file you chose to send: an absolute path to a non-empty regular file you can read,
-    within Telegram's size limit. Omagram's own database directory is never sent.
+    within Telegram's size limit. Telebar's own database directory is never sent.
     Returns (real path, size)."""
     if not isinstance(path, str) or not path.startswith("/") or len(path) > 4096 or any(ord(c) < 32 for c in path):
         raise BadRequest("the file must be given as an absolute path")
@@ -208,7 +208,7 @@ def local_upload(path):
         raise BadRequest("only regular files can be sent")
     for db_dir in td.all_database_dirs():
         if real == db_dir or real.startswith(db_dir + "/"):
-            raise BadRequest("Omagram's own database is not sent")
+            raise BadRequest("Telebar's own database is not sent")
     if not os.access(real, os.R_OK):
         raise BadRequest("that file is not readable")
     if st.st_size == 0:
@@ -243,7 +243,7 @@ PROPERTIES = {"can_be_deleted_for_all_users": "canDeleteForAll", "can_be_deleted
               "can_be_copied": "canCopy", "can_be_replied": "canReply", "can_get_link": "canGetLink",
               "can_be_saved": "canSave", "can_get_message_thread": "canGetThread", "can_get_viewers": "canGetViewers"}
 DEFERRED = object()   # a command that answers later, from background work
-PLUGIN_ID = "reidenxerx.omagram"
+PLUGIN_ID = "io.github.pavellizunov.telebar"
 PROFILE_NAME_MAX = 64
 BIO_MAX = 140            # Telegram allows 70 characters, or 140 with Premium
 USERNAME_MAX = 32
@@ -513,7 +513,7 @@ class Client:
         self.sock = sock
         self.inbox = bytearray()
         self.outbox = bytearray()
-        self.window = False   # Omagram's window (said so in hello), not the bar or a tool
+        self.window = False   # Telebar's window (said so in hello), not the bar or a tool
         self.pid = 0
         self.ui_seen = 0
         self.ui_metrics = {}
@@ -2045,7 +2045,7 @@ class Daemon:
     def cmd_link_open(self, client, rid, args):
         """Where a link leads: a chat or message inside Telegram, an invite, or the web."""
         url = arg_str(args, "url", model.URL_MAX)
-        if not re.match(r"(?i)^(https?|tg)://", url):
+        if any(ord(c) <= 32 for c in url) or not re.match(r"(?i)^(https?|tg)://", url):
             raise BadRequest("only web and Telegram links open")
         if not TELEGRAM_LINK.match(url):
             self.respond(client, rid, {"kind": "external", "url": url})
@@ -2115,7 +2115,7 @@ class Daemon:
             raise BadRequest("the file is not downloaded yet")
         path = model.local_path(local.get("path"), self.state.files_root)
         if not path:
-            raise BadRequest("that file is not one of Omagram's")
+            raise BadRequest("that file is not one of Telebar's")
         return path
 
     def cmd_file_open(self, client, rid, args):
@@ -2130,11 +2130,10 @@ class Daemon:
         message_id = arg_int(args, "messageId", 1)
         file_id = arg_int(args, "fileId", 1, INT32_MAX)
 
-        def message_found(event):
-            content = model._obj(event.get("content"))
-            photo = model.media_for("photo", content, self.state.files_root) if content.get("@type") == "messagePhoto" else None
-            if (event.get("chat_id") != chat_id or event.get("id") != message_id or not photo
-                    or not photo.get("file") or photo["file"]["id"] != file_id):
+        def check(body):
+            candidates = body.get("blocks", []) if body.get("kind") == "rich" else [body]
+            if not any(c.get("kind") == "photo" and model._obj(model._obj(c.get("media")).get("file")).get("id") == file_id
+                       for c in candidates):
                 raise BadRequest("that file is not this message's photo")
 
             def permitted(properties):
@@ -2144,6 +2143,16 @@ class Daemon:
             self.td_send({"@type": "getMessageProperties", "chat_id": chat_id, "message_id": message_id},
                          client, rid, permitted)
             return DEFERRED
+
+        def message_found(event):
+            if event.get("chat_id") != chat_id or event.get("id") != message_id:
+                raise BadRequest("that file is not this message's photo")
+            body = model.content(event.get("content"), self.state.files_root)
+            if body.get("kind") == "rich" and not body.get("full"):
+                self.td_send({"@type": "getFullRichMessage", "chat_id": chat_id, "message_id": message_id}, client, rid,
+                             lambda value: check(model.rich_message(value, self.state.files_root)))
+                return DEFERRED
+            return check(body)
         self.td_send({"@type": "getMessage", "chat_id": chat_id, "message_id": message_id}, client, rid, message_found)
         return DEFERRED
 
@@ -2631,7 +2640,7 @@ class Daemon:
         setting_id, base = args.get("setting"), args.get("base")
         kind = model.PRIVACY_SETTINGS.get(setting_id) if isinstance(setting_id, str) else None
         if kind is None:
-            raise BadRequest("that is not a privacy setting Omagram shows")
+            raise BadRequest("that is not a privacy setting Telebar shows")
         choices = ("everybody", "contacts") if setting_id == "findByPhone" else ("everybody", "contacts", "nobody")
         if base not in choices:
             raise BadRequest(f"{setting_id} is one of {', '.join(choices)}")
@@ -2782,8 +2791,8 @@ class Daemon:
                          "type": {"@type": "proxyTypeMtproto", "secret": "dd" + self.bridge.secret}}
                 if proxy_id and not any(model._int(p.get("id")) == proxy_id for p in model._list(event.get("proxies"), PROXIES_MAX)):
                     proxy_id = 0
-                command = {"@type": "editProxy", "proxy_id": proxy_id, "proxy": proxy, "enable": True, "comment": "Omagram bundled bridge"} if proxy_id else {
-                    "@type": "addProxy", "proxy": proxy, "enable": True, "comment": "Omagram bundled bridge"}
+                command = {"@type": "editProxy", "proxy_id": proxy_id, "proxy": proxy, "enable": True, "comment": "Telebar bundled bridge"} if proxy_id else {
+                    "@type": "addProxy", "proxy": proxy, "enable": True, "comment": "Telebar bundled bridge"}
 
                 def configured(added):
                     new_id = model._int(added.get("id"))
@@ -3434,7 +3443,7 @@ class Daemon:
         try:
             source = media.recorded_file(args.get("path"))
         except (safe.UnsafeError, OSError):
-            raise BadRequest("that is not a recording of Omagram's")
+            raise BadRequest("that is not a recording of Telebar's")
         reply = self.reply_args(args)
         if self.jobs >= JOBS_MAX:
             raise BadRequest("still preparing an earlier message")
@@ -3463,7 +3472,7 @@ class Daemon:
         try:
             media.remove(media.recorded_file(args.get("path")))
         except (safe.UnsafeError, OSError):
-            raise BadRequest("that is not a recording of Omagram's")
+            raise BadRequest("that is not a recording of Telebar's")
         self.respond(client, rid, {})
 
     def cmd_videonote_animation(self, client, rid, args):
@@ -3697,7 +3706,17 @@ class Daemon:
             self.td_send({"@type": "readAllChatReactions", "chat_id": chat_id}, session=sess)
 
     def cmd_ui_open(self, client, rid, args):
-        self.open_chat(arg_int(args, "chatId"), args.get("reply") is True)
+        if "url" in args:
+            url = arg_str(args, "url", model.URL_MAX)
+            if not TELEGRAM_LINK.match(url) or any(ord(c) <= 32 for c in url):
+                raise BadRequest("only Telegram links open in Telebar")
+            target = {"url": url, "account": self.session_for().id}
+            windows = [c for c in self.clients.values() if c.window]
+            self.pending_open = None if windows else (time.monotonic(), target)
+            for window in windows:
+                self.send_to(window, dict(event="open", **target))
+        else:
+            self.open_chat(arg_int(args, "chatId"), args.get("reply") is True)
         self.respond(client, rid, {})
 
     def cmd_credentials_set(self, client, rid, args):
@@ -4007,7 +4026,7 @@ class Daemon:
         user_id = arg_int(args, "userId", 1)
         user = self.state.users.get(user_id)
         if user is None or user["bot"]:
-            raise BadRequest("a contact card is for a person Omagram knows")
+            raise BadRequest("a contact card is for a person Telebar knows")
         first, _, last = user["name"].partition(" ")
         self.send_content(client, rid, arg_int(args, "chatId"), {"@type": "inputMessageContact", "contact": {
             "@type": "contact", "phone_number": user.get("phone", ""), "first_name": first, "last_name": last, "vcard": "",
@@ -4089,6 +4108,11 @@ class Daemon:
                      "input_message_content": {"@type": "inputMessageText", "text": text,
                                                "link_preview_options": None, "clear_draft": False}}
         self.td_send(query, client, rid, self.state.message)
+
+    def cmd_message_rich(self, client, rid, args):
+        self.td_send({"@type": "getFullRichMessage", "chat_id": arg_int(args, "chatId"),
+                      "message_id": arg_int(args, "messageId", 1)}, client, rid,
+                     lambda value: model.rich_message(value, self.state.files_root))
 
     def cmd_message_markdown(self, client, rid, args):
         """A message's text or caption with its formatting written as Telegram Markdown, to edit it as
@@ -4260,6 +4284,7 @@ COMMANDS = {
     "secret.close": ("cmd_secret_close", True),
     "call.decline": ("cmd_call_decline", True),
     "message.markdown": ("cmd_message_markdown", True),
+    "message.rich": ("cmd_message_rich", True),
     "chat.mentions": ("cmd_chat_mentions", True),
     "chat.commands": ("cmd_chat_commands", True),
     "message.sendFiles": ("cmd_message_send_files", True),

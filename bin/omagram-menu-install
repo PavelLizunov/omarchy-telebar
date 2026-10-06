@@ -27,7 +27,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import plugin_safety as safe  # noqa: E402
 
-PLUGIN_ID = "reidenxerx.omagram"
+PLUGIN_ID = "io.github.pavellizunov.telebar"
 PLUGIN_DIR = pathlib.Path(__file__).resolve().parent.parent
 SNIPPET = PLUGIN_DIR / "menu.jsonc"
 EXTENSION = pathlib.Path(safe.home_dir()) / ".config/omarchy/extensions/omarchy-menu.jsonc"

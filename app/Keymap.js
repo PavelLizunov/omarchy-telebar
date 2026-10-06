@@ -19,7 +19,7 @@ var KEYS_MAX = 6
 // only clash within their own scope. The quick view, in the bar's panel and in the overlay, lives
 // in Omarchy's shell, never in the same window as the rest.
 var SECTIONS = [
-  { id: "window", title: "Anywhere in Omagram", scope: "window", app: "window" },
+  { id: "window", title: "Anywhere in Telebar", scope: "window", app: "window" },
   { id: "list", title: "Chat list", scope: "list", app: "window" },
   { id: "messages", title: "Messages", scope: "messages", app: "window" },
   { id: "composer", title: "Message box", scope: "composer", app: "window" },
