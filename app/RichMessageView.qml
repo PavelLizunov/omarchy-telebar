@@ -11,6 +11,7 @@ Column {
   property var app
   property bool compact: false
   property bool animationsEnabled: false
+  property color surfaceColor: Color.menu.background
   property color foreground: Color.foreground
   property color muted: Color.foreground
   property color accent: Color.accent
@@ -69,7 +70,7 @@ Column {
       Component.onCompleted: fetch()
       onMediaChanged: fetch()
 
-      Text {
+      MessageText {
         objectName: "rich-text-" + block.index
         width: parent.width
         visible: (block.modelData.text || "") !== ""
@@ -79,15 +80,13 @@ Column {
         textFormat: Text.RichText
         wrapMode: Text.Wrap
         horizontalAlignment: rich.content.rtl ? Text.AlignRight : Text.AlignLeft
+        surfaceColor: rich.surfaceColor
         color: block.modelData.kind === "unsupported" ? rich.muted : rich.foreground
         font.family: block.modelData.style === "pre" ? "monospace" : rich.fontFamily
         font.pixelSize: block.modelData.style === "heading" ? Style.font.title : rich.compact ? Style.font.bodySmall : Style.font.body
         font.bold: block.modelData.style === "heading"
-        lineHeight: 1.22
-        lineHeightMode: Text.ProportionalHeight
         onLinkActivated: function (link) { rich.linkActivated(link) }
         Component.onCompleted: if (!rich.compact && rich.app) rich.app.requestCustomEmoji(Model.customEmojiIds(block.modelData.entities))
-        HoverHandler { cursorShape: parent.hoveredLink ? Qt.PointingHandCursor : Qt.ArrowCursor }
       }
       Loader {
         width: parent.width

@@ -286,6 +286,7 @@ class LifecycleContract(unittest.TestCase):
                     rec = {"kind": kind, "proc": proc, "path": "/synthetic/recording",
                            "preview": "/synthetic/preview", "chatId": 42, "account": self.s.id}
                     self.d.recording = rec
+                    self.s.recorded_send = None
                     self.d.jobs = self.m.JOBS_MAX
                     stop = self.d.cmd_voice_stop if kind == "voice" else self.d.cmd_videonote_stop
                     with mock.patch.object(self.d, "background") as background, \
@@ -303,7 +304,8 @@ class LifecycleContract(unittest.TestCase):
                         stop(None, 8, {"send": send})
                         self.assertIsNone(self.d.recording)
                         proc.send_signal.assert_called_once()
-                        broadcast.assert_called_once()
+                        events = [c.args[0]['event'] for c in broadcast.call_args_list]
+                        self.assertEqual(events, ['recordedSend', 'recording'] if send else ['recording'])
                         background.assert_called_once()
 
     def test_video_stop_allocation_failure_preserves_recording_for_retry(self):
@@ -349,7 +351,7 @@ class LifecycleContract(unittest.TestCase):
                 self.assertEqual(self.d.jobs, 0)
                 self.assertEqual(self.d.td.sent, [])
                 self.assertEqual(removed, ["/synthetic/recording"] if kind == "voice" else
-                                 ["/synthetic/preview", "/synthetic/recording", "/synthetic/target"])
+                                 ["/synthetic/preview", "/synthetic/target", "/synthetic/recording", "/synthetic/target"])
 
     def test_disable_bridge_td_cancel_releases_lock_preserves_metadata(self):
         self.d.bridge = SimpleNamespace(metadata={self.s.id: {"proxy_id": 4}}, status=lambda _: {})

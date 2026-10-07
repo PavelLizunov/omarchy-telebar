@@ -50,6 +50,7 @@ Item {
   // about a file (a sticker or photo coming down), by file id.
   property var playing: ({ fileId: 0 })
   property var recording: ({ state: "idle" })
+  property var recordedSend: null
   property var files: ({})
   // Where the quick view was when it closed, in the panel or the overlay alike: the chat and the words not yet
   // sent. It opens there again within the hour, so a conversation carried on through it picks up where it was.
@@ -175,12 +176,16 @@ Item {
           if (!chatFlush.running) chatFlush.start()
         }
         accountsDelay.restart()
+      } else if (name === "userStatus" || name === "user") {
+        service.noteUserStatus(name === "user" ? e.user.id : e.userId, name === "user" ? e.user.status : e.status)
       } else if (name.indexOf("message") === 0) {
         if (!e.account || e.account === service.activeAccount) {
           service.messageEvent(name, e)
         }
       } else if (name === "playing") {
         service.playing = e
+      } else if (name === "recordedSend") {
+        service.recordedSend = e.recordedSend || null
       } else if (name === "recording") {
         service.recording = e
       } else if (name === "file") {
@@ -192,6 +197,17 @@ Item {
       service.auth = { state: "connecting" }
       service.accountRevision = -1
       if (service.quitting) { service.stopped = true; service.quitting = false }
+    }
+  }
+
+  function noteUserStatus(userId, status) {
+    if (!(userId > 0) || !status) return
+    service.chats = service.chats.map(function (chat) {
+      return chat.userId === userId ? Object.assign({}, chat, { status: status }) : chat
+    })
+    for (var key in service.pendingChats) {
+      var chat = service.pendingChats[key]
+      if (chat.userId === userId) service.pendingChats[key] = Object.assign({}, chat, { status: status })
     }
   }
 
@@ -247,6 +263,7 @@ Item {
     chatFlush.stop()
     service.pendingChats = ({})
     service.auth = result.auth || { state: "starting" }
+    service.recordedSend = result.recordedSend || null
     service.meId = result.meId || 0
     service.chats = Model.sortChats(result.chats || [])
     if (result.accounts) service.accounts = result.accounts

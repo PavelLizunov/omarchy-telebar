@@ -59,7 +59,8 @@ TestCase {
     verify(photo.y + photo.height <= after.y)
     verify(post.width > 0 && post.width <= view.width)
     compare(Style.cornerRadius, data.radius)
-    verify(findChild(post, "rich-text-0").text.indexOf("<b>") >= 0)
+    var formatted = findChild(post, "rich-text-0").text
+    verify(formatted.indexOf("<b>") >= 0 || /font-weight:\s*700/.test(formatted), "Native TextEdit must retain bold formatting")
     if (!data.compact) compare(view.consumer.bubbleItem.radius, data.radius)
     var changed = Object.assign({}, view.richContent, { blocks: [view.richContent.blocks[2], view.richContent.blocks[1], view.richContent.blocks[0]] })
     view.richContent = changed

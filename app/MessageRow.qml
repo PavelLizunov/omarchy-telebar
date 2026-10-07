@@ -53,7 +53,13 @@ Item {
   readonly property string codeBackground: "#" + [0x18, Math.round(row.app.foreground.r * 255), Math.round(row.app.foreground.g * 255),
                                                   Math.round(row.app.foreground.b * 255)]
     .map(function (v) { return (v < 16 ? "0" : "") + v.toString(16) }).join("")
-  readonly property string linkHex: Model.hexOf(row.app.accentText)
+  // Contrast is measured on the actual bubble, not the surrounding window.
+  readonly property color ground: row.bare ? row.app.background : ink(Model.mixColors(row.app.background, row.message.outgoing ? row.app.accent : row.app.foreground, row.message.outgoing ? 0.24 : 0.12))
+  readonly property color bodyColor: ink(Model.readableColor(row.app.foreground, ground, row.app.foreground, 4.5))
+  readonly property color metadataColor: ink(Model.readableColor(row.app.muted, ground, bodyColor, 4.5))
+  readonly property color nameColor: ink(Model.readableColor(row.app.accentText, ground, bodyColor, 4.5))
+  readonly property string linkHex: Model.hexOf(nameColor)
+  function ink(c) { return Qt.rgba(c.r, c.g, c.b, 1) }
   property alias mediaItem: mediaView
   property alias bubbleItem: bubble
 
@@ -127,14 +133,13 @@ Item {
     height: column.implicitHeight + Style.space(16)
     radius: Style.cornerRadius
     // Stickers and round video messages float without a bubble, as in Telegram.
-    color: row.bare ? "transparent"
-         : (row.message.outgoing ? Qt.rgba(row.app.accent.r, row.app.accent.g, row.app.accent.b, 0.22)
-                                 : Qt.rgba(row.app.foreground.r, row.app.foreground.g, row.app.foreground.b, 0.095))
+    objectName: "message-bubble-" + row.mid
+    color: row.bare ? "transparent" : row.ground
     border.width: row.isCursor || !!row.view.selection[row.message.id] ? Math.max(1, Style.space(1.5))
                  : (row.bare ? 0 : 1)
     border.color: row.message.id === row.view.confirmDeleteId ? row.app.urgent
                 : (row.isCursor || !!row.view.selection[row.message.id] ? row.app.accent
-                   : Qt.rgba(row.app.foreground.r, row.app.foreground.g, row.app.foreground.b, 0.09))
+                   : Qt.rgba(row.app.foreground.r, row.app.foreground.g, row.app.foreground.b, 0.18))
 
     Column {
       id: column
@@ -147,12 +152,13 @@ Item {
 
       Text {
         id: name
+        objectName: "message-sender-" + row.mid
         visible: row.showName
         width: Math.min(implicitWidth, bubble.inner)
         elide: Text.ElideRight
         text: row.message.senderName || "Unknown"
         textFormat: Text.PlainText
-        color: row.app.foreground
+        color: row.nameColor
         font.family: row.app.fontFamily
         font.pixelSize: Style.font.bodySmall
         font.bold: true
@@ -165,7 +171,7 @@ Item {
         elide: Text.ElideRight
         text: row.message.forward ? "Forwarded from " + row.message.forward.name : ""
         textFormat: Text.PlainText
-        color: row.app.muted
+        color: row.metadataColor
         font.family: row.app.fontFamily
         font.pixelSize: Style.font.caption
         font.italic: true
@@ -257,9 +263,10 @@ Item {
         message: row.message
         client: row.app
         app: row.app
-        foreground: row.app.foreground
-        muted: row.app.muted
-        accent: row.app.accentText
+        surfaceColor: row.ground
+        foreground: row.bodyColor
+        muted: row.metadataColor
+        accent: row.nameColor
         fontFamily: row.app.fontFamily
         codeBackground: row.codeBackground
         revealed: row.revealed
@@ -275,8 +282,10 @@ Item {
         height: visible ? preview.height : 0
       }
 
-      Text {
+      MessageText {
         id: body
+        objectName: "message-text-" + row.mid
+        contextEnabled: true
         readonly property string source: row.textSource.content.text || ""
         readonly property var emojiIds: Model.customEmojiIds(row.textSource.content.entities)
         visible: source !== "" && !row.cardKind && row.content.kind !== "rich"
@@ -285,17 +294,18 @@ Item {
                                        body.emojiIds.length ? row.app.customEmojiImages(body.emojiIds) : null, row.linkHex) : ""
         onEmojiIdsChanged: if (emojiIds.length) row.app.requestCustomEmoji(emojiIds)
         Component.onCompleted: if (emojiIds.length) row.app.requestCustomEmoji(emojiIds)
-        textFormat: Text.RichText
-        wrapMode: Text.Wrap
-        lineHeight: 1.22
-        lineHeightMode: Text.ProportionalHeight
-        color: row.app.foreground
-        linkColor: row.app.accentText
+        surfaceColor: row.ground
+        color: row.bodyColor
         font.family: row.app.fontFamily
         font.pixelSize: Style.font.body
         onLinkActivated: function (link) { row.view.openLink(link, row.message) }
 
-        HoverHandler { cursorShape: body.hoveredLink ? Qt.PointingHandCursor : Qt.ArrowCursor }
+        onContextRequested: function (x, y) {
+          var at = body.mapToItem(row.view, x, y)
+          row.view.cursor = row.index
+          row.view.openMenu(row.message, at.x, at.y, body.selectedText)
+        }
+        onMessageSelectionRequested: row.view.toggleSelected(row.message)
       }
 
       // ---------------------------------------------- a translation, under the original
@@ -311,20 +321,21 @@ Item {
         Text {
           id: translationLabel
           text: translation.result ? "Translation" : "Translating…"
-          color: row.app.muted
+          color: row.metadataColor
           font.family: row.app.fontFamily
           font.pixelSize: Style.font.caption
           font.bold: true
         }
-        Text {
+        MessageText {
           id: translationText
+          objectName: "message-translation-" + row.mid
           visible: !!translation.result
           width: Math.min(implicitWidth, bubble.inner)
           wrapMode: Text.Wrap
           text: translation.result ? Model.richText(translation.result.text, translation.result.entities, true, row.codeBackground, null, row.linkHex) : ""
           textFormat: Text.RichText
-          color: row.app.foreground
-          linkColor: row.app.accentText
+          surfaceColor: row.ground
+          color: row.bodyColor
           font.family: row.app.fontFamily
           font.pixelSize: Style.font.body
           onLinkActivated: function (link) { row.view.openLink(link, row.message) }
@@ -792,6 +803,7 @@ Item {
 
       Text {
         id: meta
+        objectName: "message-metadata-" + row.mid
         width: Math.min(implicitWidth, bubble.inner)
         elide: Text.ElideLeft
         horizontalAlignment: Text.AlignRight
@@ -802,7 +814,7 @@ Item {
             + (row.message.editDate > 0 ? "edited  " : "") + Model.clock(row.message.date)
             + (row.receipt === "read" ? "  ✓✓" : (row.receipt === "sent" ? "  ✓" : ""))
             + (row.receipt === "sending" ? "  ·  sending" : (row.receipt === "failed" ? "  ·  failed" : ""))
-        color: row.receipt === "failed" ? row.app.urgent : (row.receipt === "read" ? row.app.accentText : row.app.muted)
+        color: row.receipt === "failed" ? row.ink(Model.readableColor(row.app.urgent, row.ground, row.bodyColor, 4.5)) : (row.receipt === "read" ? row.nameColor : row.metadataColor)
         font.family: row.app.fontFamily
         font.pixelSize: Style.font.caption
       }

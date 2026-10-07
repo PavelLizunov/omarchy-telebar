@@ -256,5 +256,37 @@ class NoteAnimations(unittest.TestCase):
                          sorted([f"{n:064x}.webp" for n in (2, 3, 4, 5)] + ["making-fedcba9876543210.webp", "keep.txt"]))
 
 
+class ClipboardImage(unittest.TestCase):
+    def test_png_is_preserved_and_other_supported_images_offer_real_png(self):
+        png = media.PNG_HEADER + b"synthetic PNG"
+        with mock.patch.object(safe, "run") as run, mock.patch.object(safe, "tool", side_effect=lambda n: "/usr/bin/" + n):
+            self.assertEqual(media.clipboard_png(png), png)
+            run.assert_not_called()
+            for original, decoder in [(b"\xff\xd8\xffsynthetic JPEG", "mjpeg"), (b"RIFF0000WEBPsynthetic", "webp")]:
+                run.return_value = safe.Result(0, png, b"", False, False)
+                self.assertEqual(media.clipboard_png(original), png)
+                argv = run.call_args.args[0]
+                self.assertEqual(argv[:5], ["/usr/bin/prlimit", "--as=1073741824", "--cpu=10", "--", "/usr/bin/ffmpeg"])
+                self.assertIn(decoder, argv)
+                self.assertEqual(argv[argv.index("-protocol_whitelist") + 1], "pipe")
+                self.assertEqual(argv[argv.index("-max_pixels") + 1], str(media.CLIPBOARD_PIXELS_MAX))
+                self.assertEqual(run.call_args.kwargs, {"input": original, "timeout": 10, "max_output": media.CLIPBOARD_IMAGE_MAX})
+                self.assertEqual(argv[-1], "pipe:1")
+
+    def test_empty_oversized_unsupported_and_failed_conversion_fail_closed(self):
+        self.assertEqual(media.CLIPBOARD_IMAGE_MAX, 10 * 1024 * 1024)
+        with mock.patch.object(safe, "run") as run, mock.patch.object(safe, "tool", side_effect=lambda n: "/usr/bin/" + n), \
+             mock.patch.object(media, "CLIPBOARD_IMAGE_MAX", 64):
+            for data in [b"", b"not an image", media.PNG_HEADER + b"x" * 64]:
+                with self.assertRaises(safe.UnsafeError): media.clipboard_png(data)
+            run.assert_not_called()
+            for result in [safe.Result(1, b"", b"secret decoder error", False, False),
+                           safe.Result(0, b"not PNG", b"", False, False),
+                           safe.Result(0, media.PNG_HEADER, b"", True, False),
+                           safe.Result(0, media.PNG_HEADER, b"", False, True)]:
+                run.return_value = result
+                with self.assertRaises(safe.UnsafeError): media.clipboard_png(b"\xff\xd8\xffJPEG")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

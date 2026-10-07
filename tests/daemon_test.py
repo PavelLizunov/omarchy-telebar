@@ -1189,7 +1189,11 @@ class MessageActions(Harness):
              mock.patch.object(self.d, "DOWNLOADS", self.root / "Downloads"), \
              mock.patch.object(self.d.safe, "tool", side_effect=lambda name: pathlib.Path("/usr/bin") / name), \
              mock.patch.object(self.d.safe, "run") as run:
-            run.return_value = self.d.safe.Result(0, b"", b"", False, False)
+            def fake_run(argv, **kwargs):
+                if argv[0].endswith("prlimit"):
+                    return self.d.safe.Result(0, self.d.media.PNG_HEADER + b"converted synthetic PNG", b"", False, False)
+                return self.d.safe.Result(0, b"", b"", False, False)
+            run.side_effect = fake_run
 
             def export(rid, cmd="file.copyImage", allowed=True, message_file=5, local=None):
                 args = {"fileId": 5, "chatId": 42, "messageId": 7, "fileName": "photo.jpg"}
@@ -1216,8 +1220,9 @@ class MessageActions(Harness):
                 path.write_bytes(data)
                 self.assertTrue(export(rid)["ok"])
                 argv = run.call_args.args[0]
-                self.assertEqual(argv, [str(self.d.safe.tool("wl-copy")), "--type", mime])
-                self.assertEqual(run.call_args.kwargs["input"], data, "copy original image bytes, not a file URI")
+                self.assertEqual(argv, [str(self.d.safe.tool("wl-copy")), "--type", "image/png"])
+                expected = data if mime == "image/png" else self.d.media.PNG_HEADER + b"converted synthetic PNG"
+                self.assertEqual(run.call_args.kwargs["input"], expected, "copy actual PNG bytes, not a file URI or mislabeled JPEG")
                 self.assertEqual(run.call_args.kwargs["timeout"], self.d.HELPER_TIMEOUT)
             run.reset_mock()
             for rid, options in ((183, {"allowed": False}), (184, {"message_file": 6}),
@@ -1239,8 +1244,13 @@ class MessageActions(Harness):
             path.unlink()
             path.write_bytes(b"\xff\xd8\xffdata")
             run.assert_not_called()
+            run.side_effect = None
             run.return_value = self.d.safe.Result(1, b"", b"unavailable", False, False)
-            self.assertFalse(export(190)["ok"], "clipboard failure is not success")
+            self.assertFalse(export(190)["ok"], "decoder failure is not clipboard success")
+            self.assertFalse(any(c.args[0][0].endswith("wl-copy") for c in run.call_args_list))
+            run.reset_mock()
+            path.write_bytes(self.d.media.PNG_HEADER + b"synthetic PNG")
+            self.assertFalse(export(195)["ok"], "clipboard failure is not success")
             run.reset_mock()
             self.daemon.jobs = self.d.JOBS_MAX
             try:
@@ -2070,6 +2080,9 @@ class Recording(Harness):
         before = self.fake.sent_types().count("sendMessage")
         self.send(self.conn, {"id": 4, "cmd": "videonote.stop", "args": {"send": True, "replyToMessageId": 9}})
         query = self.sent_after(before)
+        self.answer(query, {"@type": "message", "id": 70, "chat_id": 42,
+                            "content": {"@type": "messageUnsupported"}})
+        self.read(self.conn, lambda v: v.get("id") == 4)
         note = query["input_message_content"]["video_note"]
         self.assertEqual((query["chat_id"], query["reply_to"]["message_id"], note["duration"], note["length"]),
                          (42, 9, 7, self.d.media.NOTE_SIZE))

@@ -59,6 +59,7 @@ FocusScope {
 
   // The message menu and what Telegram allows for its message; the mute menu in the header.
   property var menuMessage: null
+  property string menuSelectedText: ""
   property var menuProperties: null
   property var menuReactions: []
   property bool menuToComposer: false
@@ -262,7 +263,7 @@ FocusScope {
 
   // What the + button sends goes where a message would: into the open topic or thread, as a reply.
   function sendExtra(command, args, what) {
-    if (!root.chat || root.sendPending) return
+    if (!root.chat || root.sendPending || videoNote.visible) return
     args.chatId = root.chat.id
     root.target(args)
     if (root.replyToId) args.replyToMessageId = root.replyToId
@@ -380,7 +381,7 @@ FocusScope {
 
   // Photos and videos go as albums, files and music as albums of their own, the caption on the first.
   function sendAttachments(options) {
-    if (!root.chat || root.sendPending) return
+    if (!root.chat || root.sendPending || videoNote.visible) return
     var caption = composer.text.replace(/\s+$/, "")
     if (caption.length > 2048) { root.flash("That caption is too long."); return }
     var args = root.target({ chatId: root.chat.id, paths: root.attachments.map(function (a) { return a.path }),
@@ -414,7 +415,7 @@ FocusScope {
   Shortcut {
     sequences: Keymap.keysFor(app.shortcuts, "window.videoNote")
     enabled: root.shortcutsOn && !root.recordingVoice && root.canWrite
-    onActivated: videoNote.open(root.chat.id)
+    onActivated: root.openVideo()
   }
   Shortcut { sequences: Keymap.keysFor(app.shortcuts, "voice.send"); enabled: root.recordingVoice && !app.settingsOpen; onActivated: root.stopVoice(true) }
   Shortcut { sequences: Keymap.keysFor(app.shortcuts, "voice.cancel"); enabled: root.recordingVoice && !app.settingsOpen; onActivated: root.stopVoice(false) }
@@ -448,7 +449,7 @@ FocusScope {
   }
 
   function startVoice() {
-    if (!root.chat || root.recordingVoice || !root.canWrite) return
+    if (!root.chat || root.recordingVoice || !root.canWrite || videoNote.visible || app.recordedSend) return
     root.recordingNow = Date.now()
     client.request("voice.start", { chatId: root.chat.id }, function (answer) {
       if (!answer.ok) root.flash("Could not record: " + (answer.error || "no microphone"))
@@ -456,7 +457,7 @@ FocusScope {
   }
 
   function stopVoice(send) {
-    if (send && (!root.chat || root.sendPending)) return
+    if (send && (!root.chat || root.sendPending || videoNote.visible)) return
     var args = root.target({ send: send })
     if (send && root.replyToId) args.replyToMessageId = root.replyToId
     var snapshot = send ? root.beginSend() : null
@@ -479,7 +480,7 @@ FocusScope {
     else if (action === "attach") root.attach(true)
     else if (action === "emoji") root.openEmoji()
     else if (action === "stickers") root.toggleStickers()
-    else if (action === "video") videoNote.open(root.chat.id)
+    else if (action === "video") root.openVideo()
     else if (action === "voice") root.startVoice()
     else if (action === "more") root.openMoreMenu(item)
   }
@@ -746,10 +747,11 @@ FocusScope {
 
   // ---------------------------------------------------------------- the message menu
 
-  function openMenu(message, x, y) {
+  function openMenu(message, x, y, selectedText) {
     if (!message || !root.chat || message.content.kind === "service") return
     root.menuToComposer = composer.activeFocus
     root.menuMessage = message
+    root.menuSelectedText = selectedText || ""
     root.menuProperties = null
     root.menuReactions = []
     messageMenu.open(x, y)
@@ -788,7 +790,7 @@ FocusScope {
     else if (id === "moreReactions") root.openReactionPicker(message)
     else if (id === "reactions") root.showReactions(message)
     else if (id === "viewers") root.showViewers(message)
-    else if (id === "copy") root.copyText(message.content.text)
+    else if (id === "copy") root.copyText(root.menuSelectedText || message.content.text)
     else if (id === "link") root.copyLink(message)
     else if (id === "edit") root.startEdit(root.captionHolder(message), true)
     else if (id === "forward") root.forward(Model.albumIds(root.messages, message))
@@ -950,7 +952,7 @@ FocusScope {
   // A GIF from the picker: one of yours, or one the search found.
   function sendGif(item) {
     if (!root.chat || !item || !item.gif || (!item.queryId && !(item.gif.file && item.gif.file.id))) return
-    var args = root.target({ chatId: root.chat.id })
+    var args = {}
     if (item.queryId) {
       args.queryId = item.queryId
       args.resultId = item.resultId
@@ -960,13 +962,8 @@ FocusScope {
       args.height = item.gif.height || 0
       args.duration = item.gif.duration || 0
     }
-    if (root.replyToId) args.replyToMessageId = root.replyToId
-    client.request("message.sendGif", args, function (answer) {
-      if (!answer.ok) root.flash("Could not send the GIF: " + (answer.error || "unknown error"))
-    })
+    root.sendExtra("message.sendGif", args, "the GIF")
     // As with stickers, the picker stays open for another one.
-    root.replyToId = 0
-    root.stickToBottom = true
   }
 
   // ---------------------------------------------------------------- translation
@@ -1506,11 +1503,17 @@ FocusScope {
     root.sendPending = false
   }
 
+  function sendContext() {
+    return { revision: root.compositionRevision, chatId: root.chat.id,
+             topicId: root.topicId, thread: root.threadOpen, account: app.activeAccount,
+             editingId: root.editingId, scheduled: root.scheduledOpen, replyToId: root.replyToId }
+  }
+
   function beginSend() {
     root.sendPending = true
-    return { serial: ++root.sendSerial, revision: root.compositionRevision,
-             chatId: root.chat.id, topicId: root.topicId, thread: root.threadOpen,
-             account: app.activeAccount, editingId: root.editingId, scheduled: root.scheduledOpen }
+    var snapshot = root.sendContext()
+    snapshot.serial = ++root.sendSerial
+    return snapshot
   }
 
   function completeSend(snapshot, answer, later, replyOnly) {
@@ -1555,7 +1558,7 @@ FocusScope {
   // other person is online.
   function send(options) {
     var text = composer.text.replace(/\s+$/, "")
-    if (!root.chat || root.sendPending) return
+    if (!root.chat || root.sendPending || videoNote.visible) return
     if (root.editingId) {
       if (!root.editingCaption && !text.trim()) return
       // The service checks the length once the formatting markers are read.
@@ -1852,17 +1855,39 @@ FocusScope {
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)
 
-        Text {
+        RowLayout {
           width: parent.width
-          elide: Text.ElideRight
-          text: root.scheduledOpen ? "Scheduled messages" : (root.topicId ? app.openTopic.name : (root.chat ? Model.chatTitle(root.chat, app.meId) : ""))
-          textFormat: Text.PlainText
-          color: app.foreground
-          font.family: app.fontFamily
-          font.pixelSize: Style.font.title
-          font.bold: true
+          spacing: Style.space(8)
+          Text {
+            objectName: "chat-title"
+            Layout.preferredWidth: implicitWidth
+            Layout.minimumWidth: 0
+            Layout.maximumWidth: implicitWidth
+            elide: Text.ElideRight
+            text: root.scheduledOpen ? "Scheduled messages" : (root.topicId ? app.openTopic.name : (root.chat ? Model.chatTitle(root.chat, app.meId) : ""))
+            textFormat: Text.PlainText
+            color: app.foreground
+            font.family: app.fontFamily
+            font.pixelSize: Style.font.title
+            font.bold: true
+          }
+          Text {
+            objectName: "chat-online-status"
+            visible: !root.scheduledOpen && !root.topicId && root.chat && ["private", "secret"].indexOf(root.chat.kind) >= 0 && peerSubtitle.peerStatus === "online"
+            text: "online"
+            color: app.accentText
+            font.family: app.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+          }
+          Item { Layout.fillWidth: true }
         }
         Text {
+          id: peerSubtitle
+          objectName: "chat-peer-status"
+          visible: text !== "" && (text !== "online" || root.scheduledOpen || root.topicId)
+          readonly property string peerStatus: root.chat && root.chat.userId !== app.meId && !root.chat.bot
+              ? Model.statusText(app.userStatuses[root.chat.userId] || root.chat.status, root.nowMs) : ""
           readonly property string activity: !root.chat || root.scheduledOpen ? ""
               : Model.actionText(Model.activeActions(app.chatActions, root.chat.id, app.clockMs), root.chat.kind === "private" || root.chat.kind === "secret")
           width: parent.width
@@ -1872,13 +1897,13 @@ FocusScope {
                   : (root.topicId ? (root.threadOpen ? (app.openTopic.subtitle || Model.chatTitle(root.chat, app.meId))
                                                      : "Topic in " + Model.chatTitle(root.chat, app.meId))
                      : (root.chat.kind === "private"
-                        ? (root.chat.userId === app.meId ? "" : (root.chat.bot ? "bot" : Model.statusText(app.userStatuses[root.chat.userId] || root.chat.status, root.nowMs)))
-                        : (root.chat.kind === "secret" ? "Secret chat: " + Model.secretStateText(root.chat)
+                        ? (root.chat.userId === app.meId ? "" : (root.chat.bot ? "bot" : peerStatus))
+                        : (root.chat.kind === "secret" ? "Secret chat: " + Model.secretStateText(root.chat) + (peerStatus ? " · " + peerStatus : "")
                            : (root.forum ? "Topics" : Model.memberCountText(root.chat.memberCount, root.chat.kind === "channel")))))))
           textFormat: Text.PlainText
-          color: activity ? app.accentText : app.muted
+          color: activity || peerStatus === "online" ? app.accentText : app.muted
           font.family: app.fontFamily
-          font.pixelSize: Style.font.caption
+          font.pixelSize: Style.font.bodySmall
         }
       }
 
@@ -2359,6 +2384,7 @@ FocusScope {
     // ------------------------------------------------ stickers
     StickerPicker {
       id: stickerPicker
+      objectName: "chat-sticker-picker"
       Layout.fillWidth: true
       Layout.preferredHeight: root.stickersOpen ? Math.min(Style.space(320), root.height * 0.55) : 0
       visible: root.stickersOpen
@@ -2367,13 +2393,10 @@ FocusScope {
       onGifPicked: function (item) { root.sendGif(item) }
       onNotice: function (text) { root.flash(text) }
       onPicked: function (sticker) {
-        if (!root.chat) return
-        app.sendSticker(root.chat.id, sticker, root.replyToId, function (answer) {
-          if (!answer.ok) root.flash("Could not send: " + (answer.error || "unknown error"))
-        })
+        if (!sticker || !sticker.file || !sticker.file.id) return
+        root.sendExtra("message.sendSticker", { fileId: sticker.file.id, width: sticker.width || 0,
+                       height: sticker.height || 0, emoji: sticker.emoji || "" }, "the sticker")
         // The picker stays open for another sticker; Esc closes it and goes back to the message box.
-        root.replyToId = 0
-        root.stickToBottom = true
       }
       onClosed: {
         root.stickersOpen = false
@@ -2795,6 +2818,15 @@ FocusScope {
       }
     }
 
+    RecordedSendBar {
+      Layout.fillWidth: true
+      visible: !!app.recordedSend
+      app: root.app
+      client: root.client
+      record: app.recordedSend
+      onNotice: function (text) { root.flash(text) }
+    }
+
     // ------------------------------------------------ composer
     Rectangle {
       Layout.fillWidth: true
@@ -3155,18 +3187,36 @@ FocusScope {
   }
 
   // ------------------------------------------------ video messages
+  function openVideo() {
+    if (!root.chat || !root.canWrite || root.sendPending || root.recordingVoice || videoNote.visible || app.recordedSend) return
+    var context = root.sendContext()
+    context.serial = root.sendSerial
+    videoNote.open(root.chat.id, context)
+  }
+
   VideoNoteRecorder {
     id: videoNote
+    objectName: "chat-video-recorder"
     anchors.fill: parent
     app: root.app
-    onRecorded: function (chatId, path) {
-      var args = root.target({ chatId: chatId, path: path })
-      if (root.replyToId) args.replyToMessageId = root.replyToId
-      root.replyToId = 0
-      root.stickToBottom = true
-      root.flash("Preparing the video message…")
+    onRecorded: function (chatId, path, context) {
+      if (!context || context.chatId !== chatId || context.account !== app.activeAccount) {
+        if (path) client.request("videonote.discard", { path: path })
+        return
+      }
+      var args = { chatId: context.chatId, path: path }
+      if (context.topicId) args[context.thread ? "threadId" : "topicId"] = context.topicId
+      if (context.replyToId) args.replyToMessageId = context.replyToId
+      // A recording owns its original destination, not a new draft under the overlay.
+      var snapshot = context.serial === root.sendSerial && !root.sendPending ? root.copyOf(context) : null
+      if (snapshot) {
+        snapshot.serial = ++root.sendSerial
+        snapshot.failurePrefix = "Could not send the video message: "
+        root.sendPending = true
+        root.flash("Preparing the video message…")
+      }
       client.request("videonote.send", args, function (answer) {
-        if (!answer.ok) root.flash("Could not send the video message: " + (answer.error || "unknown error"))
+        if (snapshot) root.completeSend(snapshot, answer, 0, true)
       })
       root.focusComposer()
     }
@@ -3215,10 +3265,12 @@ FocusScope {
 
   ContextMenu {
     id: messageMenu
+    objectName: "chat-context-menu"
     anchors.fill: parent
     app: root.app
     items: Model.messageMenu(root.menuMessage, root.menuProperties,
                              !!root.menuMessage && root.translations[root.captionHolder(root.menuMessage).id] !== undefined, root.chat)
+           .map(function (item) { return item.id === "copy" && root.menuSelectedText ? { id: "copy", label: "Copy selected text" } : item })
            .concat(root.menuReactions.length ? [{ id: "moreReactions", label: "More reactions…" }] : [])
     reactions: root.menuReactions
     chosen: root.menuMessage ? (root.menuMessage.reactions || []).filter(function (r) { return r.chosen }).map(function (r) { return r.emoji }) : []

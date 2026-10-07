@@ -42,13 +42,6 @@ Item {
   readonly property color onAccent: quick.ink(Model.inkOnFill(quick.accent, [quick.text, quick.background], 4.5))
   readonly property string linkHex: Model.hexOf(quick.accentText)
 
-  // A message here shows six lines at most; the window has the rest.
-  FontMetrics {
-    id: bodyMetrics
-    font.family: quick.fontFamily
-    font.pixelSize: Style.font.bodySmall
-  }
-
   signal dismissRequested()
   signal openInWindowRequested(real chatId)
   signal tabRequested(int direction)
@@ -145,6 +138,18 @@ Item {
 
   onQueryChanged: quick.cursor = 0
   onShownChatIdChanged: historyDelay.restart()
+
+  Timer {
+    interval: 30000
+    repeat: true
+    running: quick.opened
+    onTriggered: quick.nowMs = Date.now()
+  }
+
+  function peerStatus(chat) {
+    if (!quick.ready || !chat || ["private", "secret"].indexOf(chat.kind) < 0 || chat.userId === quick.service.meId) return ""
+    return chat.bot ? "bot" : Model.statusText(chat.status, quick.nowMs)
+  }
 
   // The clock that moves a recording's time and a message's progress along.
   Timer {
@@ -391,7 +396,7 @@ Item {
   // ---------------------------------------------------------------- voice and round video messages
 
   function startRecording(kind) {
-    if (!quick.replyChatId || !quick.ready || quick.recording.state !== "idle") return
+    if (!quick.replyChatId || !quick.ready || quick.recording.state !== "idle" || quick.service.recordedSend) return
     quick.stickersOpen = false
     quick.status = ""
     quick.service.request(kind === "video" ? "videonote.record" : "voice.start", { chatId: quick.replyChatId }, function (answer) {
@@ -1072,6 +1077,17 @@ Item {
                 font.pixelSize: Style.font.bodySmall
                 font.bold: chatRow.modelData.unread > 0 && !chatRow.modelData.muted
               }
+              Text {
+                objectName: "quick-peer-status-" + chatRow.modelData.id
+                text: quick.peerStatus(chatRow.modelData)
+                visible: text !== ""
+                Layout.maximumWidth: chatRow.width * 0.5
+                elide: Text.ElideRight
+                textFormat: Text.PlainText
+                color: chatRow.modelData.status && chatRow.modelData.status.state === "online" ? quick.accentText : quick.muted
+                font.family: quick.fontFamily
+                font.pixelSize: Style.font.caption
+              }
               Rectangle {
                 visible: chatRow.modelData.unread > 0
                 implicitHeight: Style.space(16)
@@ -1167,15 +1183,47 @@ Item {
             onClicked: quick.back()
           }
         }
-        Text {
+        ColumnLayout {
           Layout.fillWidth: true
-          text: quick.shownChat ? quick.shownChat.title : ""
-          textFormat: Text.PlainText
-          elide: Text.ElideRight
-          color: quick.text
-          font.family: quick.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
+          spacing: Style.space(2)
+          RowLayout {
+            Layout.fillWidth: true
+            spacing: Style.space(8)
+            Text {
+              objectName: "quick-chat-title"
+              Layout.preferredWidth: implicitWidth
+              Layout.minimumWidth: 0
+              Layout.maximumWidth: implicitWidth
+              text: quick.shownChat ? quick.shownChat.title : ""
+              textFormat: Text.PlainText
+              elide: Text.ElideRight
+              color: quick.text
+              font.family: quick.fontFamily
+              font.pixelSize: Style.font.body
+              font.bold: true
+            }
+            Text {
+              objectName: "quick-chat-online-status"
+              visible: quick.peerStatus(quick.shownChat) === "online"
+              text: "online"
+              color: quick.accentText
+              font.family: quick.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: true
+            }
+            Item { Layout.fillWidth: true }
+          }
+          Text {
+            objectName: "quick-chat-peer-status"
+            Layout.fillWidth: true
+            text: quick.peerStatus(quick.shownChat)
+            visible: text !== "" && text !== "online"
+            textFormat: Text.PlainText
+            elide: Text.ElideRight
+            color: quick.muted
+            font.family: quick.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
         }
         // md-bell-sleep U+F00A0: the chat sends silently
         Icon {
@@ -1208,6 +1256,7 @@ Item {
 
         ListView {
           id: messageList
+          objectName: "quick-message-list"
 
           WheelScroll {
             view: messageList
@@ -1249,7 +1298,9 @@ Item {
               quick.fetchPicture(line.kind, line.media)
             }
             readonly property var message: line.found || line.kept || Model.NO_MESSAGE
-            readonly property color ground: quick.ink(Model.mixColors(quick.background, quick.text, line.message.outgoing ? 0.12 : 0.065))
+            readonly property color ground: quick.ink(Model.mixColors(quick.background, line.message.outgoing ? quick.accent : quick.text, line.message.outgoing ? 0.24 : 0.12))
+            readonly property color bodyColor: quick.ink(Model.readableColor(quick.text, line.ground, quick.text, 4.5))
+            readonly property color nameColor: quick.ink(Model.readableColor(quick.accentText, line.ground, line.bodyColor, 4.5))
             readonly property color metadataColor: quick.ink(Model.readableColor(quick.muted, line.ground, quick.text, 4.5))
             readonly property var content: line.message.content || ({})
             readonly property string kind: line.content.kind || ""
@@ -1270,7 +1321,9 @@ Item {
               width: line.width
               height: line.height
               radius: Style.cornerRadius
-              color: Qt.rgba(quick.text.r, quick.text.g, quick.text.b, line.message.outgoing ? 0.12 : 0.065)
+              color: line.ground
+              border.width: 1
+              border.color: Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.18)
             }
 
             RowLayout {
@@ -1279,14 +1332,21 @@ Item {
               spacing: Style.space(8)
               Text {
               Layout.fillWidth: true
-              text: (line.message.outgoing ? "You" : (line.message.senderName || (quick.shownChat ? quick.shownChat.title : "")))
-                    + "  ·  " + Model.clock(line.message.date)
+              objectName: "quick-message-sender-" + line.mid
+              text: line.message.outgoing ? "You" : (line.message.senderName || (quick.shownChat ? quick.shownChat.title : ""))
               textFormat: Text.PlainText
               elide: Text.ElideRight
-              color: line.metadataColor
+              color: line.message.outgoing ? line.metadataColor : line.nameColor
               font.family: quick.fontFamily
-              font.pixelSize: Style.font.caption
+              font.pixelSize: Style.font.bodySmall
               font.bold: !line.message.outgoing
+              }
+              Text {
+                objectName: "quick-message-time-" + line.mid
+                text: Model.clock(line.message.date)
+                color: line.metadataColor
+                font.family: quick.fontFamily
+                font.pixelSize: Style.font.caption
               }
               Text {
                 objectName: "quick-receipt-" + line.mid
@@ -1307,25 +1367,24 @@ Item {
               visible: bodyText.text !== "" && line.kind !== "rich"
               x: Style.space(8)
               width: parent.width - Style.space(16)
-              height: visible ? Math.min(bodyText.implicitHeight, Math.ceil(bodyMetrics.lineSpacing * 6)) : 0
+              height: visible ? bodyText.implicitHeight : 0
               clip: true
 
-              Text {
+              MessageText {
                 id: bodyText
+                objectName: "quick-message-text-" + line.mid
                 readonly property bool rich: (line.drawn || line.kind === "text") && (line.content.text || "") !== ""
                 width: parent.width
-                text: bodyText.rich ? Model.richText(line.content.text, line.content.entities, line.revealed, "transparent", null, quick.linkHex)
+                text: bodyText.rich ? Model.richText(line.content.text, line.content.entities, line.revealed, "transparent", null, Model.hexOf(line.nameColor))
                                     : (line.drawn ? "" : Model.previewOf(line.message))
                 textFormat: bodyText.rich ? Text.RichText : Text.PlainText
                 wrapMode: Text.Wrap
-                lineHeight: 1.2
-                lineHeightMode: Text.ProportionalHeight
-                color: quick.text
+                surfaceColor: line.ground
+                color: line.bodyColor
                 font.family: quick.fontFamily
                 font.pixelSize: Style.font.bodySmall
                 onLinkActivated: function (link) { quick.openLink(link, line) }
 
-                HoverHandler { cursorShape: bodyText.hoveredLink ? Qt.PointingHandCursor : Qt.ArrowCursor }
               }
             }
 
@@ -1337,9 +1396,10 @@ Item {
               message: line.message
               client: quick
               compact: true
-              foreground: quick.text
+              surfaceColor: line.ground
+              foreground: line.bodyColor
               muted: line.metadataColor
-              accent: quick.accentText
+              accent: line.nameColor
               fontFamily: quick.fontFamily
               revealed: line.revealed
               onLinkActivated: function (link) { quick.openLink(link, line) }
@@ -1811,6 +1871,15 @@ Item {
             }
           }
         }
+      }
+
+      RecordedSendBar {
+        Layout.fillWidth: true
+        visible: !!quick.service.recordedSend
+        app: quick
+        client: quick.service
+        record: quick.service.recordedSend
+        onNotice: function (text) { quick.status = text }
       }
 
       // ---------------------------------------------- stickers to send

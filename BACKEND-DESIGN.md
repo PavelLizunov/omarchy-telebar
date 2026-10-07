@@ -14,8 +14,27 @@ Read the workspace and local `AGENTS.md` before changes. Do not run plugin
 launchers from this checkout as tests: they can access the shared live profile.
 
 The installed plugin is a separate deployment target. Neither this directory
-nor its distinct name isolates account databases. There has been no installation,
-service restart or database migration for this design. Publishing a source checkpoint does not deploy it.
+nor its distinct name isolates account databases. Checked Python/QML corrections
+have been installed locally; the latest UI-only activation retained the backend.
+No Rust backend or database migration has been applied. Publishing source alone
+does not deploy it. See [current progress and limitations](PROGRESS.md).
+
+## Development lifecycle policy
+
+The owner explicitly authorizes applying checked Telebar development changes and
+restarting or reloading the affected Telebar UI, service and owned helpers without
+renewed consent. This authority continues during development even when the owner
+is using Telebar; transient drafts, edit buffers, attachments and active in-app
+work are not a reason to ask again. Use supported bounded lifecycle controls,
+identify the exact owner, preserve persistent account data and verify recovery.
+Prefer the smallest affected scope: keep an unchanged backend alive so its
+in-memory retained recordings survive. A UI-only update does not require a
+backend restart or replacing an unchanged keepLoaded Service.
+
+This policy does not authorize unrelated application work loss, desktop/compositor
+termination, reboot, profile/database deletion, account migration or publication.
+Explicit later read-only/no-process/no-deploy restrictions override it. Record
+source-checked, installed, loaded and user-tested states separately.
 
 ## Decision: extend existing contracts
 
@@ -136,7 +155,38 @@ thread and unchanged composition revision. Chat/topic/account lifecycle changes
 invalidate completion; edits, including edit-and-revert, prevent stale clearing.
 No automatic retry occurs. The existing three-minute client callback expiry remains
 the timeout policy; expiry does not prove Telegram cancelled an accepted send.
-Message editing and recording-send retry semantics are outside this P1 batch.
+Message editing and retained-recording recovery were added in subsequent source batches;
+they are not implied by the original P1 evidence.
+
+Subsequent local candidates route sticker and saved/inline GIF sending through the
+same reply-only completion contract as auxiliary sends. Rejection retains the
+reply; success clears only an unchanged original composition. The picker stays
+open and new typing, attachments and editing state remain untouched.
+
+Recorded-send recovery uses one in-memory slot per AccountSession, an opaque token and the
+original destination/options. Preparation failure retains the raw file; explicit retry reuses
+it. A confirmed TDLib request rejection retains prepared content for an explicit resend.
+Accepted TDLib messages leave this slot; later messageSendFailed/resendMessages belongs to
+the existing message lifecycle, not this request-rejection path. Transport failure, timeout,
+server errors and generation change mark delivery unknown and prohibit retry. Discard removes
+only rejected/unprepared owned files; unknown dismissal preserves possible upload media.
+Snapshots and account-tagged events expose no filesystem path. The window and quick view use
+one native recovery bar. Slots do not survive a service restart. No automatic retry is added.
+
+Main-window video recording snapshots account/chat/topic/thread/reply when opened.
+A delayed recording result targets that destination, not the replacement draft.
+Its completion cannot retire a newer composition send; cancellation while stopping
+revokes sending even when the account later returns. Other composer sends are
+blocked while the camera overlay owns recording. Inert tests keep the actual
+CaptureSession Loader inactive. Explicit retained-file retry is implemented and
+inert-tested; physical recovery and live camera/microphone acceptance remain unverified.
+
+Photo copying offers actual PNG bytes for browser compatibility. Bounded JPEG/WebP
+conversion uses the existing ffmpeg dependency with explicit pipe-only input,
+10-second wall/CPU deadlines, 1 GiB address-space and 16-million-pixel caps, and a
+10 MiB output ceiling. The existing message permission, original-media membership,
+file identity, safe read and job admission checks remain before conversion.
+PNG input is passed through unchanged. No MIME relabeling or automatic retry occurs.
 
 Bounded executable acceptance:
 

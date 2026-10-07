@@ -16,6 +16,17 @@ profile/connection/shortcuts, initial setup, phone and password login, new conve
 forward picker, poll composer, user info, quick chat list/reply, media controls, photo,
 story error, emoji, sticker empty state, context menu and reacting people.
 
+`tst_message_text.qml` exercises native pointer fragment selection, Ctrl+C and
+selected-text context-menu copying in the actual ChatView, rich-post and QuickView
+consumers. It verifies full compact message height, wheel scrolling and last-line
+reachability. Actual Service/OmagramClient events cover peer status updates,
+account filtering and queued-chat races with inert Socket/Hyprland adapters.
+These checks do not establish physical compositor input or live-account privacy.
+`tst_contrast.qml` measures actual message-surface body, sender, time and selected
+text colors across representative dark/light/installed palettes and radii 0/8.
+It checks online placement beside the name, last-seen transitions and narrow
+layout. This does not certify every theme, accessibility reader or physical UI.
+
 The composed chat fixture is not the `Main.qml` window: host/compositor placement
 requires separate live checks. Sidebar.qml uses the same SidebarHandle as Main.qml;
 its geometry and interactions are measured offscreen. Bar.qml attempts the actual bar
@@ -73,7 +84,12 @@ recording. The consumer test resizes the actual ChatView and checks draft retent
 Send, overflow menu activation/dismissal and information layout with inert requests.
 Sidebar tests exercise click, drag from the icon and rail, drag-release without an
 accidental toggle, limits, keyboard resizing, hover pixels and radius 0 → 8 → 0.
-Video/camera capture and network actions are not executed in fixtures. A loading/empty
+Video/camera capture and network actions are not executed in fixtures.
+`tst_send_contract.qml` exercises delayed video signals with the actual recorder's
+CaptureSession Loader held inactive. It checks original destination/reply ownership,
+cancellation while stopping, stale completion and overlay send admission without
+opening devices. `SendContractConsumer.qml` supports `pickerKind` (`sticker`,
+`saved-gif`, `inline-gif`) and `video: true` for inert pending/rejected renders. A loading/empty
 fixture is evidence of that state only. The actual bar render is blocked by the installed
 adapter's missing `Quickshell.Hyprland` plugin; the QuickView content is reviewed separately.
 BarMenuConsumer.qml now loads the same BarMenu.qml used by BarWidget.qml, so content,

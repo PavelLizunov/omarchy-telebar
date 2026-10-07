@@ -45,6 +45,25 @@ TestCase {
     compare(input.text, "")
     compare(dismissSpy.count, 0)
   }
+  function test_retained_recording_pointer_retry_and_unknown_guard() {
+    var view = createTemporaryObject(scene, tests, { state: "retained-rejected" })
+    tryCompare(view, "ready", true)
+    var model = view.serviceModel
+    var bar = findChild(view, "recorded-send-bar")
+    verify(bar.visible)
+    model.holdSend = true
+    mouseClick(findChild(bar, "recorded-send-retry"))
+    compare(model.lastRequest.cmd, "recording.retry")
+    compare(model.lastRequest.args.account, "default")
+    verify(bar.busy)
+    model.completeSend()
+    verify(!bar.busy)
+    verify(!findChild(bar, "recorded-send-retry").enabled)
+    model.recordedSend = { token: "unknown-token", state: "unknown", chatId: 101, account: "default", kind: "video" }
+    verify(!findChild(bar, "recorded-send-retry").enabled)
+    mouseClick(findChild(bar, "recorded-send-discard"))
+    compare(model.lastRequest.cmd, "recording.discard")
+  }
   function test_receipts_update_from_chat_read_cursor() {
     var view = createTemporaryObject(scene, tests)
     tryCompare(view, "ready", true)

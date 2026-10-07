@@ -21,6 +21,7 @@ TestCase {
     model.pendingMarkdown = null
     model.activeAccount = "default"
     model.openTopic = null
+    model.recordedSend = null
   }
 
   function prepare(files) {
@@ -471,6 +472,313 @@ TestCase {
     view.replyToId = 99
     callback({ ok: true, result: {} })
     compare(view.replyToId, 99)
+  }
+  function pickerSend(view, kind) {
+    if (kind === "sticker") findChild(view, "chat-sticker-picker").picked({ file: { id: 456 }, width: 128, height: 128, emoji: "" })
+    else if (kind === "saved-gif") view.sendGif({ gif: { file: { id: 789 }, width: 320, height: 240, duration: 2 } })
+    else view.sendGif({ gif: {}, queryId: "12345", resultId: "synthetic-result" })
+  }
+  function test_picker_rejection_retains_composition_data() {
+    var result = []
+    for (var kind of ["sticker", "saved-gif", "inline-gif"]) for (var immediate of [true, false])
+      result.push({ tag: kind + (immediate ? "-immediate" : "-delayed"), kind: kind, immediate: immediate })
+    return result
+  }
+  function test_picker_rejection_retains_composition(data) {
+    var view = prepare(true)
+    view.stickersOpen = true
+    model.sendError = "Synthetic rejection"
+    model.synchronousSend = data.immediate
+    pickerSend(view, data.kind)
+    tryVerify(function () { return view.notice.indexOf("Synthetic rejection") >= 0 })
+    compare(view.replyToId, 77)
+    compare(view.attachments.length, 1)
+    compare(view.attachAsMedia, false)
+    compare(findChild(view, "composer-text").text, "Synthetic unsent composition")
+    verify(view.stickersOpen)
+    verify(!view.sendPending)
+    compare(model.lastRequest.args.replyToMessageId, 77)
+  }
+  function test_picker_success_owns_reply_only_data() {
+    var result = []
+    for (var kind of ["sticker", "saved-gif", "inline-gif"])
+      for (var change of ["current", "typing", "reply", "chat", "account", "topic", "thread", "editing"])
+        result.push({ tag: kind + "-" + change, kind: kind, change: change })
+    return result
+  }
+  function test_picker_success_owns_reply_only(data) {
+    var view = data.change === "editing" ? prepareEdit() : prepare(true)
+    model.holdSend = true
+    var text = findChild(view, "composer-text").text
+    var reply = view.replyToId
+    pickerSend(view, data.kind)
+    var callback = model.pendingSend
+    compare(typeof callback, "function")
+    compare(view.replyToId, reply)
+    verify(view.sendPending)
+    pickerSend(view, data.kind)
+    compare(model.pendingSend, callback)
+    if (data.change === "typing") view.setComposerText("New typing")
+    else if (data.change === "reply") view.replyToId = 99
+    else if (data.change === "chat") { view.chat = model.chats[2]; view.replyToId = 99 }
+    else if (data.change === "account") { view.leaveAccount(); model.activeAccount = "work"; view.replyToId = 99 }
+    else if (data.change === "topic") { view.chat = model.chats[1]; model.openTopic = model.topicData[0]; view.replyToId = 99 }
+    else if (data.change === "thread") { model.openTopic = { id: 55, chatId: view.chat.id, thread: true, name: "Synthetic thread" }; view.replyToId = 99 }
+    model.completeSend()
+    compare(view.replyToId, data.change === "current" || data.change === "editing" ? 0 : data.change === "typing" ? reply : 99)
+    if (data.change === "current" || data.change === "editing") compare(findChild(view, "composer-text").text, text)
+    if (data.change === "current") { compare(view.attachments.length, 1); compare(view.attachAsMedia, false) }
+    if (data.change === "editing") compare(view.editingId, 88)
+    verify(!view.sendPending)
+    view.replyToId = 101
+    callback({ ok: true, result: {} })
+    compare(view.replyToId, 101)
+  }
+  function test_picker_stale_rejection_ignores_notice_data() {
+    return [{ tag: "sticker", kind: "sticker" }, { tag: "saved-gif", kind: "saved-gif" }, { tag: "inline-gif", kind: "inline-gif" }]
+  }
+  function test_picker_stale_rejection_ignores_notice(data) {
+    var view = prepare(false)
+    model.holdSend = true
+    pickerSend(view, data.kind)
+    var callback = model.pendingSend
+    view.chat = model.chats[2]
+    view.notice = "Current chat notice"
+    callback({ ok: false, error: "Old rejection", result: {} })
+    compare(view.notice, "Current chat notice")
+    view.replyToId = 99
+    pickerSend(view, data.kind)
+    callback({ ok: false, error: "Duplicate rejection", result: {} })
+    verify(view.sendPending)
+    compare(view.notice, "Current chat notice")
+  }
+  function test_picker_topic_and_thread_target_data() {
+    var result = []
+    for (var kind of ["sticker", "saved-gif", "inline-gif"]) for (var thread of [false, true])
+      result.push({ tag: kind + (thread ? "-thread" : "-topic"), kind: kind, thread: thread })
+    return result
+  }
+  function test_picker_topic_and_thread_target(data) {
+    var view = prepare(false)
+    view.chat = model.chats[1]
+    model.openTopic = { id: 55, chatId: view.chat.id, thread: data.thread, name: "Synthetic topic" }
+    view.replyToId = 77
+    model.holdSend = true
+    pickerSend(view, data.kind)
+    compare(model.lastRequest.args[data.thread ? "threadId" : "topicId"], 55)
+    compare(model.lastRequest.args[data.thread ? "topicId" : "threadId"], undefined)
+    compare(model.lastRequest.args.chatId, view.chat.id)
+  }
+  function inertVideo(view) {
+    var recorder = findChild(view, "chat-video-recorder")
+    verify(recorder !== null)
+    // Keep the real recorder's CaptureSession Loader inactive even while testing open/stop state.
+    recorder.visible = false
+    return recorder
+  }
+  function openInertVideo(view, recorder) {
+    var context = { chatId: view.chat.id, topicId: view.topicId, thread: view.threadOpen,
+                    account: model.activeAccount, replyToId: view.replyToId }
+    if (typeof view.openVideo === "function") view.openVideo()
+    else recorder.open(view.chat.id)
+    return recorder.sendContext || context
+  }
+  function emitVideo(recorder, context, path) {
+    if (recorder.sendContext === undefined) recorder.recorded(context.chatId, path)
+    else recorder.recorded(context.chatId, path, context)
+  }
+  function test_video_original_context_and_reply_data() {
+    var result = []
+    for (var change of ["current", "typing", "reply", "chat", "topic", "thread"])
+      for (var failure of [false, true]) result.push({ tag: change + (failure ? "-rejected" : "-accepted"), change: change, failure: failure })
+    return result
+  }
+  function test_video_original_context_and_reply(data) {
+    var view = prepare(false)
+    view.chat = model.chats[1]
+    model.openTopic = model.topicData[1]
+    view.replyToId = 77
+    view.setComposerText("Original caption draft")
+    var recorder = inertVideo(view)
+    var context = openInertVideo(view, recorder)
+    compare(recorder.phase, "preview")
+    compare(recorder.mediaRecorder, null)
+    compare(context.topicId, 2)
+    compare(context.replyToId, 77)
+    compare(context.account, "default")
+    if (data.change === "typing") view.setComposerText("New typing")
+    else if (data.change === "reply") view.replyToId = 99
+    else if (data.change === "chat") { view.chat = model.chats[2]; view.replyToId = 99 }
+    else if (data.change === "topic") { model.openTopic = model.topicData[2]; view.replyToId = 99 }
+    else if (data.change === "thread") { model.openTopic = { id: 2, chatId: view.chat.id, thread: true, name: "Synthetic thread" }; view.replyToId = 99 }
+    model.holdSend = true
+    model.sendError = data.failure ? "Synthetic rejection" : ""
+    recorder.phase = "closed"
+    emitVideo(recorder, context, "/synthetic/recordings/video.mp4")
+    compare(model.lastRequest.cmd, "videonote.send")
+    compare(model.lastRequest.args.chatId, model.chats[1].id)
+    compare(model.lastRequest.args.topicId, 2)
+    compare(model.lastRequest.args.threadId, undefined)
+    compare(model.lastRequest.args.replyToMessageId, 77)
+    var callback = model.pendingSend
+    model.completeSend()
+    compare(view.replyToId, data.change === "current" ? (data.failure ? 77 : 0) : data.change === "typing" ? 77 : 99)
+    if (data.change === "current") compare(findChild(view, "composer-text").text, "Original caption draft")
+    if (data.change === "typing") compare(findChild(view, "composer-text").text, "New typing")
+    if (data.failure && (data.change === "current" || data.change === "typing" || data.change === "reply"))
+      compare(view.notice, "Could not send the video message: Synthetic rejection")
+    verify(!view.sendPending)
+    view.replyToId = 101
+    callback({ ok: true, result: {} })
+    compare(view.replyToId, 101)
+  }
+  function test_video_old_completion_cannot_retire_new_send_data() {
+    return [{ tag: "accepted", failure: false }, { tag: "rejected", failure: true }]
+  }
+  function test_video_old_completion_cannot_retire_new_send(data) {
+    var view = prepare(false)
+    var recorder = inertVideo(view)
+    var context = openInertVideo(view, recorder)
+    recorder.phase = "closed"
+    view.chat = model.chats[2]
+    view.replyToId = 99
+    model.holdSend = true
+    view.setComposerText("New chat draft")
+    view.send()
+    var current = model.pendingSend
+    var serial = view.sendSerial
+    emitVideo(recorder, context, "/synthetic/recordings/old.mp4")
+    var old = model.pendingSend
+    old({ ok: !data.failure, error: "Old rejection", result: {} })
+    compare(view.sendSerial, serial)
+    verify(view.sendPending)
+    compare(view.replyToId, 99)
+    compare(findChild(view, "composer-text").text, "New chat draft")
+    current({ ok: true, result: {} })
+    verify(!view.sendPending)
+    compare(view.replyToId, 0)
+    compare(findChild(view, "composer-text").text, "")
+  }
+  function test_video_account_change_discards_instead_of_rerouting() {
+    var view = prepare(false)
+    var recorder = inertVideo(view)
+    var context = openInertVideo(view, recorder)
+    recorder.phase = "closed"
+    model.activeAccount = "work"
+    emitVideo(recorder, context, "/synthetic/recordings/old.mp4")
+    compare(model.lastRequest.cmd, "videonote.discard")
+    compare(model.pendingSend, null)
+    verify(!view.sendPending)
+  }
+  function test_video_cancel_while_stopping_revokes_send() {
+    var view = prepare(false)
+    var recorder = inertVideo(view)
+    openInertVideo(view, recorder)
+    recorder.phase = "stopping"
+    recorder.sendWhenStopped = true
+    view.leaveAccount()
+    compare(recorder.sendWhenStopped, false)
+    compare(recorder.mediaRecorder, null)
+    recorder.phase = "closed"
+  }
+  function test_video_visible_overlay_blocks_other_composer_sends() {
+    var view = prepare(true)
+    var recorder = findChild(view, "chat-video-recorder")
+    var capture = findChild(recorder, "video-capture-session")
+    verify(capture !== null)
+    capture.active = false
+    view.openVideo()
+    compare(recorder.phase, "preview")
+    verify(recorder.visible)
+    compare(recorder.mediaRecorder, null)
+    model.holdSend = true
+    view.send()
+    view.sendAttachments()
+    pickerSend(view, "sticker")
+    pickerSend(view, "saved-gif")
+    view.stopVoice(true)
+    compare(model.pendingSend, null)
+    compare(view.replyToId, 77)
+    compare(view.attachments.length, 1)
+    recorder.finish(false)
+  }
+  function test_video_no_second_open_during_pending_send() {
+    var view = prepare(false)
+    var recorder = inertVideo(view)
+    model.holdSend = true
+    view.send()
+    openInertVideo(view, recorder)
+    compare(recorder.phase, "closed")
+    compare(recorder.sendContext, null)
+  }
+  function test_retained_recording_explicit_retry_and_discard_data() {
+    return [{ tag: "preparation-retry", state: "prepareFailed", retry: true },
+            { tag: "rejected-retry", state: "rejected", retry: true },
+            { tag: "rejected-discard", state: "rejected", retry: false },
+            { tag: "unknown-dismiss", state: "unknown", retry: false }]
+  }
+  function test_retained_recording_explicit_retry_and_discard(data) {
+    var view = prepare(false)
+    model.recordedSend = { token: "synthetic-token", state: data.state, kind: "voice", chatId: view.chat.id, account: "default" }
+    var bar = findChild(view, "recorded-send-bar")
+    verify(bar.visible)
+    model.holdSend = true
+    mouseClick(findChild(bar, data.retry ? "recorded-send-retry" : "recorded-send-discard"))
+    compare(model.lastRequest.cmd, data.retry ? "recording.retry" : "recording.discard")
+    compare(model.lastRequest.args.token, "synthetic-token")
+    compare(model.lastRequest.args.account, "default")
+    verify(bar.busy)
+    var callback = model.pendingSend
+    bar.act(data.retry)
+    compare(model.pendingSend, callback)
+    model.sendError = "Synthetic retry rejected"
+    model.completeSend()
+    verify(!bar.busy)
+    compare(bar.error, "Synthetic retry rejected")
+    compare(view.replyToId, 77)
+    compare(findChild(view, "composer-text").text, "Synthetic unsent composition")
+  }
+  function test_retained_recording_keyboard_retry_and_discard() {
+    var view = prepare(false)
+    model.recordedSend = { token: "keyboard-token", state: "rejected", kind: "voice", chatId: view.chat.id, account: "default" }
+    var bar = findChild(view, "recorded-send-bar")
+    var retry = findChild(bar, "recorded-send-retry")
+    model.holdSend = true
+    retry.forceActiveFocus()
+    verify(retry.activeFocus)
+    keyClick(Qt.Key_Return)
+    compare(model.lastRequest.cmd, "recording.retry")
+    model.sendError = "Synthetic retry rejected"
+    model.completeSend()
+    var discard = findChild(bar, "recorded-send-discard")
+    discard.forceActiveFocus()
+    verify(discard.activeFocus)
+    keyClick(Qt.Key_Space)
+    compare(model.lastRequest.cmd, "recording.discard")
+    model.sendError = ""
+    model.completeSend()
+    verify(!retry.enabled)
+    verify(!discard.enabled)
+  }
+  function test_retained_recording_unknown_and_stale_callbacks_fail_closed() {
+    var view = prepare(false)
+    model.recordedSend = { token: "old-token", state: "unknown", kind: "video", chatId: view.chat.id, account: "default" }
+    var bar = findChild(view, "recorded-send-bar")
+    verify(!findChild(bar, "recorded-send-retry").enabled)
+    bar.act(true)
+    compare(model.pendingSend, null)
+    model.recordedSend = { token: "old-token", state: "rejected", kind: "video", chatId: view.chat.id, account: "default" }
+    model.holdSend = true
+    bar.act(true)
+    var old = model.pendingSend
+    model.recordedSend = { token: "new-token", state: "rejected", kind: "voice", chatId: view.chat.id, account: "work" }
+    bar.act(true)
+    verify(bar.busy)
+    old({ ok: false, error: "Old error" })
+    verify(bar.busy)
+    compare(bar.error, "")
+    model.completeSend()
+    verify(!bar.busy)
   }
   function test_save_request_binds_original_message() {
     var view = prepare(false)

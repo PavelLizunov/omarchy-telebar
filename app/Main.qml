@@ -39,6 +39,7 @@ Scope {
   // ---------------------------------------------------------------- state
 
   property var auth: ({ state: "connecting" })
+  property var recordedSend: null
   property var recording: ({ state: "idle" })   // a voice message being recorded, as the service reports it
 
   // Your shortcuts (only what differs from Keymap.js's defaults) and the global ones.
@@ -392,6 +393,7 @@ Scope {
     omagram.auth = result.auth || { state: "starting" }
     omagram.meId = result.meId || 0
     omagram.connection = result.connection || ""
+    omagram.recordedSend = result.recordedSend || null
     omagram.chats = result.allChats || result.chats || []
     omagram.folders = result.folders || []
     omagram.mainPosition = result.mainPosition || 0
@@ -574,13 +576,15 @@ Scope {
     } else if (name === "chatAction") {
       omagram.clockMs = Date.now()
       omagram.chatActions = Model.withAction(omagram.chatActions, e, omagram.clockMs)
-    } else if (name === "userStatus") {
+    } else if (name === "userStatus" || name === "user") {
       var statuses = {}
       for (var who in omagram.userStatuses) statuses[who] = omagram.userStatuses[who]
-      statuses[e.userId] = e.status
+      statuses[name === "user" ? e.user.id : e.userId] = name === "user" ? e.user.status : e.status
       omagram.userStatuses = statuses
     } else if (name === "settings") {
       omagram.applySettings(e)
+    } else if (name === "recordedSend") {
+      omagram.recordedSend = e.recordedSend || null
     } else if (name === "recording") {
       omagram.recording = e
     } else if (name === "messagesDeleted") {

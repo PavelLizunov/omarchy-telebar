@@ -32,6 +32,7 @@ QtObject {
   property real meId: 900
   property var openTopic: null
   property var recording: ({ state: "idle" })
+  property var recordedSend: null
   property string connection: "ready"
   property bool ready: true
   property bool connected: true
@@ -47,6 +48,13 @@ QtObject {
   property var pendingMarkdown: null
   property var readLog: []
   function sendText(chatId, text, callback) { request("message.send", { chatId: chatId, text: text }, callback) }
+  function sendSticker(chatId, sticker, replyToId, callback) {
+    var args = { chatId: chatId, fileId: sticker.file.id, width: sticker.width || 0,
+                 height: sticker.height || 0, emoji: sticker.emoji || "" }
+    if (replyToId) args.replyToMessageId = replyToId
+    if (openTopic && openTopic.chatId === chatId) args[openTopic.thread ? "threadId" : "topicId"] = openTopic.id
+    request("message.sendSticker", args, callback)
+  }
   function completeSend() {
     var callback = pendingSend
     pendingSend = null
@@ -116,7 +124,7 @@ QtObject {
     }
     if (cmd === "chat.read") readLog = readLog.concat([args])
     if (cmd === "message.send" || cmd === "message.sendFiles" || cmd === "message.edit" || cmd === "voice.stop" || cmd === "videonote.stop" || cmd === "message.sendSticker"
-        || cmd === "message.sendDice" || cmd === "message.sendPoll"
+        || cmd === "recording.retry" || cmd === "recording.discard" || cmd === "videonote.send" || cmd === "message.sendGif" || cmd === "message.sendDice" || cmd === "message.sendPoll"
         || cmd === "message.sendContact" || cmd === "message.sendLocation") {
       pendingSend = callback
       if (!holdSend) {

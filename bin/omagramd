@@ -22,6 +22,7 @@ import base64
 import fcntl
 import hashlib
 import json
+import math
 import os
 import pathlib
 import queue
@@ -538,6 +539,7 @@ class AccountSession:
         self.gif_bot_id = 0
         self.bridge_ready = False
         self.parameters_serial = 0
+        self.recorded_send = None
 
 
 class Daemon:
@@ -1165,6 +1167,9 @@ class Daemon:
             for (client, rid), timing in list(self.request_times.items()):
                 if timing[2] is sess:
                     self.respond_error(client, rid, "the account session was closed")
+            if sess.recorded_send is not None:
+                sess.recorded_send["state"] = "unknown"
+                self.note_recorded_send(sess)
             sess.state = model.State(td.media_roots_for(sess.id))
             sess.me_id = 0
             sess.phone = ""
@@ -1835,7 +1840,8 @@ class Daemon:
                   "settings": self.prefs, "globalStatus": self.global_status, "calls": list(active_sess.state.calls.values()),
                   "connection": active_sess.state.connection,
                   "accounts": self.accounts_summary(),
-                  "activeAccount": self.active_id, "accountRevision": self.account_revision}
+                  "activeAccount": self.active_id, "accountRevision": self.account_revision,
+                  "recordedSend": self.recorded_send_view(active_sess)}
         if client.window:
             answer["allChats"] = active_sess.state.all_chats()   # the window's tabs need every list
             answer["stories"] = active_sess.state.story_list()
@@ -1871,6 +1877,7 @@ class Daemon:
             "mainPosition": sess.state.main_position,
             "calls": list(sess.state.calls.values()),
             "connection": sess.state.connection,
+            "recordedSend": self.recorded_send_view(sess),
         }
         if client.window:
             answer["allChats"] = sess.state.all_chats()
@@ -2357,17 +2364,10 @@ class Daemon:
                     data = safe.read_file(path, CLIPBOARD_MAX)
                     if not data:
                         raise BadRequest("the image is empty or missing")
-                    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-                        mime = "image/png"
-                    elif data.startswith(b"\xff\xd8\xff"):
-                        mime = "image/jpeg"
-                    elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-                        mime = "image/webp"
-                    else:
-                        raise BadRequest("that file is not a supported image")
+                    data = media.clipboard_png(data)
                     # wl-copy owns the Wayland selection after its normal fork. Stdin is
-                    # bounded image bytes, never a path, shell command or user-supplied MIME.
-                    result = safe.run([str(safe.tool("wl-copy")), "--type", mime], input=data,
+                    # bounded PNG bytes, never a path, shell command or user-supplied MIME.
+                    result = safe.run([str(safe.tool("wl-copy")), "--type", "image/png"], input=data,
                                       timeout=HELPER_TIMEOUT, max_output=4096)
                     if not result.ok:
                         raise BadRequest("the image could not be copied to the clipboard")
@@ -3442,12 +3442,175 @@ class Daemon:
         self.send_options(picked)
         return picked
 
+    def clean_recordings(self):
+        protected = [path for sess in self.accounts.values() if sess.recorded_send is not None
+                     for path in (sess.recorded_send["path"], sess.recorded_send.get("source"))]
+        media.clean_stale(protected=protected)
+
+    def admit_recorded_send(self):
+        if self.session_for().recorded_send is not None:
+            raise BadRequest("a recorded message is still pending; resolve or discard it first")
+
+    def recorded_send_view(self, session=None):
+        session = session or self.session_for()
+        record = session.recorded_send
+        if record is None:
+            return None
+        return {"token": record["token"], "kind": record["kind"], "chatId": record["chatId"],
+                "state": record["state"], "account": session.id}
+
+    def note_recorded_send(self, session):
+        self.broadcast({"event": "recordedSend", "account": session.id,
+                        "recordedSend": self.recorded_send_view(session)})
+
+    def reserve_recorded_send(self, kind, path, chat_id, args):
+        self.admit_recorded_send()
+        session = self.session_for()
+        record = {"token": secrets.token_hex(16), "kind": kind, "path": path,
+                  "chatId": chat_id, "args": dict(args), "content": None, "state": "preparing"}
+        session.recorded_send = record
+        self.note_recorded_send(session)
+        return session, record
+
+    def cancel_recorded_send(self, session, record, client, rid):
+        if session.recorded_send is record:
+            session.recorded_send = None
+            self.note_recorded_send(session)
+        if record.get("source") is not None:
+            media.remove(record["source"])
+        self.cancel_work(client, rid, record["path"])
+
+    def prepare_recorded_content(self, session, record, client, rid):
+        if self.jobs >= JOBS_MAX:
+            record["state"] = "prepareFailed"
+            self.note_recorded_send(session)
+            self.respond_error(client, rid, "Still preparing an earlier message; this recording was kept for explicit retry")
+            return
+        if record["kind"] == "video" and record["path"] == record.get("source"):
+            try:
+                record["path"] = media.new_sent_path("note", ".mp4", session.id)
+            except (safe.UnsafeError, OSError):
+                record["state"] = "prepareFailed"
+                self.note_recorded_send(session)
+                self.respond_error(client, rid, "The video output could not be allocated; this recording was kept for explicit retry")
+                return
+        if record["state"] != "preparing":
+            record["state"] = "preparing"
+            self.note_recorded_send(session)
+
+        def done(result, error):
+            duration = result[0] if record["kind"] == "voice" and result else result
+            if isinstance(duration, bool) or not isinstance(duration, (int, float)) or not math.isfinite(duration):
+                duration = 0
+            if error is not None or duration < 1:
+                record["state"] = "prepareFailed"
+                self.note_recorded_send(session)
+                self.respond_error(client, rid, "The recording could not be prepared; it was kept for explicit retry or discard")
+                return
+            path = str(record["path"])
+            if record["kind"] == "voice":
+                record["content"] = {"@type": "inputMessageVoiceNote",
+                    "voice_note": {"@type": "inputVoiceNote", "voice_note": {"@type": "inputFileLocal", "path": path},
+                                   "duration": duration, "waveform": result[1]},
+                    "caption": None, "self_destruct_type": None}
+            else:
+                record["content"] = {"@type": "inputMessageVideoNote",
+                    "video_note": {"@type": "inputVideoNote", "video_note": {"@type": "inputFileLocal", "path": path},
+                                   "thumbnail": None, "duration": max(1, min(media.NOTE_MAX_SECONDS, int(duration))),
+                                   "length": media.NOTE_SIZE}, "self_destruct_type": None}
+                media.remove(record["source"])
+                record["source"] = None
+            record.pop("prepare", None)
+            self.send_recorded_content(session, record, client, rid)
+
+        self.background(record["prepare"], done, session=session,
+                        cancelled=lambda *_: self.cancel_recorded_send(session, record, client, rid))
+
+    def send_recorded_content(self, session, record, client, rid):
+        args = record["args"]
+        query = {"@type": "sendMessage", "chat_id": record["chatId"], "topic_id": self.topic_of(args),
+                 "reply_to": self.reply_to(args), "options": self.send_options(args), "reply_markup": None,
+                 "input_message_content": record["content"]}
+        record["state"] = "sending"
+        self.note_recorded_send(session)
+
+        def accepted(event):
+            if (event.get("@type") != "message" or event.get("chat_id") != record["chatId"]
+                    or model._int(event.get("id")) <= 0):
+                rejected({"code": 0})
+                return
+            try:
+                result = session.state.message(event)
+            except Exception:
+                rejected({"code": 0})
+                return
+            if result is None:
+                rejected({"code": 0})
+                return
+            if session.recorded_send is record:
+                session.recorded_send = None
+                self.note_recorded_send(session)
+            self.respond(client, rid, result)
+
+        def rejected(event):
+            # Only explicit TDLib rejections allow resend. Transport/timeouts are unknown.
+            code = model._int(event.get("code"))
+            if session.recorded_send is record:
+                record["state"] = "rejected" if 0 < code < 500 and code != 408 else "unknown"
+                self.note_recorded_send(session)
+            message = ("Telegram rejected the recorded message; it was kept for explicit retry"
+                       if record["state"] == "rejected" else
+                       "The recorded message may still be sent; check Telegram before discarding; retry is disabled")
+            self.respond_error(client, rid, message, model._int(event.get("code")))
+
+        def stale():
+            if session.recorded_send is record:
+                record["state"] = "unknown"
+                self.note_recorded_send(session)
+
+        self.td_send(query, transform=accepted, failed=rejected, session=session, cancelled=stale)
+
+    def checked_recorded_send(self, args):
+        session = self.session_for()
+        record = session.recorded_send
+        token = args.get("token")
+        if record is None or not isinstance(token, str) or token != record["token"]:
+            raise BadRequest("that recorded message is no longer available")
+        return session, record
+
+    def cmd_recording_retry(self, client, rid, args):
+        session, record = self.checked_recorded_send(args)
+        if record["state"] not in ("rejected", "prepareFailed"):
+            raise BadRequest("retry requires a confirmed rejection; this message may still be sent")
+        path = record.get("source") or record["path"]
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or not 0 < st.st_size <= media.RECORDING_MAX:
+            raise BadRequest("the retained recording is not available")
+        if record["state"] == "prepareFailed":
+            self.prepare_recorded_content(session, record, client, rid)
+        else:
+            self.send_recorded_content(session, record, client, rid)
+
+    def cmd_recording_discard(self, client, rid, args):
+        session, record = self.checked_recorded_send(args)
+        if record["state"] not in ("rejected", "prepareFailed", "unknown"):
+            raise BadRequest("the recorded message is still being prepared or sent")
+        if record["state"] in ("rejected", "prepareFailed"):
+            media.remove(record["path"])
+            if record.get("source") is not None:
+                media.remove(record["source"])
+        # An unknown result may be using the file inside TDLib: never delete it here.
+        session.recorded_send = None
+        self.note_recorded_send(session)
+        self.respond(client, rid, {})
+
     def cmd_voice_start(self, client, rid, args):
+        self.admit_recorded_send()
         chat_id = arg_int(args, "chatId")
         if self.recording is not None:
             raise BadRequest("a voice or video message is already being recorded")
         try:
-            media.clean_stale()
+            self.clean_recordings()
             path = media.new_sent_path("voice", ".ogg", self.session_for().id)
             argv = media.voice_argv(path)
         except (safe.UnsafeError, OSError) as e:
@@ -3471,6 +3634,8 @@ class Daemon:
             raise BadRequest("still preparing an earlier message; try stopping again in a moment")
         send = args.get("send") is True
         reply = self.reply_args(args) if send else {}
+        if send:
+            session, retained = self.reserve_recorded_send("voice", rec["path"], rec["chatId"], reply)
         self.recording = None
         self.broadcast({"event": "recording", "state": "idle"})
         proc, path, chat_id = rec["proc"], rec["path"], rec["chatId"]
@@ -3490,30 +3655,22 @@ class Daemon:
                 return None
             return media.prepare_voice(path)
 
-        def done(result, error):
-            if not send:
-                self.respond(client, rid, {})
-                return
-            if error is not None or not result or result[0] < 1:
-                media.remove(path)
-                self.respond_error(client, rid, "that voice message was too short or could not be read")
-                return
-            duration, waveform = result
-            self.send_content(client, rid, chat_id, {
-                "@type": "inputMessageVoiceNote",
-                "voice_note": {"@type": "inputVoiceNote", "voice_note": {"@type": "inputFileLocal", "path": str(path)},
-                               "duration": duration, "waveform": waveform},
-                "caption": None, "self_destruct_type": None}, reply)
-        self.background(work, done, cancelled=lambda *_: self.cancel_work(client, rid, path))
+        if send:
+            retained["prepare"] = work
+            self.prepare_recorded_content(session, retained, client, rid)
+        else:
+            self.background(work, lambda *_: self.respond(client, rid, {}),
+                            cancelled=lambda *_: self.cancel_work(client, rid, path))
 
     def cmd_videonote_record(self, client, rid, args):
         """A round video message recorded by the service itself, from the camera and the microphone, for the quick
         view: it shows the small picture `preview` names, rewritten while it records."""
+        self.admit_recorded_send()
         chat_id = arg_int(args, "chatId")
         if self.recording is not None:
             raise BadRequest("a voice or video message is already being recorded")
         try:
-            media.clean_stale()
+            self.clean_recordings()
             path = media.new_path("note", ".mp4")
             preview = path.with_name(path.stem + "-preview.jpg")
             argv = media.video_capture_argv(path, preview)
@@ -3540,6 +3697,8 @@ class Daemon:
         send = args.get("send") is True
         reply = self.reply_args(args) if send else {}
         target = media.new_sent_path("note", ".mp4", self.session_for().id) if send else None
+        if send:
+            session, retained = self.reserve_recorded_send("video", target, rec["chatId"], reply)
         self.recording = None
         self.broadcast({"event": "recording", "state": "idle"})
         proc, source, preview, chat_id = rec["proc"], rec["path"], rec["preview"], rec["chatId"]
@@ -3555,26 +3714,18 @@ class Daemon:
                 proc.kill()
                 proc.wait()
             media.remove(preview)
-            try:
-                return media.prepare_video_note(source, target) if send else None
-            finally:
-                media.remove(source)
+            if send:
+                media.remove(target)  # A failed conversion may have left a partial output.
+                return media.prepare_video_note(source, target)
+            media.remove(source)
+            return None
 
-        def done(duration, error):
-            if not send:
-                self.respond(client, rid, {})
-                return
-            if error is not None or not duration or duration < 1:
-                media.remove(target)
-                self.respond_error(client, rid, "that video message was too short or could not be read")
-                return
-            self.send_content(client, rid, chat_id, {
-                "@type": "inputMessageVideoNote",
-                "video_note": {"@type": "inputVideoNote", "video_note": {"@type": "inputFileLocal", "path": str(target)},
-                               "thumbnail": None, "duration": max(1, min(media.NOTE_MAX_SECONDS, int(duration))),
-                               "length": media.NOTE_SIZE},
-                "self_destruct_type": None}, reply)
-        self.background(work, done, cancelled=lambda *_: self.cancel_work(client, rid, target))
+        if send:
+            retained["source"], retained["prepare"] = source, work
+            self.prepare_recorded_content(session, retained, client, rid)
+        else:
+            self.background(work, lambda *_: self.respond(client, rid, {}),
+                            cancelled=lambda *_: self.cancel_work(client, rid, source))
 
     def cmd_media_play(self, client, rid, args):
         """Listen to a voice or round video message without a window: the file is fetched when it is not here yet,
@@ -3623,36 +3774,30 @@ class Daemon:
         self.broadcast({"event": "playing", "fileId": 0, "account": player["account"]})
 
     def cmd_videonote_send(self, client, rid, args):
+        self.admit_recorded_send()
         chat_id = arg_int(args, "chatId")
         try:
             source = media.recorded_file(args.get("path"))
         except (safe.UnsafeError, OSError):
             raise BadRequest("that is not a recording of Telebar's")
+        if any(sess.recorded_send is not None and str(sess.recorded_send.get("source")) == str(source)
+               for sess in self.accounts.values()):
+            raise BadRequest("that recording already belongs to a pending send")
         reply = self.reply_args(args)
-        if self.jobs >= JOBS_MAX:
-            raise BadRequest("still preparing an earlier message")
-        target = media.new_sent_path("note", ".mp4", self.session_for().id)
+        session, retained = self.reserve_recorded_send("video", source, chat_id, reply)
 
         def work():
-            try:
-                return media.prepare_video_note(source, target)
-            finally:
-                media.remove(source)
+            target = retained["path"]
+            media.remove(target)
+            return media.prepare_video_note(source, target)
 
-        def done(duration, error):
-            if error is not None:
-                media.remove(target)
-                self.respond_error(client, rid, "the video message could not be prepared")
-                return
-            self.send_content(client, rid, chat_id, {
-                "@type": "inputMessageVideoNote",
-                "video_note": {"@type": "inputVideoNote", "video_note": {"@type": "inputFileLocal", "path": str(target)},
-                               "thumbnail": None, "duration": max(1, min(media.NOTE_MAX_SECONDS, int(duration))),
-                               "length": media.NOTE_SIZE},
-                "self_destruct_type": None}, reply)
-        self.background(work, done, cancelled=lambda *_: self.cancel_work(client, rid, target))
+        retained["source"], retained["prepare"] = source, work
+        self.prepare_recorded_content(session, retained, client, rid)
 
     def cmd_videonote_discard(self, client, rid, args):
+        if any(sess.recorded_send is not None and str(sess.recorded_send.get("source")) == args.get("path")
+               for sess in self.accounts.values()):
+            raise BadRequest("the recording is owned by a pending send; resolve it by token")
         try:
             media.remove(media.recorded_file(args.get("path")))
         except (safe.UnsafeError, OSError):
@@ -4366,6 +4511,8 @@ COMMANDS = {
     "diagnostics.status": ("cmd_diagnostics_status", False),
     "settings.chatListWidth": ("cmd_settings_chat_list_width", False),
     "hello": ("cmd_hello", False),
+    "recording.retry": ("cmd_recording_retry", True),
+    "recording.discard": ("cmd_recording_discard", False),
     "account.list": ("cmd_account_list", False),
     "account.switch": ("cmd_account_switch", False),
     "account.add": ("cmd_account_add", False),

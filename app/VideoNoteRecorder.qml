@@ -17,6 +17,7 @@ FocusScope {
   property var app
   property real chatId: 0
   property string accountId: ""
+  property var sendContext: null
   readonly property int maxSeconds: 60
 
   property string phase: "closed"   // closed | preview | recording | stopping
@@ -27,16 +28,17 @@ FocusScope {
                                   ? Math.max(0, (noteRecorder.now - noteRecorder.startedAt) / 1000) : 0
   readonly property var mediaRecorder: capture.item ? capture.item.recorder : null
 
-  signal recorded(real chatId, string path)
+  signal recorded(real chatId, string path, var context)
   signal discarded(string path)
   signal failed(string message)
 
   visible: noteRecorder.phase !== "closed"
 
-  function open(chatId) {
+  function open(chatId, context) {
     if (noteRecorder.phase !== "closed" || !chatId) return
     noteRecorder.chatId = chatId
     noteRecorder.accountId = noteRecorder.app.activeAccount
+    noteRecorder.sendContext = context
     noteRecorder.sendWhenStopped = false
     noteRecorder.phase = "preview"
     noteRecorder.forceActiveFocus()
@@ -53,6 +55,7 @@ FocusScope {
   }
 
   function finish(send) {
+    if (!send) noteRecorder.sendWhenStopped = false
     if (noteRecorder.phase === "recording" && noteRecorder.mediaRecorder) {
       noteRecorder.sendWhenStopped = send
       noteRecorder.now = Date.now()
@@ -69,7 +72,7 @@ FocusScope {
     var send = noteRecorder.sendWhenStopped && noteRecorder.seconds >= 1 && path !== ""
       && noteRecorder.accountId === noteRecorder.app.activeAccount
     noteRecorder.phase = "closed"
-    if (send) noteRecorder.recorded(noteRecorder.chatId, path)
+    if (send) noteRecorder.recorded(noteRecorder.chatId, path, noteRecorder.sendContext)
     else noteRecorder.discarded(path)
   }
 
@@ -96,6 +99,7 @@ FocusScope {
   // Only while showing: closing releases the camera and the microphone.
   Loader {
     id: capture
+    objectName: "video-capture-session"
     active: noteRecorder.visible
     sourceComponent: CaptureSession {
       camera: Camera {

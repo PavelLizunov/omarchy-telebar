@@ -12,8 +12,10 @@ host surfaces, panel positioning, monitor selection or accessibility integration
 
 `Quickshell` and `Quickshell.Io` are small test adapters: detached commands, writes,
 file reads/watchers, and process execution do nothing. Environment values are
-synthetic. No Socket, PanelWindow, PopupWindow, Hyprland or Wayland module is supplied.
-A fixture needing those modules is unsupported here, not host-verified.
+synthetic. Socket writes and flushes are inert; the Hyprland singleton only exposes
+an injectable event signal. Neither adapter connects to the compositor or backend.
+No PanelWindow, PopupWindow or Wayland surface module is supplied. A fixture
+needing those surfaces is unsupported here, not host-verified.
 
 Requires Qt Quick/Controls/Test and the actual components' optional Qt modules
 (e.g. Multimedia and FolderListModel). Record installed Qt and renderer versions.

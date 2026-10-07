@@ -21,6 +21,11 @@ Item {
   readonly property bool saved: !!avatar.chat && avatar.chat.kind === "private" && !!avatar.app && !!avatar.app.meId
                                 && avatar.chat.userId === avatar.app.meId
 
+  readonly property var peerStatus: avatar.chat && avatar.app
+      ? ((avatar.app.userStatuses || {})[avatar.chat.userId] || avatar.chat.status) : null
+  readonly property bool online: !avatar.saved && !!avatar.chat && !avatar.chat.bot
+      && ["private", "secret"].indexOf(avatar.chat.kind) >= 0 && !!avatar.peerStatus && avatar.peerStatus.state === "online"
+
   implicitWidth: avatar.size
   implicitHeight: avatar.size
 
@@ -87,5 +92,19 @@ Item {
     maskSource: mask
     maskThresholdMin: 0.5
     maskSpreadAtMin: 1.0
+  }
+  Rectangle {
+    objectName: "avatar-online-" + (avatar.chat ? avatar.chat.id : 0)
+    visible: avatar.online
+    anchors.right: parent.right
+    anchors.bottom: parent.bottom
+    width: Math.max(Style.space(8), avatar.size * 0.22)
+    height: width
+    radius: width / 2
+    color: avatar.app.accentText
+    border.width: Style.space(2)
+    border.color: avatar.app.background
+    Accessible.role: Accessible.StaticText
+    Accessible.name: "Online"
   }
 }

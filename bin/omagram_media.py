@@ -79,13 +79,14 @@ def remove(path):
         pass
 
 
-def clean_stale(max_age=STALE_SECONDS, now=None):
+def clean_stale(max_age=STALE_SECONDS, now=None, protected=()):
     now = time.time() if now is None else now
+    protected = {str(path) for path in protected if path is not None}
     try:
         with os.scandir(REC) as entries:
             # Only raw camera captures: a voice message recorded here before may still be on screen.
             old = [e.path for e in entries
-                   if e.name.startswith(("note-", "paste-")) and e.is_file(follow_symlinks=False)
+                   if e.path not in protected and e.name.startswith(("note-", "paste-")) and e.is_file(follow_symlinks=False)
                    and now - e.stat(follow_symlinks=False).st_mtime > max_age]
     except FileNotFoundError:
         return
@@ -332,6 +333,37 @@ def trim_note_animations(now=None):
             safe.remove_file(NOTE_ANIMATIONS / name)
         except (safe.UnsafeError, OSError):
             pass
+
+
+# ---------------------------------------------------------------- clipboard photos
+
+CLIPBOARD_IMAGE_MAX = 10 * 1024 * 1024
+CLIPBOARD_PIXELS_MAX = 16_000_000
+PNG_HEADER = b"\x89PNG\r\n\x1a\n"
+
+
+def clipboard_png(data):
+    """Browser paste consumers need a PNG offer, not only the original JPEG/WebP."""
+    if not data or len(data) > CLIPBOARD_IMAGE_MAX:
+        raise safe.UnsafeError("the clipboard image is empty or exceeds 10 MiB")
+    if data.startswith(PNG_HEADER):
+        return data
+    if data.startswith(b"\xff\xd8\xff"):
+        decoder = "mjpeg"
+    elif data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        decoder = "webp"
+    else:
+        raise safe.UnsafeError("that file is not a supported image")
+    argv = [str(safe.tool("prlimit")), "--as=1073741824", "--cpu=10", "--",
+            str(safe.tool("ffmpeg")), "-hide_banner", "-loglevel", "error", "-nostdin",
+            "-max_alloc", "67108864", "-threads", "1", "-protocol_whitelist", "pipe",
+            "-f", "image2pipe", "-c:v", decoder, "-max_pixels", str(CLIPBOARD_PIXELS_MAX),
+            "-i", "pipe:0", "-frames:v", "1", "-an", "-sn", "-dn", "-threads", "1",
+            "-c:v", "png", "-f", "image2pipe", "pipe:1"]
+    result = safe.run(argv, input=data, timeout=10, max_output=CLIPBOARD_IMAGE_MAX)
+    if not result.ok or not result.stdout.startswith(PNG_HEADER):
+        raise safe.UnsafeError("the image could not be converted to PNG within clipboard limits")
+    return result.stdout
 
 
 # ---------------------------------------------------------------- profile photos

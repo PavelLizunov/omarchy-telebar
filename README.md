@@ -8,25 +8,20 @@ Independently maintained by [PavelLizunov](https://github.com/PavelLizunov),
 based on [Omagram by ReidenXerx](https://github.com/ReidenXerx/omarchy-omagram).
 Upstream changes are adopted selectively; this project has its own development direction.
 
-> **Development checkpoint 1.2.1-dev.2, not a verified stable release.** See
-> [checkpoint notes and known limitations](CHANGELOG.md). Rich-post rendering, Telegram-link
-> forwarding, mention navigation, quick-view account selection and main-window audio
-> routing are under development. Isolated Python, JavaScript and QML tests pass, but
-> the installed client and real account/device transitions have not been checked.
-> Quick-view audio still uses `ffplay`; output-device following is not established.
-> Sixteen current strict offscreen captures at theme radii 0 and 8 were inspected,
-> and 164 QML consumer checks passed across 17 suites. An isolated snapshot passed
-> 279 Python checks with two unavailable-tool skips, plus eight JavaScript suites.
-> Bounded advisory reviews covered selected corrective contracts only; full
-> independent source/security acceptance is outstanding.
-> The full repository audit will precede any decision to rewrite the backend.
-> Local corrective candidates now cover file-export permission, rejected-send
-> composition and rejected-edit retention, mention-context invalidation,
-> startup-parameter errors, bounded request/stale-job lifecycle, stale reaction
-> navigation, malformed callback/scalar failures, recording-finalization admission,
-> delayed edit-Markdown ownership, exactly-once mention completion, video target
-> allocation, fail-closed opaque callback/media data, and voice/auxiliary reply retention.
-> These changes are not deployed or independently accepted; see
+> **Development source checkpoint, not a verified stable release.** The manifest
+> remains `1.2.1-dev.2`; current source extends the earlier tagged release. See
+> [progress and open issues](PROGRESS.md) and [release history](CHANGELOG.md).
+> Reading/selection, near-name presence, contrast, browser image copying and
+> explicit recording recovery corrections are installed in the local development
+> client. The main window/backend reported healthy connected state after activation,
+> but a subsequent user-reported repeat failure remains unresolved.
+> Current recorded checks: 291 isolated Python tests (two local tool skips), eight
+> JavaScript suites and 248 native QML passes across 19 suites. Six inspected strict
+> contrast/presence frames cover representative palettes and radii 0/8; measured
+> covered text contrast is at least 4.548:1. Physical account/device transitions,
+> exhaustive accessibility and independent whole-source/security acceptance remain
+> pending. Quick-view audio uses `ffplay`; output-device following is not established.
+> The correctness audit will precede any backend rewrite decision. See
 > [executable correctness contracts](BACKEND-DESIGN.md#executable-correctness-contracts-local-p1-candidate).
 
 <p align="center">
@@ -115,7 +110,9 @@ The image above predates the Telebar rename.
   `Ctrl+Shift+V` send them as files). Record voice
   messages (`Ctrl+R`) and round video messages (`Ctrl+Shift+R`). A file's menu opens it with its app or saves it to Downloads.
   In either photo viewer, right-click (or press `Shift+F10`) to save the original photo to Downloads or copy the image
-  with `wl-copy`. Copying supports JPEG, PNG and WebP up to 10 MiB. Protected photos cannot be exported;
+  with `wl-copy`. Copying supports JPEG, PNG and WebP up to 10 MiB and offers PNG for
+  browser compatibility. JPEG/WebP conversion requires ffmpeg, is bounded to 16 million
+  pixels, and rejects PNG output above 10 MiB. Protected photos cannot be exported;
   if the photo is still downloading, wait for it to finish and choose the action again.
 - **Emoji** — an emoji panel beside the message box (`Ctrl+;`), from the Omarchy emoji picker plugin's
   data and search: emoji, symbols and kaomoji found by their English, Ukrainian or Russian names, the
@@ -174,6 +171,12 @@ The image above predates the Telebar rename.
   Close it in a chat and for the next hour it opens there again, with anything you had not sent;
   Telebar's mark in its corner opens the whole window.
   Sending text, files or recordings keeps the quick view open for another reply.
+  Long messages remain scrollable in compact mode. Drag across message text and
+  press `Ctrl+C` to copy only that fragment, including captions and rich-post text.
+  Private chats show the available online or last-seen status in the quick-view
+  list and chat header. Online appears beside the peer name; longer available
+  last-seen information appears below it. Avatar dots mark online peers in the main window.
+  Hidden last-seen times retain Telegram's approximate status; no exact time is inferred.
   Incoming messages shown in the quick view are marked read, including forum
   messages grouped by topic. Topics outside the visible history stay unread.
   Your outgoing messages show sent/read checks, or a sending/failure state. The
@@ -535,7 +538,11 @@ a video in your video player, `o` opens the chat in the window and `Esc` closes.
   the quick view, which shows a bar the whole time. If preparation is busy, stopping is rejected
   without consuming the recording; retry once capacity returns. An outgoing video allocation
   failure also leaves the recording available to stop again. A discarded recording is deleted
-  when its admitted finalization completes.
+  when its admitted finalization completes. After preparation failure or a confirmed Telegram
+  rejection, one recording per account is kept for explicit retry or discard, with its original
+  chat, topic/thread, reply and send options. The window and quick view expose the same controls.
+  Timeout or uncertain delivery disables retry; dismissing that state does not delete a file
+  TDLib might still use. This recovery state lasts for the running service, not across restarts.
 - **Telegram content is shown as text.** Names and previews are rendered as plain text, message
   formatting is escaped before it is drawn, and notification bodies are escaped, because
   Omarchy's notifications render markup and links. Links lead only to web and mail addresses

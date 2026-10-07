@@ -5,6 +5,7 @@ import "../../app" as App
 import "../../app/Icons.js" as Icons
 import "../../shell" as Shell
 import "Readiness.js" as Readiness
+import "../../app/Model.js" as Model
 
 Rectangle {
   id: preview
@@ -17,7 +18,17 @@ Rectangle {
   property int fontSize: 12
   property bool ready: false
   property string variant: ""
-  FixtureApp { id: model }
+  property var peerStatus: null
+  property string themePalette: "dark"
+  property bool groupChat: false
+  FixtureApp {
+    id: model
+    background: preview.themePalette === "installed" ? "#111c18" : preview.themePalette === "light" ? "#f2f1ed" : "#101315"
+    foreground: preview.themePalette === "installed" ? "#C1C497" : preview.themePalette === "light" ? "#22282b" : "#cacccc"
+    muted: { var c = Model.readableColor(Qt.color(preview.themePalette === "installed" ? "#53685B" : preview.themePalette === "light" ? "#59656a" : "#8a969f"), background, foreground, 4.5); return Qt.rgba(c.r, c.g, c.b, 1) }
+    accent: preview.themePalette === "installed" ? "#509475" : preview.themePalette === "light" ? "#35676c" : "#8ab4b8"
+    accentText: { var c = Model.readableColor(accent, background, foreground, 4.5); return Qt.rgba(c.r, c.g, c.b, 1) }
+  }
   property var sampleMessages: [
     { id: 1, chatId: 101, date: 1790726000, outgoing: false, senderName: "Alex Demo", sender: { type: "user", id: 101 },
       content: { kind: "text", text: "The icons are vectors now. Try the panel button at the top.", entities: [] }, reactions: [] },
@@ -30,6 +41,11 @@ Rectangle {
     Style.cornerRadius = preview.themeRadius
     Style.fontBaseSize = preview.fontSize
     model.history = preview.sampleMessages
+    if (preview.groupChat) model.chats = model.chats.map(function (chat) { return chat.id === 101 ? Object.assign({}, chat, { kind: "group", title: "Community", memberCount: 12 }) : chat })
+    if (preview.peerStatus) {
+      model.chats = model.chats.map(function (chat) { return chat.id === 101 ? Object.assign({}, chat, { status: preview.peerStatus }) : chat })
+      model.userStatuses = { 101: preview.peerStatus }
+    }
     settle.restart()
     if (preview.scene === "long-chat") {
       var list = []
