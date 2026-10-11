@@ -115,6 +115,8 @@ fn hello_switch_and_settings_observe_persisted_state() {
     assert_eq!(failed.replies[0].1["ok"], false);
     assert_eq!(failed.native[0].query["@type"], "close");
     fs::remove_file(root.join(".local/share/omagram/accounts.json")).unwrap();
+    app.upload_context = Some((root.clone(), vec![]));
+    app.recording_runtime = Some(root.join("runtime"));
     let added = app.add(
         &home,
         &mut runtime,
@@ -130,6 +132,33 @@ fn hello_switch_and_settings_observe_persisted_state() {
     assert_eq!(Application::load(&home).unwrap().catalog["active"], id);
     assert_eq!(added.replies[0].1["event"], "accountAdded");
     assert_eq!(added.native[0].query["@type"], "getOption");
+    assert_eq!(runtime.engine.accounts[id].state.roots.len(), 8);
+    assert!(runtime.engine.accounts[id].state.roots[6].contains(&format!("accounts/{id}/sent")));
+    // Real startup owner receives synthetic ready/getMe; persistence belongs
+    // to the local application and preserves account order/active identity.
+    let effects = runtime.receive(json!({"@type":"updateAuthorizationState","@client_id":4,"authorization_state":{"@type":"authorizationStateReady"}}),Instant::now(),&mut |_|Ok(None),&mut |_|None);
+    let me = effects
+        .native
+        .iter()
+        .find(|n| n.query["@type"] == "getMe")
+        .unwrap();
+    let effects = runtime.receive(json!({"@type":"user","@client_id":4,"@extra":me.query["@extra"],"id":77,"first_name":"Synthetic","last_name":"Owner","phone_number":"12345"}),Instant::now(),&mut |_|Ok(None),&mut |_|None);
+    app.sync_accounts(&home, &runtime, &effects).unwrap();
+    let saved = Application::load(&home).unwrap();
+    assert_eq!(saved.catalog["active"], id);
+    assert_eq!(saved.catalog["accounts"][2]["meId"], 77);
+    assert_eq!(saved.catalog["accounts"][2]["name"], "Synthetic Owner");
+    let before = app.catalog.clone();
+    fs::remove_file(root.join(".local/share/omagram/accounts.json")).unwrap();
+    symlink("foreign", root.join(".local/share/omagram/accounts.json")).unwrap();
+    runtime.metadata.get_mut(id).unwrap().name = "New synthetic name".into();
+    assert!(app.sync_accounts(&home, &runtime, &effects).is_err());
+    assert_eq!(app.catalog, before);
+    assert!(app.catalog_sync_failed);
+    fs::remove_file(root.join(".local/share/omagram/accounts.json")).unwrap();
+    app.sync_accounts(&home, &runtime, &effects).unwrap();
+    assert!(!app.catalog_sync_failed);
+    assert_eq!(app.catalog["accounts"][2]["name"], "New synthetic name");
     app.retire_peer(7);
     assert!(!app.windows.contains(&7));
     fs::remove_dir_all(root).unwrap();

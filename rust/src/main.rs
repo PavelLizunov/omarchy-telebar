@@ -489,7 +489,11 @@ fn serve(
             }else{true}
         });
         let mut effects = if let Some(driver) = &mut driver {
-            driver.tick(&mut |_| Ok(None))?
+            if let Some((home, app)) = &mut application {
+                driver.tick_application(app, home, &mut |_| Ok(None))?
+            } else {
+                driver.tick(&mut |_| Ok(None))?
+            }
         } else {
             engine.expire(Instant::now())
         };

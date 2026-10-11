@@ -19,6 +19,7 @@ pub struct Application {
     pub upload_context: Option<(std::path::PathBuf, Vec<std::path::PathBuf>)>,
     pub clipboard_context: Option<crate::clipboard::Context>,
     pub recording_runtime: Option<std::path::PathBuf>,
+    pub catalog_sync_failed: bool,
 }
 impl Application {
     pub fn load(home: &Storage) -> std::io::Result<Self> {
@@ -34,6 +35,7 @@ impl Application {
             upload_context: None,
             clipboard_context: None,
             recording_runtime: None,
+            catalog_sync_failed: false,
         })
     }
     pub fn add(
@@ -47,6 +49,7 @@ impl Application {
         let mut created = None;
         let mut added = None;
         let count = runtime.engine.accounts.len();
+        let mut roots = Vec::new();
         let known: HashSet<_> = runtime.engine.accounts.values().map(|a| a.client).collect();
         let mut effects=runtime.engine.request_using(peer,request,std::time::Instant::now(),&mut |command,args,_|{
             if command!="account.add"{return Err("unknown command".into());}
@@ -56,6 +59,9 @@ impl Application {
             use std::io::Read;let mut random=[0u8;4];std::fs::File::open("/dev/urandom").and_then(|mut f|f.read_exact(&mut random)).map_err(|_|"the request failed")?;
             let millis=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|"the request failed")?.as_millis();let entropy=random.iter().map(|b|format!("{b:02x}")).collect::<String>();let id=format!("acc_{millis}_{entropy}");
             if runtime.metadata.contains_key(&id){return Err("the request failed".into());}
+            if let (Some((home, _)), Some(recording_runtime)) = (&self.upload_context, &self.recording_runtime) {
+                roots = crate::paths::AccountPaths::new(&home.join(".local/share/omagram"), &id)?.media_roots(recording_runtime);
+            }
             let client=create().map_err(|_|"Telegram is not available")?;created=Some(client);if client<=0||known.contains(&client){return Err("Telegram is not available".into());}
             let mut catalog=self.catalog.clone();catalog["accounts"].as_array_mut().ok_or("the request failed")?.push(json!({"id":id,"name":name,"phone":"","meId":0}));catalog["active"]=json!(id);
             home.write(".local/share/omagram/accounts.json",catalog.to_string().as_bytes(),0o600).map_err(|_|"the request failed")?;
@@ -68,7 +74,7 @@ impl Application {
                     id.clone(),
                     name.clone(),
                     client,
-                    vec![],
+                    roots,
                     std::time::Instant::now(),
                 )
                 .expect("unique valid created account/client");
@@ -95,6 +101,52 @@ impl Application {
             });
         }
         effects
+    }
+    /// Persist account metadata only for accepted getMe outcomes. Closed auth
+    /// resets live identity, not the persisted catalog's recovery information.
+    pub fn sync_accounts(
+        &mut self,
+        home: &Storage,
+        runtime: &Runtime,
+        effects: &Effects,
+    ) -> std::io::Result<()> {
+        let mut catalog = self.catalog.clone();
+        for (_, event) in &effects.replies {
+            if event["event"] != "me" {
+                continue;
+            }
+            let Some(id) = event["account"].as_str() else {
+                continue;
+            };
+            let Some(meta) = runtime.metadata.get(id) else {
+                continue;
+            };
+            let Some(account) = runtime.engine.accounts.get(id) else {
+                continue;
+            };
+            let Some(row) = catalog["accounts"]
+                .as_array_mut()
+                .and_then(|rows| rows.iter_mut().find(|r| r["id"] == id))
+            else {
+                continue;
+            };
+            row["name"] = json!(meta.name);
+            row["phone"] = json!(meta.phone);
+            row["meId"] = number(account.state.me_id);
+        }
+        if catalog != self.catalog {
+            if let Err(error) = home.write(
+                ".local/share/omagram/accounts.json",
+                catalog.to_string().as_bytes(),
+                0o600,
+            ) {
+                self.catalog_sync_failed = true;
+                return Err(error);
+            }
+            self.catalog = catalog;
+            self.catalog_sync_failed = false;
+        }
+        Ok(())
     }
     pub fn owns(command: &str) -> bool {
         matches!(

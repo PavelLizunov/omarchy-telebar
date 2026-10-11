@@ -220,6 +220,18 @@ impl Driver {
         };
         self.dispatch(effects)
     }
+    pub fn tick_application(
+        &mut self,
+        application: &mut crate::application::Application,
+        home: &crate::storage::Storage,
+        parameters: &mut dyn FnMut(&str) -> Result<Option<Value>, String>,
+    ) -> io::Result<Effects> {
+        let effects = self.tick(parameters)?;
+        // Catalog I/O failure must not tear down TDLib or discard received
+        // events. The application retains the previous catalog and failure bit.
+        let _ = application.sync_accounts(home, &self.runtime, &effects);
+        Ok(effects)
+    }
     /// Finite receive work yields back to socket peers and helper completions.
     pub fn tick(
         &mut self,

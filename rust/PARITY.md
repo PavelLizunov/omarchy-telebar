@@ -132,8 +132,14 @@ retains input files. This does not verify camera/microphone capture, desktop
 consumer interactions or real Telegram sends. Preparation requires explicit home
 and recording-runtime roots; fixtures do not discover the live session.
 
+Synthetic startup/getMe now synchronizes name, phone and current-user ID into
+the catalog without changing its order or active identity. Failed catalog writes
+preserve the prior persisted view and expose a local failure bit without ending
+the native driver. New-account media roots are derived when explicit home and
+recording-runtime context are present; inert native fixtures remain root-free.
+
 Remaining work includes complete production startup and compatible hello,
-credential preparation, account/catalog synchronization and media roots,
+credential preparation, complete account/catalog synchronization and media roots,
 notification D-Bus actions and sounds, global shortcut effects, managed playback,
 voice/video capture and shutdown, full clipboard writer/file open/copy-image,
 profile-photo jobs, storage/animation/diagnostics/UI/quit commands and bundled
