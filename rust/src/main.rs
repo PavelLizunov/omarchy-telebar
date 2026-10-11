@@ -362,6 +362,7 @@ fn serve(
     let mut application = if with_application {
         let home = telebar_runtime::storage::Storage::open(directory)?;
         let mut app = telebar_runtime::application::Application::load(&home)?;
+        app.diagnostics = telebar_runtime::diagnostics::Diagnostics::start(&home).ok();
         let mut databases = vec![directory.join(".local/share/omagram/database")];
         databases.extend(
             app.catalog["accounts"]
@@ -450,11 +451,21 @@ fn serve(
                         outbox: Vec::new(),
                         written: 0,
                     });
+                    if let Some((_, app)) = &mut application {
+                        app.diagnostic_peers
+                            .connect(next_peer, credential.pid as u32);
+                    }
                     next_peer += 1;
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
             Err(error) => return Err(error),
+        }
+        if let Some((_, app)) = &mut application {
+            app.diagnostic_runtime = json!({"event_queue":0,"task_queue":0,"recording":false,"oldest_td_ms":null,"td_idle_ms":null,"counts":{},"socket_in_bytes":peers.iter().map(|p|p.inbox.len()).sum::<usize>(),"socket_out_bytes":peers.iter().map(|p|p.outbox.len().saturating_sub(p.written)).sum::<usize>()});
+            if let Some(log) = &app.diagnostics {
+                log.progress(telebar_runtime::diagnostics::Phase::Ipc);
+            }
         }
         let mut broadcasts = Vec::new();
         peers.retain_mut(|peer| {
@@ -462,7 +473,7 @@ fn serve(
             let result=peer.pump(&mut |request|{
                 // Deliberately no compatible hello in either fixture mode: a
                 // partial daemon must not impersonate the production backend.
-                if request.command=="diagnostics.status"{return Ok(vec![wire::success(request.id,json!({"runtime":"rust","migration_complete":false,"production_profiles":false}))]);}
+                if request.command=="diagnostics.status" && application.is_none(){return Ok(vec![wire::success(request.id,json!({"runtime":"rust","migration_complete":false,"production_profiles":false}))]);}
                 if request.command=="hello"{return Ok(vec![wire::failure(request.id,"migration command is not implemented",0)]);}
                 if request.command=="fixture.version"&&let Some(driver)=&mut driver{return Ok(vec![wire::success(request.id,driver.version()?.unwrap_or(Value::Null))]);}
                 if let Some(driver)=&mut driver{
@@ -488,6 +499,11 @@ fn serve(
                 false
             }else{true}
         });
+        if let Some((_, app)) = &application
+            && let Some(log) = &app.diagnostics
+        {
+            log.progress(telebar_runtime::diagnostics::Phase::Native);
+        }
         let mut effects = if let Some(driver) = &mut driver {
             if let Some((home, app)) = &mut application {
                 driver.tick_application(app, home, &mut |_| Ok(None))?
@@ -533,7 +549,17 @@ fn serve(
         {
             break;
         }
+        if let Some((_, app)) = &application
+            && let Some(log) = &app.diagnostics
+        {
+            log.progress(telebar_runtime::diagnostics::Phase::Idle);
+        }
         std::thread::sleep(Duration::from_millis(2));
+    }
+    if let Some((_, app)) = &application
+        && let Some(log) = &app.diagnostics
+    {
+        log.progress(telebar_runtime::diagnostics::Phase::Shutdown);
     }
     if let Some(driver) = &mut driver {
         driver.close(Duration::from_secs(5))?;

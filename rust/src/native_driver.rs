@@ -624,6 +624,18 @@ impl Driver {
         parameters: &mut dyn FnMut(&str) -> Result<Option<Value>, String>,
     ) -> io::Result<Effects> {
         let effects = self.tick(parameters)?;
+        application.diagnostic_runtime["jobs"] =
+            json!(self.jobs.active() + self.startup_jobs.active());
+        application.diagnostic_runtime["task_queue"] = json!(self.startup_queue.len());
+        application.diagnostic_runtime["receiver_alive"] = json!(!self.runtime.stopping);
+        application.diagnostic_runtime["playing"] = json!(self.player.is_some());
+        application.diagnostic_runtime["children"] = json!(
+            usize::from(self.player.is_some())
+                + self
+                    .clipboard_owner
+                    .as_ref()
+                    .map_or(0, |o| 1 + usize::from(o.verification.is_some()))
+        );
         // Catalog I/O failure must not tear down TDLib or discard received
         // events. The application retains the previous catalog and failure bit.
         let _ = application.sync_accounts(home, &self.runtime, &effects);

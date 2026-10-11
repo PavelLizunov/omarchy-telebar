@@ -12,6 +12,9 @@ use crate::{
 use serde_json::{Value, json};
 use std::collections::HashSet;
 pub struct Application {
+    pub diagnostics: Option<crate::diagnostics::Diagnostics>,
+    pub diagnostic_peers: crate::diagnostics::Peers,
+    pub diagnostic_runtime: Value,
     pub settings: Settings,
     pub catalog: Value,
     pub revision: u64,
@@ -34,6 +37,9 @@ impl Application {
             .and_then(|b| crate::wire::bounded_json(&b, 6, 256, 4096).ok())
             .unwrap_or(Value::Null);
         Ok(Self {
+            diagnostics: None,
+            diagnostic_peers: Default::default(),
+            diagnostic_runtime: json!({}),
             settings: Settings::load(home)?,
             catalog: crate::accounts::normalize(&raw),
             revision: 0,
@@ -164,6 +170,8 @@ impl Application {
         matches!(
             command,
             "hello"
+                | "diagnostics.ui"
+                | "diagnostics.status"
                 | "ui.open"
                 | "ui.focus"
                 | "app.quit"
@@ -182,11 +190,25 @@ impl Application {
         )
     }
     pub fn retire_peer(&mut self, peer: u64) {
+        self.diagnostic_peers.retire(peer);
         self.windows.remove(&peer);
         if self.focus_peer == Some(peer) {
             self.focus_peer = None;
             self.notifier.focused = None;
         }
+    }
+    pub fn diagnostic_snapshot(&mut self, runtime: &Runtime, now: std::time::Instant) -> Value {
+        let (pending, oldest) = runtime.engine.diagnostic_pending(now);
+        let mut view = self.diagnostic_runtime.clone();
+        if !view.is_object() {
+            view = json!({});
+        }
+        let object = view.as_object_mut().unwrap();
+        object.extend(json!({"backend_revision":format!("rust-{}",env!("CARGO_PKG_VERSION")),"phase":self.diagnostics.as_ref().map_or("startup",|d|d.phase()),"clients":self.diagnostic_peers.len(),"pending_ipc":pending,"oldest_ipc_ms":oldest,"pending_td":runtime.engine.native_pending()+runtime.internal_pending(),"account_count":runtime.engine.accounts.len(),"cached_chats":runtime.engine.accounts.values().map(|a|a.state.chats.len()).sum::<usize>(),"cached_users":runtime.engine.accounts.values().map(|a|a.state.users.len()).sum::<usize>(),"process":crate::diagnostics::process_metrics(std::process::id()),"ui":self.diagnostic_peers.view(now,&self.windows,self.diagnostics.as_ref()),"migration_complete":false}).as_object().unwrap().clone());
+        if let Some(log) = &self.diagnostics {
+            object.extend(log.counters().as_object().unwrap().clone());
+        }
+        view
     }
     pub fn accounts(&self, runtime: &Runtime) -> Value {
         json!(runtime.engine.accounts.iter().filter_map(|(id,account)|{
@@ -255,6 +277,7 @@ impl Application {
         } else {
             request.account.as_str().unwrap_or("").into()
         };
+        let mut diagnostic_status = false;
         let mut mark_window = false;
         let mut open = None;
         let mut focus = None;
@@ -264,6 +287,13 @@ impl Application {
             request,
             std::time::Instant::now(),
             &mut |_, args, state| {
+                if command=="diagnostics.ui"{
+                    let is_window=self.windows.contains(&peer)||args["window"]==true;
+                    self.diagnostic_peers.report(peer,args,std::time::Instant::now(),self.diagnostics.as_ref(),is_window)?;
+                    mark_window=args["window"]==true;
+                    return Ok(Action::Reply(json!({})));
+                }
+                if command=="diagnostics.status"{diagnostic_status=true;return Ok(Action::Reply(json!({})));}
                 if let Some(logout) = &logout {
                     return logout.clone().map(|account| Action::AccountNative {
                         account,
@@ -306,6 +336,14 @@ impl Application {
                     .unwrap_or_else(|| Err("migration command is not implemented".into()))
             },
         );
+        if diagnostic_status {
+            let status = self.diagnostic_snapshot(runtime, std::time::Instant::now());
+            for (_, reply) in &mut effects.replies {
+                if reply["ok"] == true {
+                    reply["result"] = status.clone();
+                }
+            }
+        }
         if quit {
             effects.replies.insert(0, (0, json!({"event":"quit"})));
             self.quit_deadline =

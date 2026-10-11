@@ -56,6 +56,9 @@ impl Engine {
     pub fn reserve_external(&mut self, count: usize) {
         self.requests.reserve_external(count);
     }
+    pub fn diagnostic_pending(&self, now: Instant) -> (usize, u128) {
+        self.requests.metrics(now)
+    }
     pub fn native_pending(&self) -> usize {
         self.callbacks.len()
     }

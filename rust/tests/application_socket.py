@@ -71,6 +71,16 @@ with tempfile.TemporaryDirectory(prefix="telebar-application-socket-") as name:
             assert json.loads(catalog.read_text())["active"] == added
             answer, _ = request(9, "fixture.snapshot")
             assert len(answer["result"]["accounts"]) == 3
+            answer, _ = request(11, "diagnostics.ui", {"window": True, "pending": 3, "password": "PRIVATE-CONTENT"})
+            assert answer["ok"]
+            answer, _ = request(12, "diagnostics.ui", {"pending": 99})
+            assert answer["error"] == "diagnostic reports are rate limited"
+            answer, _ = request(13, "diagnostics.status")
+            assert answer["ok"] and answer["result"]["clients"] == 2
+            assert answer["result"]["account_count"] == 3
+            assert answer["result"]["pending_ipc"] == 0
+            assert answer["result"]["process"]["pid"] == process.pid
+            assert any(row["metrics"] == {"pending": 3} for row in answer["result"]["ui"])
             answer, events = request(10, "app.quit")
             assert answer["ok"] and answer["result"] == {}
             assert events[-1]["event"] == "quit"
@@ -81,7 +91,10 @@ with tempfile.TemporaryDirectory(prefix="telebar-application-socket-") as name:
                 raise AssertionError("observer lost graceful quit broadcast")
             assert process.wait(timeout=7) == 0
         assert not (root / "migration.sock").exists()
-        print(json.dumps({"application_socket": True, "native_clients": 3, "account_add": True, "persisted_switch": True, "observer_broadcast": True, "failed_save_preserved": True, "settings": True, "graceful_quit": True, "shutdown": True, "parameters_sent": False, "profile_opened": False, "production_hello": False}))
+        records = (root / ".local/state/omagram/diagnostics/trace.jsonl").read_text()
+        assert "PRIVATE-CONTENT" not in records and "password" not in records
+        assert any(json.loads(line)["event"] == "ui_sample" for line in records.splitlines())
+        print(json.dumps({"application_socket": True, "native_clients": 3, "account_add": True, "persisted_switch": True, "observer_broadcast": True, "failed_save_preserved": True, "settings": True, "diagnostics": True, "graceful_quit": True, "shutdown": True, "parameters_sent": False, "profile_opened": False, "production_hello": False}))
     finally:
         if process.poll() is None:
             process.kill()

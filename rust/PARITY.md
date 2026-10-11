@@ -114,7 +114,7 @@ extending the oracle with `run-differential.sh` still requires the matching dirt
 stabilization sources identified by those hashes. Do not silently regenerate it
 against old Git HEAD or publish unrelated stabilization work as a dependency.
 
-Observed source checks: 41 default unit tests and eighteen default integration-test
+Observed source checks: 41 default unit tests and nineteen default integration-test
 cases passed; four verified-library tests passed explicitly
 (startup ownership, three-client startup, dummy-audio Driver lifecycle and
 synthetic clipboard-owner retirement), plus one isolated real Wayland test.
@@ -249,6 +249,21 @@ The observed fixture was built outside Git from signature-verified packages from
 the configured Arch mirror: labwc 0.20.2-1, wlroots0.20 0.20.2-1,
 libliftoff 0.5.0-1 and libsfdo 0.1.4-1. The script does not install packages or
 alter the live compositor. Review new fixture dependencies before reuse.
+
+`diagnostics.ui` and `diagnostics.status` now use original Engine admission,
+per-peer one-second rate limits and a bounded numeric/boolean UI allowlist. Real
+socket peer PIDs supply numeric process counters; no argv/environment/memory is
+read. Private trace logging uses one 2048-record queue, a writer and a separate
+atomic-heartbeat watchdog; no TDLib/account state is shared with either thread.
+The writer pins its 0700 directory, refuses symlinks/hard links/special files,
+keeps 0600 logs and rotates 4 MiB with four backups. Logging failure is isolated
+from the session. Actual disposable application socket tests validate reports,
+rate refusal, status/counter identity and no caller-string logging. Finite tests
+exercise real rotation, symlink preservation and a genuinely idle owner caught
+by the independent watchdog after 2.5 seconds. Rust thread-stack capture is NOT
+implemented (`stack_capture_supported:false`); native receive age/oldest TD
+metrics and complete request/response diagnostic events remain unfinished.
+Unknown metrics are null, not invented zeros. No physical UI/profile acceptance.
 
 Remaining work includes complete production startup and compatible hello,
 complete account/catalog synchronization and media roots,

@@ -6,6 +6,7 @@ pub mod chat_commands;
 pub mod clipboard;
 pub mod commands;
 pub mod content_projection;
+pub mod diagnostics;
 pub mod engine;
 pub mod export;
 pub mod files;

@@ -50,6 +50,16 @@ pub enum Admission {
 }
 
 impl Requests {
+    pub fn metrics(&self, now: Instant) -> (usize, u128) {
+        (
+            self.ipc.len(),
+            self.ipc
+                .values()
+                .map(|p| now.saturating_duration_since(p.started).as_millis())
+                .max()
+                .unwrap_or(0),
+        )
+    }
     pub fn duplicate(&self, peer: u64, id: &Value) -> bool {
         self.ipc.values().any(|p| p.peer == peer && p.id == *id)
     }
