@@ -166,7 +166,7 @@ impl Keyring {
             &std::sync::atomic::AtomicBool::new(false),
         )
     }
-    fn set_cancel(
+    pub fn set_cancel(
         &self,
         key: &str,
         label: &str,

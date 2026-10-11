@@ -213,6 +213,16 @@ impl Runtime {
         now: Instant,
         parameters: &mut dyn FnMut(&str) -> Result<Option<Value>, String>,
     ) -> Effects {
+        let mut effects = self.credentials_start(id, generation);
+        if effects.replies.is_empty() {
+            return effects;
+        }
+        let configured = self.configure(id, parameters(id), now);
+        effects.replies.extend(configured.replies);
+        effects.native.extend(configured.native);
+        effects
+    }
+    pub fn credentials_start(&mut self, id: &str, generation: u64) -> Effects {
         let mut effects = Effects::default();
         if self.stopping
             || !self
@@ -227,9 +237,6 @@ impl Runtime {
             return effects;
         }
         self.auth(id, json!({"state":"starting"}), &mut effects);
-        let configured = self.configure(id, parameters(id), now);
-        effects.replies.extend(configured.replies);
-        effects.native.extend(configured.native);
         effects
     }
     /// Parameter provider is explicit and injected. An inert consumer returns

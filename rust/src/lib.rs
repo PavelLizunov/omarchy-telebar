@@ -30,6 +30,7 @@ pub mod sending;
 pub mod settings_commands;
 pub mod settings_projection;
 pub mod sounds;
+pub mod startup;
 pub mod state;
 pub mod storage;
 pub mod td;

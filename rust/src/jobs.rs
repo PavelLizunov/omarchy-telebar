@@ -23,6 +23,10 @@ use std::{
 };
 #[derive(Debug)]
 pub enum Work {
+    Startup {
+        context: crate::startup::Context,
+        account: String,
+    },
     Credentials(crate::keyring::CredentialSave),
     Recording(crate::recording_jobs::Preparation),
     Clipboard {
@@ -110,6 +114,9 @@ impl Work {
     }
     fn run(self, cancel: &AtomicBool) -> Result<Action> {
         match self {
+            Self::Startup { context, account } => {
+                Ok(Action::StartupPrepared(context.run(&account, cancel)))
+            }
             Self::Credentials(save) => save.run(cancel),
             Self::Recording(preparation) => preparation.run(cancel),
             Self::Clipboard { context, files } => crate::clipboard::read(context, files, cancel),
@@ -223,6 +230,9 @@ impl Default for Pool {
     }
 }
 impl Pool {
+    pub fn active(&self) -> usize {
+        self.workers.len()
+    }
     pub fn start(&mut self, token: crate::lifecycle::Token, work: Work) -> Result<()> {
         if self.workers.len() >= 2 || self.workers.contains_key(&token) {
             return Err("still preparing an earlier message; try again in a moment".into());

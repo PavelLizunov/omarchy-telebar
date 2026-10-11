@@ -9,6 +9,12 @@ pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Token(u64);
+impl Token {
+    /// Used only in the driver's separate startup pool, never in IPC Requests.
+    pub(crate) fn startup(serial: u64) -> Self {
+        Self(serial)
+    }
+}
 
 pub struct Pending {
     pub peer: u64,

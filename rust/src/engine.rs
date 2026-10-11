@@ -199,6 +199,11 @@ impl Engine {
             .get(&account)
             .expect("admitted account exists");
         match result {
+            Ok(Action::StartupPrepared(_)) => self.finish(
+                token,
+                Err(("invalid startup continuation".into(), 0)),
+                &mut effects,
+            ),
             Ok(Action::CredentialsSaved)
             | Ok(Action::DiscardRecorded(_))
             | Ok(Action::PrepareRecorded { .. })
@@ -506,7 +511,8 @@ impl Engine {
                         let client = session.client;
                         if let Some(next) = done.next {
                             match *next {
-                                Action::CredentialsSaved
+                                Action::StartupPrepared(_)
+                                | Action::CredentialsSaved
                                 | Action::DiscardRecorded(_)
                                 | Action::PrepareRecorded { .. }
                                 | Action::Recorded { .. } => self.finish(
@@ -775,6 +781,11 @@ impl Engine {
             other => other,
         };
         match result {
+            Ok(Action::StartupPrepared(_)) => self.finish(
+                token,
+                Err(("invalid startup continuation".into(), 0)),
+                &mut effects,
+            ),
             Ok(Action::CredentialsSaved)
             | Ok(Action::DiscardRecorded(_))
             | Ok(Action::PrepareRecorded { .. })

@@ -114,7 +114,8 @@ extending the oracle with `run-differential.sh` still requires the matching dirt
 stabilization sources identified by those hashes. Do not silently regenerate it
 against old Git HEAD or publish unrelated stabilization work as a dependency.
 
-Observed source checks: 41 unit tests and eleven integration-test cases passed;
+Observed source checks: 41 unit tests and twelve default integration-test cases
+passed; one explicit verified-library startup-driver test passed separately;
 Clippy with warnings denied and both fresh/frozen differential runs passed with
 21,136 inputs and zero differences. These are bounded migration checks, not
 coverage of all 170 commands. Disposable native/application socket checks verify
@@ -143,8 +144,13 @@ bounded cancellable Secret Service save worker. Values travel through stdin,
 never argv; partial store failure is reported. Completion acknowledges the save
 before session-owned startup, and retired/expired tokens or stale generations
 cannot trigger parameters. Synthetic fake-store checks passed; no real keyring
-was contacted. Production keyring context and asynchronous startup preparation
-remain to be integrated and verified. Shared keyring lookup/store budgets now
+was contacted. Explicit asynchronous startup preparation is now integrated into
+the single native Driver with account/client/generation/serial/auth ownership.
+Startup and user jobs share a two-worker admission ceiling; shutdown cancels and
+joins both pools. A real TDLib pre-parameter driver check used an invalid disposable
+storage root, so preparation failed before Secret Service and no profile/parameters
+were opened. Complete successful startup and production context still require
+acceptance. Shared keyring lookup/store budgets now
 support an explicit deadline and cancellation. An injected database-key policy
 check confirms that a stored noncanonical Base64 representation is preserved,
 lookup failure or an existing nonempty database never generates a replacement,
