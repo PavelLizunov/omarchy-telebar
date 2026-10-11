@@ -20,6 +20,7 @@ pub struct Application {
     pub clipboard_context: Option<crate::clipboard::Context>,
     pub recording_runtime: Option<std::path::PathBuf>,
     pub catalog_sync_failed: bool,
+    pub keyring_environment: Option<std::collections::BTreeMap<String, String>>,
 }
 impl Application {
     pub fn load(home: &Storage) -> std::io::Result<Self> {
@@ -36,6 +37,7 @@ impl Application {
             clipboard_context: None,
             recording_runtime: None,
             catalog_sync_failed: false,
+            keyring_environment: None,
         })
     }
     pub fn add(

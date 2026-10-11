@@ -206,6 +206,32 @@ impl Runtime {
         }
         effects
     }
+    pub fn credentials_saved(
+        &mut self,
+        id: &str,
+        generation: u64,
+        now: Instant,
+        parameters: &mut dyn FnMut(&str) -> Result<Option<Value>, String>,
+    ) -> Effects {
+        let mut effects = Effects::default();
+        if self.stopping
+            || !self
+                .engine
+                .accounts
+                .get(id)
+                .is_some_and(|a| a.generation == generation && a.client > 0)
+            || !self.metadata.get(id).is_some_and(|m| {
+                matches!(m.auth["state"].as_str(), Some("needCredentials" | "error"))
+            })
+        {
+            return effects;
+        }
+        self.auth(id, json!({"state":"starting"}), &mut effects);
+        let configured = self.configure(id, parameters(id), now);
+        effects.replies.extend(configured.replies);
+        effects.native.extend(configured.native);
+        effects
+    }
     /// Parameter provider is explicit and injected. An inert consumer returns
     /// None; the final runtime owns verified keyring/storage preparation.
     pub fn receive(

@@ -23,6 +23,7 @@ use std::{
 };
 #[derive(Debug)]
 pub enum Work {
+    Credentials(crate::keyring::CredentialSave),
     Recording(crate::recording_jobs::Preparation),
     Clipboard {
         context: crate::clipboard::Context,
@@ -109,6 +110,7 @@ impl Work {
     }
     fn run(self, cancel: &AtomicBool) -> Result<Action> {
         match self {
+            Self::Credentials(save) => save.run(cancel),
             Self::Recording(preparation) => preparation.run(cancel),
             Self::Clipboard { context, files } => crate::clipboard::read(context, files, cancel),
             Self::Save {

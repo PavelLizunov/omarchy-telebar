@@ -101,6 +101,26 @@ impl Driver {
         self.runtime
             .engine
             .reserve_external(self.runtime.internal_pending());
+        if request.command == "credentials.set" {
+            let environment = application.keyring_environment.clone();
+            let effects = self.runtime.engine.request_using(
+                peer,
+                request,
+                Instant::now(),
+                &mut |_, args, _| {
+                    let environment = environment
+                        .clone()
+                        .ok_or("the keyring did not accept the credentials")?;
+                    Ok(crate::commands::Action::Work(
+                        crate::jobs::Work::Credentials(crate::keyring::CredentialSave::prepare(
+                            args,
+                            environment,
+                        )?),
+                    ))
+                },
+            );
+            return self.dispatch(effects);
+        }
         if matches!(
             request.command.as_str(),
             "clipboard.files" | "clipboard.image"
@@ -278,10 +298,18 @@ impl Driver {
             self.runtime
                 .engine
                 .reserve_external(self.runtime.internal_pending());
-            let next = self
-                .runtime
-                .engine
-                .job_complete(done.token, done.result, Instant::now());
+            let mut next =
+                self.runtime
+                    .engine
+                    .job_complete(done.token, done.result, Instant::now());
+            for (id, generation) in std::mem::take(&mut next.credentials_saved) {
+                let configured =
+                    self.runtime
+                        .credentials_saved(&id, generation, Instant::now(), parameters);
+                // The admitted save's acknowledgement precedes session startup.
+                next.replies.extend(configured.replies);
+                next.native.extend(configured.native);
+            }
             let next = self.dispatch(next)?;
             effects.replies.extend(next.replies);
         }

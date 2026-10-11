@@ -27,6 +27,7 @@ pub struct Effects {
     pub native: Vec<NativeRequest>,
     pub work: Vec<(Token, crate::jobs::Work)>,
     pub disconnect: Option<u64>,
+    pub credentials_saved: Vec<(String, u64)>,
 }
 struct Callback {
     token: Token,
@@ -173,6 +174,12 @@ impl Engine {
             other => other,
         };
         let result = match result {
+            Ok(Action::CredentialsSaved) => {
+                effects
+                    .credentials_saved
+                    .push((account.clone(), generation));
+                Ok(Action::Reply(json!({})))
+            }
             Ok(Action::DiscardRecorded(record)) => {
                 self.discard_recorded(&account, &record, &mut effects)
             }
@@ -192,7 +199,8 @@ impl Engine {
             .get(&account)
             .expect("admitted account exists");
         match result {
-            Ok(Action::DiscardRecorded(_))
+            Ok(Action::CredentialsSaved)
+            | Ok(Action::DiscardRecorded(_))
             | Ok(Action::PrepareRecorded { .. })
             | Ok(Action::Recorded { .. }) => {
                 unreachable!("recorded action resolved")
@@ -369,6 +377,7 @@ impl Engine {
         effects.replies.extend(next.replies);
         effects.native.extend(next.native);
         effects.work.extend(next.work);
+        effects.credentials_saved.extend(next.credentials_saved);
         effects.disconnect = next.disconnect;
         effects
     }
@@ -497,7 +506,8 @@ impl Engine {
                         let client = session.client;
                         if let Some(next) = done.next {
                             match *next {
-                                Action::DiscardRecorded(_)
+                                Action::CredentialsSaved
+                                | Action::DiscardRecorded(_)
                                 | Action::PrepareRecorded { .. }
                                 | Action::Recorded { .. } => self.finish(
                                     callback.token,
@@ -744,6 +754,12 @@ impl Engine {
         };
         let client = session.client;
         let result = match result {
+            Ok(Action::CredentialsSaved) => {
+                effects
+                    .credentials_saved
+                    .push((account.clone(), generation));
+                Ok(Action::Reply(json!({})))
+            }
             Ok(Action::DiscardRecorded(record)) => {
                 self.discard_recorded(&account, &record, &mut effects)
             }
@@ -759,7 +775,8 @@ impl Engine {
             other => other,
         };
         match result {
-            Ok(Action::DiscardRecorded(_))
+            Ok(Action::CredentialsSaved)
+            | Ok(Action::DiscardRecorded(_))
             | Ok(Action::PrepareRecorded { .. })
             | Ok(Action::Recorded { .. }) => {
                 unreachable!("recorded action resolved")

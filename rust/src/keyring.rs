@@ -57,6 +57,57 @@ pub fn classify_lookup(output: process::Output) -> io::Result<Option<String>> {
     }
     Err(io::Error::other("the keyring refused the lookup"))
 }
+pub struct CredentialSave {
+    environment: BTreeMap<String, String>,
+    id: String,
+    hash: String,
+}
+impl std::fmt::Debug for CredentialSave {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CredentialSave { credentials: [redacted] }")
+    }
+}
+impl CredentialSave {
+    pub fn prepare(
+        args: &Value,
+        environment: BTreeMap<String, String>,
+    ) -> crate::commands::Result<Self> {
+        let id = if crate::wire::is_integer(&args["apiId"]) {
+            args["apiId"].to_string()
+        } else {
+            args["apiId"].as_str().unwrap_or("").into()
+        };
+        let hash = args["apiHash"].as_str().unwrap_or("");
+        if !valid_credentials(&id, hash) {
+            return Err(
+                "the API id is a number and the API hash is 32 hexadecimal characters".into(),
+            );
+        }
+        Ok(Self {
+            environment,
+            id,
+            hash: hash.into(),
+        })
+    }
+    pub fn save_with(
+        &self,
+        store: &mut dyn FnMut(&str, &str, &str) -> io::Result<bool>,
+    ) -> crate::commands::Result<crate::commands::Action> {
+        if !store("api_id", "Omagram API id", &self.id).unwrap_or(false)
+            || !store("api_hash", "Omagram API hash", &self.hash).unwrap_or(false)
+        {
+            return Err("the keyring did not accept the credentials".into());
+        }
+        Ok(crate::commands::Action::CredentialsSaved)
+    }
+    pub fn run(
+        self,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> crate::commands::Result<crate::commands::Action> {
+        let keyring = Keyring::new(self.environment.clone());
+        self.save_with(&mut |key, label, value| keyring.set_cancel(key, label, value, cancel))
+    }
+}
 pub struct Keyring {
     environment: BTreeMap<String, String>,
 }
@@ -76,14 +127,29 @@ impl Keyring {
         classify_lookup(output)
     }
     pub fn set(&self, key: &str, label: &str, value: &str) -> io::Result<bool> {
+        self.set_cancel(
+            key,
+            label,
+            value,
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+    }
+    fn set_cancel(
+        &self,
+        key: &str,
+        label: &str,
+        value: &str,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<bool> {
         let label = format!("--label={label}");
-        Ok(process::run(
+        Ok(process::run_cancel(
             "/usr/bin/secret-tool",
             &["store", &label, "service", "omagram", "key", key],
             &self.environment,
             value.as_bytes(),
             TIMEOUT,
             4096,
+            cancel,
         )?
         .ok())
     }
