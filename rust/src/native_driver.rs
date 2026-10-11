@@ -18,6 +18,9 @@ struct ClipboardOwner {
     token: Option<crate::lifecycle::Token>,
     helper: crate::process::Managed,
     started: Instant,
+    verification: Option<crate::process::Managed>,
+    environment: std::collections::BTreeMap<String, String>,
+    digest: [u8; 32],
 }
 struct StartupOwner {
     account: String,
@@ -204,7 +207,29 @@ impl Driver {
             effects
                 .replies
                 .extend(self.runtime.expire(Instant::now()).replies);
-            if !self.runtime.engine.job_current(token) {
+            let current = !self.runtime.stopping
+                && self
+                    .runtime
+                    .engine
+                    .job_owner(token)
+                    .is_some_and(|(id, generation)| {
+                        self.runtime
+                            .engine
+                            .accounts
+                            .get(&id)
+                            .is_some_and(|a| a.client > 0 && a.generation == generation)
+                    });
+            if !current {
+                effects.replies.extend(
+                    self.runtime
+                        .engine
+                        .job_complete(
+                            token,
+                            Err("the account session was closed".into()),
+                            Instant::now(),
+                        )
+                        .replies,
+                );
                 continue;
             }
             if let Some(old) = self.clipboard_owner.take()
@@ -219,10 +244,14 @@ impl Driver {
             }
             match offer.spawn() {
                 Ok(helper) => {
+                    use sha2::Digest;
                     self.clipboard_owner = Some(ClipboardOwner {
                         token: Some(token),
                         helper,
                         started: Instant::now(),
+                        verification: None,
+                        environment: offer.environment,
+                        digest: sha2::Sha256::digest(&offer.data).into(),
                     })
                 }
                 Err(e) => effects.replies.extend(
@@ -729,10 +758,22 @@ impl Driver {
         let mut effects = self.runtime.expire(Instant::now());
         let mut retire = false;
         if let Some(owner) = &mut self.clipboard_owner {
-            let current = owner
-                .token
-                .is_none_or(|t| self.runtime.engine.job_current(t));
-            let ended = owner.helper.poll().map_or(true, |v| v.is_some());
+            let current = !self.runtime.stopping
+                && owner.token.is_none_or(|t| {
+                    self.runtime
+                        .engine
+                        .job_owner(t)
+                        .is_some_and(|(id, generation)| {
+                            self.runtime
+                                .engine
+                                .accounts
+                                .get(&id)
+                                .is_some_and(|a| a.client > 0 && a.generation == generation)
+                        })
+                });
+            // Retirement must precede even a pipe write: a disconnected offer
+            // cannot publish another chunk before the owned child is stopped.
+            let ended = !current || owner.helper.poll().map_or(true, |v| v.is_some());
             if !current
                 || ended
                 || (owner.token.is_some() && owner.started.elapsed() >= Duration::from_secs(10))
@@ -750,21 +791,57 @@ impl Driver {
                     );
                 }
                 retire = true;
-            } else if owner.token.is_some()
-                && owner.helper.input_sent()
-                && owner.started.elapsed() >= Duration::from_millis(100)
-            {
-                let token = owner.token.take().expect("pending offer");
-                effects.replies.extend(
-                    self.runtime
+            } else if owner.token.is_some() {
+                let verified = if let Some(probe) = &mut owner.verification {
+                    match probe.poll() {
+                        Ok(Some(output)) => {
+                            use sha2::Digest;
+                            Some(
+                                output.ok()
+                                    && <[u8; 32]>::from(sha2::Sha256::digest(&output.stdout))
+                                        == owner.digest,
+                            )
+                        }
+                        Err(_) => Some(false),
+                        Ok(None) => None,
+                    }
+                } else if owner.helper.input_sent()
+                    && owner.started.elapsed() >= Duration::from_millis(100)
+                {
+                    // One actual selection read, no retries or ambient clipboard
+                    // discovery. Bytes stay local and are compared only by hash.
+                    match crate::process::Managed::start(
+                        "/usr/bin/wl-paste",
+                        &["--no-newline", "--type", "image/png"],
+                        &owner.environment,
+                        &[],
+                        Duration::from_secs(5),
+                        10 * 1024 * 1024,
+                    ) {
+                        Ok(probe) => {
+                            owner.verification = Some(probe);
+                            None
+                        }
+                        Err(_) => Some(false),
+                    }
+                } else {
+                    None
+                };
+                if let Some(accepted) = verified {
+                    owner.verification = None;
+                    let token = owner.token.take().expect("pending offer");
+                    let result = if accepted {
+                        Ok(crate::commands::Action::Reply(json!({})))
+                    } else {
+                        Err("the image could not be copied to the clipboard".into())
+                    };
+                    let done = self
+                        .runtime
                         .engine
-                        .job_complete(
-                            token,
-                            Ok(crate::commands::Action::Reply(json!({}))),
-                            Instant::now(),
-                        )
-                        .replies,
-                );
+                        .job_complete(token, result, Instant::now());
+                    retire = !accepted || !done.replies.iter().any(|(_, v)| v["ok"] == true);
+                    effects.replies.extend(done.replies);
+                }
             }
         }
         if retire {
@@ -1106,6 +1183,197 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    #[ignore = "requires the reviewed isolated headless Wayland fixture"]
+    fn clipboard_offer_is_verified_by_the_actual_isolated_consumer() {
+        use sha2::Digest;
+        assert_eq!(
+            std::env::var("TELEBAR_ISOLATED_WAYLAND").as_deref(),
+            Ok("1")
+        );
+        let library = std::env::var_os("TELEBAR_TEST_TDLIB").expect("verified library");
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR").expect("isolated runtime");
+        assert_eq!(Path::new(&runtime).parent(), Some(Path::new("/tmp")));
+        assert!(
+            Path::new(&runtime)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("telebar-wayland-")
+        );
+        let environment: std::collections::BTreeMap<String, String> = [
+            ("XDG_RUNTIME_DIR".into(), runtime.into_string().unwrap()),
+            (
+                "WAYLAND_DISPLAY".into(),
+                std::env::var("WAYLAND_DISPLAY").unwrap(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let mut driver = Driver::open(Path::new(&library), "default".into(), "en".into()).unwrap();
+        driver.runtime.engine.accounts.insert(
+            "default".into(),
+            crate::engine::Account {
+                client: 41,
+                generation: 1,
+                state: crate::state::State::default(),
+                ready: true,
+            },
+        );
+        use base64::Engine;
+        let data=base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=").unwrap();
+        let request = Request::parse(
+            json!({"id":1,"cmd":"file.copyImage","args":{}})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        let effects =
+            driver
+                .runtime
+                .engine
+                .request_using(7, request, Instant::now(), &mut |_, _, _| {
+                    Ok(crate::commands::Action::ClipboardOffer(
+                        crate::clipboard::Offer {
+                            data: data.clone(),
+                            environment: environment.clone(),
+                        },
+                    ))
+                });
+        let token = effects.clipboard[0].0;
+        driver.dispatch(effects).unwrap();
+        let pid = driver.clipboard_owner.as_ref().unwrap().helper.pid();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut replies = Vec::new();
+        while driver.runtime.engine.job_current(token) && Instant::now() < deadline {
+            replies.extend(driver.poll_clipboard().replies);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].1["ok"], true);
+        assert!(driver.clipboard_owner.as_ref().unwrap().token.is_none());
+        // A second independent consumer reads after acknowledgement and IPC
+        // disconnect. The foreground owner must continue serving exact bytes.
+        driver.runtime.engine.retire_peer(7);
+        driver.poll_clipboard();
+        let pasted = crate::process::run(
+            "/usr/bin/wl-paste",
+            &["--no-newline", "--type", "image/png"],
+            &environment,
+            &[],
+            Duration::from_secs(5),
+            10 * 1024 * 1024,
+        )
+        .unwrap();
+        assert!(pasted.ok());
+        assert_eq!(pasted.stdout, data);
+        // An explicitly mismatching read cannot produce success. Inject only a
+        // finite inert reader; it does not touch another clipboard selection.
+        let request = Request::parse(
+            json!({"id":2,"cmd":"file.copyImage","args":{}})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        let mut effects =
+            driver
+                .runtime
+                .engine
+                .request_using(8, request, Instant::now(), &mut |_, _, _| {
+                    Ok(crate::commands::Action::ClipboardOffer(
+                        crate::clipboard::Offer {
+                            data: data.clone(),
+                            environment: environment.clone(),
+                        },
+                    ))
+                });
+        let token = effects.clipboard.pop().unwrap().0;
+        let owner = driver.clipboard_owner.as_mut().unwrap();
+        owner.token = Some(token);
+        owner.digest = sha2::Sha256::digest(&data).into();
+        owner.started = Instant::now();
+        owner.verification = Some(
+            crate::process::Managed::start(
+                "/usr/bin/cat",
+                &[],
+                &Default::default(),
+                b"different",
+                Duration::from_secs(2),
+                64,
+            )
+            .unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut rejected = false;
+        while driver.clipboard_owner.is_some() && Instant::now() < deadline {
+            rejected |= driver
+                .poll_clipboard()
+                .replies
+                .iter()
+                .any(|(_, v)| v["id"] == 2 && v["ok"] == false);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(rejected);
+        assert!(driver.clipboard_owner.is_none());
+        assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        let request = Request::parse(
+            json!({"id":3,"cmd":"file.copyImage","args":{}})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        let effects =
+            driver
+                .runtime
+                .engine
+                .request_using(9, request, Instant::now(), &mut |_, _, _| {
+                    Ok(crate::commands::Action::ClipboardOffer(
+                        crate::clipboard::Offer {
+                            data: data.clone(),
+                            environment: environment.clone(),
+                        },
+                    ))
+                });
+        driver.dispatch(effects).unwrap();
+        let owner_pid = driver.clipboard_owner.as_ref().unwrap().helper.pid();
+        // Shutdown also owns any still-pending selection verification helper.
+        driver.clipboard_owner.as_mut().unwrap().verification = Some(
+            crate::process::Managed::start(
+                "/usr/bin/sleep",
+                &["10"],
+                &Default::default(),
+                &[],
+                Duration::from_secs(12),
+                64,
+            )
+            .unwrap(),
+        );
+        let reader_pid = driver
+            .clipboard_owner
+            .as_ref()
+            .unwrap()
+            .verification
+            .as_ref()
+            .unwrap()
+            .pid();
+        driver
+            .runtime
+            .engine
+            .accounts
+            .get_mut("default")
+            .unwrap()
+            .client = 0;
+        let closed = driver.close(Duration::ZERO).unwrap();
+        assert!(
+            closed
+                .replies
+                .iter()
+                .any(|(_, v)| v["id"] == 3 && v["ok"] == false)
+        );
+        assert!(!Path::new(&format!("/proc/{owner_pid}")).exists());
+        assert!(!Path::new(&format!("/proc/{reader_pid}")).exists());
+    }
+    #[test]
     #[ignore = "requires an explicitly provided verified TDLib library"]
     fn clipboard_owner_retires_without_touching_the_session_clipboard() {
         let library = std::env::var_os("TELEBAR_TEST_TDLIB").expect("verified library");
@@ -1153,6 +1421,9 @@ mod tests {
             token: Some(token),
             helper,
             started: Instant::now(),
+            verification: None,
+            environment: Default::default(),
+            digest: [0; 32],
         });
         let until = Instant::now() + Duration::from_secs(2);
         let mut failure = false;
@@ -1185,11 +1456,62 @@ mod tests {
             token: Some(token),
             helper,
             started: Instant::now(),
+            verification: None,
+            environment: Default::default(),
+            digest: [0; 32],
         });
         driver.runtime.engine.retire_peer(7);
         assert!(driver.poll_clipboard().replies.is_empty());
         assert!(driver.clipboard_owner.is_none());
         assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        let token = admit(&mut driver.runtime.engine, 3);
+        let helper = crate::process::Managed::start(
+            "/usr/bin/sleep",
+            &["10"],
+            &Default::default(),
+            &[],
+            Duration::from_secs(12),
+            64,
+        )
+        .unwrap();
+        let pid = helper.pid();
+        driver.clipboard_owner = Some(ClipboardOwner {
+            token: Some(token),
+            helper,
+            started: Instant::now(),
+            verification: None,
+            environment: Default::default(),
+            digest: [0; 32],
+        });
+        driver
+            .runtime
+            .engine
+            .accounts
+            .get_mut("default")
+            .unwrap()
+            .generation += 1;
+        let retired = driver.poll_clipboard();
+        assert!(
+            retired.replies.is_empty(),
+            "stale generation cannot deliver a completion"
+        );
+        assert!(driver.clipboard_owner.is_none());
+        assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        let token = admit(&mut driver.runtime.engine, 4);
+        driver
+            .runtime
+            .engine
+            .expire(Instant::now() + Duration::from_secs(181));
+        let mut late = Effects::default();
+        late.clipboard.push((
+            token,
+            crate::clipboard::Offer {
+                data: vec![],
+                environment: Default::default(),
+            },
+        ));
+        assert!(driver.dispatch(late).unwrap().replies.is_empty());
+        assert!(driver.clipboard_owner.is_none());
         driver
             .runtime
             .engine

@@ -115,10 +115,12 @@ stabilization sources identified by those hashes. Do not silently regenerate it
 against old Git HEAD or publish unrelated stabilization work as a dependency.
 
 Observed source checks: 41 default unit tests and eighteen default integration-test
-cases passed; four ignored-by-default verified-library tests passed explicitly
+cases passed; four verified-library tests passed explicitly
 (startup ownership, three-client startup, dummy-audio Driver lifecycle and
-synthetic clipboard-owner retirement). Run
-these native tests serially with `-- --ignored --test-threads=1`;
+synthetic clipboard-owner retirement), plus one isolated real Wayland test.
+Run library tests serially with
+`-- --ignored --test-threads=1 --skip clipboard_offer_is_verified_by_the_actual_isolated_consumer`;
+the fifth test requires the separate reviewed namespace below.
 Clippy with warnings denied and both fresh/frozen differential runs passed with
 21,136 inputs and zero differences. These are bounded migration checks, not
 coverage of all 170 commands. Disposable native/application socket checks verify
@@ -224,14 +226,28 @@ coverage and complete capture/clipboard ownership still need acceptance.
 permission before a bounded no-follow PNG worker. Prepared image bytes reach a
 still-admitted token and a Driver-owned foreground `wl-copy` child, never an
 unmanaged selection fork. Pending writes have a ten-second readiness budget;
-retirement/replacement/shutdown kills and reaps only the exact child. The current
-implementation acknowledges after stdin delivery and a 100-ms alive check, NOT
-a verified Wayland selection-ready event; this remains an acceptance gap.
-Successful selection owners are currently capped at one hour (also not approved
-final clipboard-persistence parity). Tests cover synthetic permission/bytes,
-redacted offers and exited-reader/disconnect retirement without real Wayland.
-No session clipboard was read or replaced. An isolated Wayland selection-consumer
-fixture is still needed before this owner can count as complete.
+retirement/replacement/shutdown kills and reaps only the exact child. After stdin
+delivery, one bounded `wl-paste` read verifies the SHA-256 of the actual selection
+before success; no retries. A 100-ms grace only gates the probe, never success.
+Successful selection owners are currently capped at one hour (not approved final
+clipboard-persistence parity). Synthetic checks cover permission/bytes, redacted
+offers and exited-reader/disconnect retirement. A real Driver test additionally
+used headless labwc/pixman inside a private network/home/device/bus-free namespace:
+actual foreground wl-copy, verification, independent read after acknowledgement
+and peer disconnect, mismatch rejection and exact helper/reader shutdown passed.
+No session clipboard was read or replaced. No physical desktop/UI acceptance.
+
+Reproduce the isolated check with an exact current `cargo test --lib --no-run`
+executable, the verified TDLib and a reviewed labwc package root:
+
+```sh
+bash rust/tests/run-clipboard-wayland.sh <lib-test-binary> <verified-tdlib> <labwc-root>
+```
+
+The observed fixture was built outside Git from signature-verified packages from
+the configured Arch mirror: labwc 0.20.2-1, wlroots0.20 0.20.2-1,
+libliftoff 0.5.0-1 and libsfdo 0.1.4-1. The script does not install packages or
+alter the live compositor. Review new fixture dependencies before reuse.
 
 Remaining work includes complete production startup and compatible hello,
 complete account/catalog synchronization and media roots,
