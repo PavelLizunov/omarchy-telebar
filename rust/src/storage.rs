@@ -174,6 +174,25 @@ impl Storage {
         }
         parent.sync_all()
     }
+    /// Remove only an empty owned directory; never recursively delete contents.
+    pub fn remove_empty_directory(&self, path: &str) -> io::Result<()> {
+        let parts = self.parts(path)?;
+        let parent = self.directory(&parts[..parts.len() - 1], false)?;
+        let directory = open_at(
+            &parent,
+            parts[parts.len() - 1],
+            libc::O_RDONLY | libc::O_DIRECTORY,
+            0,
+        )?;
+        owned(&directory, true)?;
+        let name = cstring(parts[parts.len() - 1])?;
+        // SAFETY: checked single component and pinned parent; AT_REMOVEDIR
+        // refuses nonempty directories and never follows a replacement link.
+        if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        parent.sync_all()
+    }
     pub fn read(&self, path: &str, limit: usize) -> io::Result<Option<Vec<u8>>> {
         let parts = self.parts(path)?;
         let dir = match self.directory(&parts[..parts.len() - 1], false) {

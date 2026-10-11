@@ -364,7 +364,7 @@ impl Driver {
         }
         if matches!(
             request.command.as_str(),
-            "sticker.lottie" | "storage.stats" | "storage.clear"
+            "sticker.lottie" | "videonote.animation" | "storage.stats" | "storage.clear"
         ) {
             let context = application.upload_context.as_ref().map(|c| c.0.clone());
             let effects = self.runtime.engine.request_using(

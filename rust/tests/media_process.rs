@@ -69,5 +69,36 @@ fn real_ffmpeg_prepares_synthetic_voice_and_round_video() {
         telebar_runtime::media::probe(note.to_str().unwrap()),
         [1, 480, 480]
     );
+    let job = || telebar_runtime::sticker_cache::Job::Note {
+        home: root.clone(),
+        path: note.to_str().unwrap().into(),
+        roots: vec![root.to_str().unwrap().into()],
+    };
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let telebar_runtime::commands::Action::Reply(animation) = job().run(&cancel).unwrap() else {
+        panic!("animation")
+    };
+    let path = animation["path"].as_str().unwrap();
+    assert_eq!(animation["fps"], 20);
+    assert_eq!(telebar_runtime::media::probe(path)[1..], [240, 240]);
+    assert_eq!(fs::read(path).unwrap().get(8..12), Some(&b"WEBP"[..]));
+    let telebar_runtime::commands::Action::Reply(cached) = job().run(&cancel).unwrap() else {
+        panic!("cache")
+    };
+    assert_eq!(cached, animation);
+    let entries = fs::read_dir(root.join(".cache/omagram/notes"))
+        .unwrap()
+        .collect::<std::io::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        entries.len(),
+        1,
+        "owned source/partial containers must be removed"
+    );
+    assert!(
+        job()
+            .run(&std::sync::atomic::AtomicBool::new(true))
+            .is_err()
+    );
     fs::remove_dir_all(root).unwrap();
 }

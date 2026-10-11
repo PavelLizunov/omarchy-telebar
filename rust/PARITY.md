@@ -187,6 +187,16 @@ input, expansion overflow, cancellation, symlink refusal and preserved sent
 files. Failed-hash memoization, exact scheduling/capacity errors and actual QML
 Lottie rendering remain unverified; no production storage was cleared.
 
+`videonote.animation` now uses a native download continuation and cancellable
+worker with an owned stable source snapshot (64 MiB maximum). It emits bounded
+silent 240-pixel / 20-fps animated WebP through ffmpeg, preserves the original
+path/size/nanosecond-mtime SHA-256 cache identity, refreshes cached demand time
+and cleans its exact source/partial/empty container. Output has a 16 MiB disk
+cap plus complete RIFF-size validation; note-cache trimming keeps 128 MiB / 512
+finished pictures. Real synthetic ffmpeg conversion/cache/cancellation checks
+passed. No actual reported clip, physical UI playback or camera input was tested.
+Crash-left snapshot GC and exhaustive cache-limit acceptance remain incomplete.
+
 Remaining work includes complete production startup and compatible hello,
 complete account/catalog synchronization and media roots,
 notification D-Bus actions and sounds, global shortcut effects, managed playback,
