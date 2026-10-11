@@ -229,6 +229,63 @@ pub fn read(context: Context, files: bool, cancel: &AtomicBool) -> Result<Action
         json!({"path":""})
     }))
 }
+pub fn prepare_copy(
+    path: &str,
+    roots: &[String],
+    context: Context,
+    cancel: &AtomicBool,
+) -> Result<Action> {
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err("the connection was closed".into());
+    }
+    let root = roots
+        .iter()
+        .filter(|r| path.starts_with(&format!("{}/", r.trim_end_matches('/'))))
+        .max_by_key(|r| r.len())
+        .ok_or("that file is not one of Telebar's")?;
+    let source = Storage::open(std::path::Path::new(root))
+        .and_then(|s| s.read(&path[root.trim_end_matches('/').len() + 1..], MAX))
+        .map_err(|_| "the image could not be copied (maximum 10 MiB)")?
+        .filter(|b| !b.is_empty())
+        .ok_or("the image is empty or missing")?;
+    let data = png(&source, cancel)?;
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err("the connection was closed".into());
+    }
+    Ok(Action::ClipboardOffer(Offer {
+        data,
+        environment: context.environment,
+    }))
+}
+pub struct Offer {
+    pub data: Vec<u8>,
+    pub environment: BTreeMap<String, String>,
+}
+impl std::fmt::Debug for Offer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Offer {{ bytes: {}, content: [redacted] }}",
+            self.data.len()
+        )
+    }
+}
+impl Offer {
+    pub fn spawn(&self) -> Result<process::Managed> {
+        if self.data.is_empty() || self.data.len() > MAX || !self.data.starts_with(PNG) {
+            return Err("the image could not be copied to the clipboard".into());
+        }
+        process::Managed::start(
+            "/usr/bin/wl-copy",
+            &["--foreground", "--type", "image/png"],
+            &self.environment,
+            &self.data,
+            Duration::from_secs(3600),
+            4096,
+        )
+        .map_err(|_| "the image could not be copied to the clipboard".into())
+    }
+}
 pub fn project(value: &Value) -> Value {
     use base64::Engine;
     let data = base64::engine::general_purpose::STANDARD

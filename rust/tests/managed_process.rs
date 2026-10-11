@@ -29,6 +29,20 @@ fn managed_helpers_finish_drain_signal_timeout_and_drop_without_orphans() {
     assert!(output.ok());
     assert_eq!(output.stdout, b"synthetic");
     assert!(echo.poll().unwrap().is_none());
+    let mut refused = Managed::start(
+        "/usr/bin/true",
+        &[],
+        &BTreeMap::new(),
+        &vec![1; 1024 * 1024],
+        Duration::from_secs(2),
+        64,
+    )
+    .unwrap();
+    assert!(wait(&mut refused).ok());
+    assert!(
+        !refused.input_sent(),
+        "exited reader must not masquerade as accepted input"
+    );
     let mut noisy = Managed::start(
         "/usr/bin/yes",
         &[],

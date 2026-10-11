@@ -177,6 +177,7 @@ pub struct Managed {
     deadline: Instant,
     output: Output,
     finished: bool,
+    input_complete: bool,
 }
 impl Managed {
     pub fn start(
@@ -242,13 +243,14 @@ impl Managed {
                 truncated: false,
             },
             finished: false,
+            input_complete: input.is_empty(),
         })
     }
     pub fn pid(&self) -> u32 {
         self.child.child.id()
     }
     pub fn input_sent(&self) -> bool {
-        self.sent == self.input.len()
+        self.input_complete
     }
     pub fn signal_stop(&mut self, signal: i32, grace: Duration) -> io::Result<()> {
         if !matches!(signal, libc::SIGINT | libc::SIGTERM) || grace > Duration::from_secs(5) {
@@ -303,7 +305,10 @@ impl Managed {
                 self.sent = 0;
             } else {
                 match pipe.write(&self.input[self.sent..]) {
-                    Ok(n) => self.sent += n,
+                    Ok(n) => {
+                        self.sent += n;
+                        self.input_complete = self.sent == self.input.len();
+                    }
                     Err(e)
                         if matches!(
                             e.kind(),

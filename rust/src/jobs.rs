@@ -24,6 +24,11 @@ use std::{
 };
 #[derive(Debug)]
 pub enum Work {
+    CopyImage {
+        path: String,
+        roots: Vec<String>,
+        context: crate::clipboard::Context,
+    },
     Cache(crate::sticker_cache::Job),
     Startup {
         context: crate::startup::Context,
@@ -116,6 +121,11 @@ impl Work {
     }
     fn run(self, cancel: &AtomicBool) -> Result<Action> {
         match self {
+            Self::CopyImage {
+                path,
+                roots,
+                context,
+            } => crate::clipboard::prepare_copy(&path, &roots, context, cancel),
             Self::Cache(job) => job.run(cancel),
             Self::Startup { context, account } => {
                 Ok(Action::StartupPrepared(context.run(&account, cancel)))

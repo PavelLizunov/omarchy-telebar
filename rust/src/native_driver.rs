@@ -14,6 +14,11 @@ pub type LocalHandler<'a> = dyn FnMut(
         &crate::state::State,
     ) -> Option<crate::commands::Result<crate::commands::Action>>
     + 'a;
+struct ClipboardOwner {
+    token: Option<crate::lifecycle::Token>,
+    helper: crate::process::Managed,
+    started: Instant,
+}
 struct StartupOwner {
     account: String,
     client: i32,
@@ -46,6 +51,7 @@ pub struct Driver {
     startup_owners: std::collections::HashMap<crate::lifecycle::Token, StartupOwner>,
     startup_serial: u64,
     startup_queue: std::collections::VecDeque<StartupOwner>,
+    clipboard_owner: Option<ClipboardOwner>,
     playback_serial: u64,
     player: Option<(String, u64, crate::process::Managed, std::fs::File)>,
 }
@@ -61,6 +67,7 @@ impl Driver {
             startup_owners: std::collections::HashMap::new(),
             startup_serial: 1,
             startup_queue: std::collections::VecDeque::new(),
+            clipboard_owner: None,
             playback_serial: 0,
             player: None,
         })
@@ -192,6 +199,39 @@ impl Driver {
             let next = self.complete_playback(token, start, Instant::now());
             effects.replies.extend(next.replies);
             effects.native.extend(next.native);
+        }
+        for (token, offer) in std::mem::take(&mut effects.clipboard) {
+            effects
+                .replies
+                .extend(self.runtime.expire(Instant::now()).replies);
+            if !self.runtime.engine.job_current(token) {
+                continue;
+            }
+            if let Some(old) = self.clipboard_owner.take()
+                && let Some(token) = old.token
+            {
+                let done = self.runtime.engine.job_complete(
+                    token,
+                    Err("the clipboard selection changed".into()),
+                    Instant::now(),
+                );
+                effects.replies.extend(done.replies);
+            }
+            match offer.spawn() {
+                Ok(helper) => {
+                    self.clipboard_owner = Some(ClipboardOwner {
+                        token: Some(token),
+                        helper,
+                        started: Instant::now(),
+                    })
+                }
+                Err(e) => effects.replies.extend(
+                    self.runtime
+                        .engine
+                        .job_complete(token, Err(e), Instant::now())
+                        .replies,
+                ),
+            }
         }
         for (token, work) in std::mem::take(&mut effects.work) {
             let started = if self.jobs.active() + self.startup_jobs.active() >= 2 {
@@ -511,6 +551,23 @@ impl Driver {
             );
             return self.dispatch(effects);
         }
+        if request.command == "file.copyImage" {
+            let context = application.clipboard_context.clone();
+            let effects = self.runtime.engine.request_using(
+                peer,
+                request,
+                Instant::now(),
+                &mut |_, args, _| {
+                    crate::export::prepare_copy(
+                        args,
+                        context
+                            .clone()
+                            .ok_or("explicit clipboard context missing")?,
+                    )
+                },
+            );
+            return self.dispatch(effects);
+        }
         if request.command == "file.save" {
             let context = application
                 .upload_context
@@ -644,6 +701,7 @@ impl Driver {
             effects.replies.extend(next.replies);
         }
         effects.replies.extend(self.poll_player().replies);
+        effects.replies.extend(self.poll_clipboard().replies);
         let queued = self.dispatch_startup();
         effects.replies.extend(queued.replies);
         let expired = self.runtime.expire(Instant::now());
@@ -667,9 +725,57 @@ impl Driver {
         };
         self.runtime.configure(&owner.account, query, now)
     }
+    fn poll_clipboard(&mut self) -> Effects {
+        let mut effects = self.runtime.expire(Instant::now());
+        let mut retire = false;
+        if let Some(owner) = &mut self.clipboard_owner {
+            let current = owner
+                .token
+                .is_none_or(|t| self.runtime.engine.job_current(t));
+            let ended = owner.helper.poll().map_or(true, |v| v.is_some());
+            if !current
+                || ended
+                || (owner.token.is_some() && owner.started.elapsed() >= Duration::from_secs(10))
+            {
+                if let Some(token) = owner.token.take() {
+                    effects.replies.extend(
+                        self.runtime
+                            .engine
+                            .job_complete(
+                                token,
+                                Err("the image could not be copied to the clipboard".into()),
+                                Instant::now(),
+                            )
+                            .replies,
+                    );
+                }
+                retire = true;
+            } else if owner.token.is_some()
+                && owner.helper.input_sent()
+                && owner.started.elapsed() >= Duration::from_millis(100)
+            {
+                let token = owner.token.take().expect("pending offer");
+                effects.replies.extend(
+                    self.runtime
+                        .engine
+                        .job_complete(
+                            token,
+                            Ok(crate::commands::Action::Reply(json!({}))),
+                            Instant::now(),
+                        )
+                        .replies,
+                );
+            }
+        }
+        if retire {
+            self.clipboard_owner = None;
+        }
+        effects
+    }
     pub fn close(&mut self, timeout: Duration) -> io::Result<Effects> {
         self.runtime.stopping = true;
         self.player = None;
+        self.clipboard_owner = None;
         self.jobs = crate::jobs::Pool::default();
         self.startup_jobs = crate::jobs::Pool::default();
         self.startup_owners.clear();
@@ -998,5 +1104,99 @@ mod tests {
             .client = 0;
         driver.close(Duration::ZERO).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[ignore = "requires an explicitly provided verified TDLib library"]
+    fn clipboard_owner_retires_without_touching_the_session_clipboard() {
+        let library = std::env::var_os("TELEBAR_TEST_TDLIB").expect("verified library");
+        let mut driver = Driver::open(Path::new(&library), "default".into(), "en".into()).unwrap();
+        driver.runtime.engine.accounts.insert(
+            "default".into(),
+            crate::engine::Account {
+                client: 41,
+                generation: 1,
+                state: crate::state::State::default(),
+                ready: true,
+            },
+        );
+        let admit = |engine: &mut crate::engine::Engine, id| {
+            let request = Request::parse(
+                json!({"id":id,"cmd":"file.copyImage","args":{}})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            let mut effects = engine.request_using(7, request, Instant::now(), &mut |_, _, _| {
+                Ok(crate::commands::Action::ClipboardOffer(
+                    crate::clipboard::Offer {
+                        data: vec![],
+                        environment: Default::default(),
+                    },
+                ))
+            });
+            effects.clipboard.pop().unwrap().0
+        };
+        let token = admit(&mut driver.runtime.engine, 1);
+        // Cat consumes input then exits: even successful helper exit is not a
+        // persistent clipboard offer. No wl-copy or real Wayland is contacted.
+        let helper = crate::process::Managed::start(
+            "/usr/bin/cat",
+            &[],
+            &Default::default(),
+            b"synthetic",
+            Duration::from_secs(2),
+            64,
+        )
+        .unwrap();
+        let pid = helper.pid();
+        driver.clipboard_owner = Some(ClipboardOwner {
+            token: Some(token),
+            helper,
+            started: Instant::now(),
+        });
+        let until = Instant::now() + Duration::from_secs(2);
+        let mut failure = false;
+        while Instant::now() < until {
+            let e = driver.poll_clipboard();
+            failure |= e
+                .replies
+                .iter()
+                .any(|(_, v)| v["id"] == 1 && v["ok"] == false);
+            if driver.clipboard_owner.is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(failure);
+        assert!(driver.clipboard_owner.is_none());
+        assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        let token = admit(&mut driver.runtime.engine, 2);
+        let helper = crate::process::Managed::start(
+            "/usr/bin/sleep",
+            &["10"],
+            &Default::default(),
+            &[],
+            Duration::from_secs(12),
+            64,
+        )
+        .unwrap();
+        let pid = helper.pid();
+        driver.clipboard_owner = Some(ClipboardOwner {
+            token: Some(token),
+            helper,
+            started: Instant::now(),
+        });
+        driver.runtime.engine.retire_peer(7);
+        assert!(driver.poll_clipboard().replies.is_empty());
+        assert!(driver.clipboard_owner.is_none());
+        assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        driver
+            .runtime
+            .engine
+            .accounts
+            .get_mut("default")
+            .unwrap()
+            .client = 0;
+        driver.close(Duration::ZERO).unwrap();
     }
 }

@@ -13,13 +13,18 @@ pub struct Context {
     file: i128,
     photo: bool,
     save: Option<crate::files::Save>,
+    copy: Option<crate::clipboard::Context>,
 }
 #[derive(Debug)]
 pub enum Gate {
     File(Context),
     Message(Context, String),
     Rich(Context, String),
-    Permission(String, Option<crate::files::Save>),
+    Permission(
+        String,
+        Option<crate::files::Save>,
+        Option<crate::clipboard::Context>,
+    ),
 }
 fn native(query: Value, gate: Gate) -> Action {
     Action::Native {
@@ -34,6 +39,7 @@ fn prepare_with(args: &Value, photo: bool, save: Option<crate::files::Save>) -> 
         file: arg_int(args, "fileId", Some(1), Some(i32::MAX as i128), None)?,
         photo,
         save,
+        copy: None,
     };
     Ok(native(
         json!({"@type":"getFile","file_id":number(context.file)}),
@@ -53,6 +59,17 @@ pub fn prepare_save(args: &Value, home: std::path::PathBuf) -> Result<Action> {
         }),
     )
 }
+pub fn prepare_copy(args: &Value, clipboard: crate::clipboard::Context) -> Result<Action> {
+    let mut action = prepare_with(args, true, None)?;
+    if let Action::Native {
+        answer: Answer::Export(Gate::File(context)),
+        ..
+    } = &mut action
+    {
+        context.copy = Some(clipboard);
+    }
+    Ok(action)
+}
 impl Context {
     fn copy(&self) -> Self {
         Self {
@@ -61,6 +78,7 @@ impl Context {
             file: self.file,
             photo: self.photo,
             save: self.save.clone(),
+            copy: self.copy.clone(),
         }
     }
     fn permission(&self, body: &Value, path: String) -> Result<Action> {
@@ -77,7 +95,7 @@ impl Context {
         }
         Ok(native(
             json!({"@type":"getMessageProperties","chat_id":number(self.chat),"message_id":number(self.message)}),
-            Gate::Permission(path, self.save.clone()),
+            Gate::Permission(path, self.save.clone(), self.copy.clone()),
         ))
     }
 }
@@ -120,11 +138,17 @@ impl Gate {
                 &crate::rich_projection::rich_message(event, &state.roots),
                 path.clone(),
             )?,
-            Self::Permission(path, save) => {
+            Self::Permission(path, save, clipboard) => {
                 if event["can_be_saved"] != true {
                     return Err("this message's media cannot be saved or copied".into());
                 }
-                if let Some(save) = save {
+                if let Some(context) = clipboard {
+                    Action::Work(crate::jobs::Work::CopyImage {
+                        path: path.clone(),
+                        roots: state.roots.clone(),
+                        context: context.clone(),
+                    })
+                } else if let Some(save) = save {
                     Action::Work(crate::jobs::Work::Save {
                         path: path.clone(),
                         roots: state.roots.clone(),
@@ -175,6 +199,7 @@ mod tests {
             file: 3,
             photo: false,
             save: None,
+            copy: None,
         });
         assert!(
             gate.complete(&json!({"@type":"file","id":4}), &state)
@@ -185,7 +210,7 @@ mod tests {
             gate.complete(&json!({"@type":"message","id":7,"chat_id":43}), &state)
                 .is_err()
         );
-        let denied = Gate::Permission("/fixture/files/a".into(), None);
+        let denied = Gate::Permission("/fixture/files/a".into(), None, None);
         assert!(
             denied
                 .complete(&json!({"can_be_saved":false}), &state)

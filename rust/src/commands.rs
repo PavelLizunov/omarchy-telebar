@@ -125,6 +125,7 @@ fn optional_text<'a>(args: &'a Value, name: &str, max: usize, error: &str) -> Re
 
 #[derive(Debug)]
 pub enum Action {
+    ClipboardOffer(crate::clipboard::Offer),
     Playback(crate::playback::Start),
     Reply(Value),
     Work(crate::jobs::Work),
@@ -1411,7 +1412,8 @@ pub fn project(value: &Value, roots: &[String]) -> Value {
     ) {
         Err(error) => json!({"error":error}),
         Ok(Action::Reply(result)) => json!({"result":result,"queries":[]}),
-        Ok(Action::Playback(_))
+        Ok(Action::ClipboardOffer(_))
+        | Ok(Action::Playback(_))
         | Ok(Action::Work(_))
         | Ok(Action::Recorded { .. })
         | Ok(Action::PrepareRecorded { .. })
@@ -1440,7 +1442,8 @@ pub fn project(value: &Value, roots: &[String]) -> Value {
                     Action::AccountNative { .. } => {
                         return json!({"error":"fixture requires registered account routing","queries":queries});
                     }
-                    Action::Playback(_)
+                    Action::ClipboardOffer(_)
+                    | Action::Playback(_)
                     | Action::Work(_)
                     | Action::Recorded { .. }
                     | Action::PrepareRecorded { .. }

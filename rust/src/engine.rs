@@ -29,6 +29,7 @@ pub struct Effects {
     pub disconnect: Option<u64>,
     pub credentials_saved: Vec<(String, u64)>,
     pub playback: Vec<(Token, crate::playback::Start)>,
+    pub clipboard: Vec<(Token, crate::clipboard::Offer)>,
 }
 struct Callback {
     token: Token,
@@ -200,6 +201,7 @@ impl Engine {
             .get(&account)
             .expect("admitted account exists");
         match result {
+            Ok(Action::ClipboardOffer(offer)) => effects.clipboard.push((token, offer)),
             Ok(Action::Playback(start)) => effects.playback.push((token, start)),
             Ok(Action::StartupPrepared(_)) => self.finish(
                 token,
@@ -386,6 +388,7 @@ impl Engine {
         effects.work.extend(next.work);
         effects.credentials_saved.extend(next.credentials_saved);
         effects.playback.extend(next.playback);
+        effects.clipboard.extend(next.clipboard);
         effects.disconnect = next.disconnect;
         effects
     }
@@ -528,6 +531,9 @@ impl Engine {
                                     Err(("invalid account continuation".into(), 0)),
                                     &mut effects,
                                 ),
+                                Action::ClipboardOffer(offer) => {
+                                    effects.clipboard.push((callback.token, offer))
+                                }
                                 Action::Playback(start) => {
                                     effects.playback.push((callback.token, start))
                                 }
@@ -792,6 +798,7 @@ impl Engine {
             other => other,
         };
         match result {
+            Ok(Action::ClipboardOffer(offer)) => effects.clipboard.push((token, offer)),
             Ok(Action::Playback(start)) => effects.playback.push((token, start)),
             Ok(Action::StartupPrepared(_)) => self.finish(
                 token,
