@@ -229,8 +229,9 @@ unmanaged selection fork. Pending writes have a ten-second readiness budget;
 retirement/replacement/shutdown kills and reaps only the exact child. After stdin
 delivery, one bounded `wl-paste` read verifies the SHA-256 of the actual selection
 before success; no retries. A 100-ms grace only gates the probe, never success.
-Successful selection owners are currently capped at one hour (not approved final
-clipboard-persistence parity). Synthetic checks cover permission/bytes, redacted
+Successful selections have no arbitrary expiry: their foreground process belongs
+to the Driver until selection replacement, helper exit or shutdown. Readiness is
+still finite. Synthetic checks cover permission/bytes, redacted
 offers and exited-reader/disconnect retirement. A real Driver test additionally
 used headless labwc/pixman inside a private network/home/device/bus-free namespace:
 actual foreground wl-copy, verification, independent read after acknowledgement

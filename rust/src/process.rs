@@ -164,7 +164,8 @@ pub fn run_cancel(
     }
 }
 
-/// Pollable foreground helper, owned by the native loop or a finite worker.
+/// Pollable foreground child, owned by the native loop or a finite worker.
+/// Finite helpers have a deadline; a persistent selection ends with its owner.
 /// No auto-fork, detached child or restart loop is accepted by this owner.
 pub struct Managed {
     child: Owned,
@@ -174,7 +175,7 @@ pub struct Managed {
     input: Vec<u8>,
     sent: usize,
     limit: usize,
-    deadline: Instant,
+    deadline: Option<Instant>,
     output: Output,
     finished: bool,
     input_complete: bool,
@@ -191,6 +192,40 @@ impl Managed {
         if !executable.starts_with('/')
             || timeout.is_zero()
             || timeout > Duration::from_secs(3600)
+            || limit > 32 * 1024 * 1024
+            || input.len() > 32 * 1024 * 1024
+        {
+            return Err(io::Error::other("invalid helper bounds"));
+        }
+        Self::start_until(
+            executable,
+            args,
+            environment,
+            input,
+            Some(Instant::now() + timeout),
+            limit,
+        )
+    }
+    /// One foreground selection service, retired on replacement/owner shutdown.
+    /// This is not a detached process or a permission to run an unbounded worker.
+    pub fn start_owned(
+        executable: &str,
+        args: &[&str],
+        environment: &BTreeMap<String, String>,
+        input: &[u8],
+        limit: usize,
+    ) -> io::Result<Self> {
+        Self::start_until(executable, args, environment, input, None, limit)
+    }
+    fn start_until(
+        executable: &str,
+        args: &[&str],
+        environment: &BTreeMap<String, String>,
+        input: &[u8],
+        deadline: Option<Instant>,
+        limit: usize,
+    ) -> io::Result<Self> {
+        if !executable.starts_with('/')
             || limit > 32 * 1024 * 1024
             || input.len() > 32 * 1024 * 1024
         {
@@ -234,7 +269,7 @@ impl Managed {
             input: input.to_vec(),
             sent: 0,
             limit,
-            deadline: Instant::now() + timeout,
+            deadline,
             output: Output {
                 code: None,
                 stdout: Vec::new(),
@@ -260,7 +295,8 @@ impl Managed {
             return Ok(());
         }
         self.child.signal(signal)?;
-        self.deadline = self.deadline.min(Instant::now() + grace);
+        let until = Instant::now() + grace;
+        self.deadline = Some(self.deadline.map_or(until, |deadline| deadline.min(until)));
         Ok(())
     }
     fn finish(&mut self) -> io::Result<Output> {
@@ -294,7 +330,11 @@ impl Managed {
         }
         self.output.truncated |= drain(&mut self.stdout, &mut self.output.stdout, self.limit)?;
         self.output.truncated |= drain(&mut self.stderr, &mut self.output.stderr, self.limit)?;
-        if self.output.truncated || Instant::now() >= self.deadline {
+        if self.output.truncated
+            || self
+                .deadline
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        {
             self.output.timed_out = !self.output.truncated;
             return self.finish().map(Some);
         }

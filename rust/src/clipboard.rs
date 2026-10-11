@@ -275,12 +275,11 @@ impl Offer {
         if self.data.is_empty() || self.data.len() > MAX || !self.data.starts_with(PNG) {
             return Err("the image could not be copied to the clipboard".into());
         }
-        process::Managed::start(
+        process::Managed::start_owned(
             "/usr/bin/wl-copy",
             &["--foreground", "--type", "image/png"],
             &self.environment,
             &self.data,
-            Duration::from_secs(3600),
             4096,
         )
         .map_err(|_| "the image could not be copied to the clipboard".into())

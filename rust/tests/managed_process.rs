@@ -81,6 +81,16 @@ fn managed_helpers_finish_drain_signal_timeout_and_drop_without_orphans() {
     )
     .unwrap();
     assert!(wait(&mut timed).timed_out);
+    let mut selection =
+        Managed::start_owned("/usr/bin/sleep", &["10"], &BTreeMap::new(), &[], 64).unwrap();
+    let pid = selection.pid();
+    assert!(selection.poll().unwrap().is_none());
+    selection
+        .signal_stop(libc::SIGTERM, Duration::from_millis(50))
+        .unwrap();
+    assert!(!wait(&mut selection).ok());
+    assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    assert!(Managed::start_owned("sleep", &[], &BTreeMap::new(), &[], 64).is_err());
     let dropped = Managed::start(
         "/usr/bin/sleep",
         &["10"],
