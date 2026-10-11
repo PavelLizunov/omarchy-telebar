@@ -187,6 +187,7 @@ impl Application {
                 | "settings.sounds"
                 | "settings.autoDownload"
                 | "sounds.another"
+                | "sounds.play"
         )
     }
     pub fn retire_peer(&mut self, peer: u64) {
@@ -287,6 +288,11 @@ impl Application {
             request,
             std::time::Instant::now(),
             &mut |_, args, state| {
+                if command=="sounds.play"{
+                    let seed=crate::commands::arg_int(args,"userId",Some(1),None,None)?;
+                    if self.settings.sounds_pending.len()<2{self.settings.sounds_pending.push(seed);}
+                    return Ok(Action::Reply(json!({})));
+                }
                 if command=="diagnostics.ui"{
                     let is_window=self.windows.contains(&peer)||args["window"]==true;
                     self.diagnostic_peers.report(peer,args,std::time::Instant::now(),self.diagnostics.as_ref(),is_window)?;

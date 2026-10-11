@@ -24,6 +24,8 @@ use std::{
 };
 #[derive(Debug)]
 pub enum Work {
+    ProfilePhoto(crate::profile_photo::Job),
+    Sound(crate::sound_playback::Job),
     CopyImage {
         path: String,
         roots: Vec<String>,
@@ -121,6 +123,8 @@ impl Work {
     }
     fn run(self, cancel: &AtomicBool) -> Result<Action> {
         match self {
+            Self::ProfilePhoto(job) => job.run(cancel),
+            Self::Sound(job) => job.run(cancel),
             Self::CopyImage {
                 path,
                 roots,

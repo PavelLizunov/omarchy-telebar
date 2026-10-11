@@ -114,7 +114,7 @@ extending the oracle with `run-differential.sh` still requires the matching dirt
 stabilization sources identified by those hashes. Do not silently regenerate it
 against old Git HEAD or publish unrelated stabilization work as a dependency.
 
-Observed source checks: 41 default unit tests and nineteen default integration-test
+Observed source checks: 41 default unit tests and twenty-two default integration-test
 cases passed; four verified-library tests passed explicitly
 (startup ownership, three-client startup, dummy-audio Driver lifecycle and
 synthetic clipboard-owner retirement), plus one isolated real Wayland test.
@@ -265,11 +265,50 @@ implemented (`stack_capture_supported:false`); native receive age/oldest TD
 metrics and complete request/response diagnostic events remain unfinished.
 Unknown metrics are null, not invented zeros. No physical UI/profile acceptance.
 
+Personal sound previews now use the existing deterministic WAV owner with
+no-follow 0600 cache entries, a finite 350-entry inventory and original
+300-entry WAV pruning. `sounds.play` acknowledges after validation; sound
+preparation/playback stays best-effort and cannot undo settings persistence.
+Admitted settings/sound changes queue at most two previews, captured account
+client/generation is checked before a background completion can spawn, and all
+user/startup/sound work shares the two-worker cap. Driver owns one foreground
+`pw-play --media-role Notification` with ten-second budget and keeps its input
+descriptor alive. Shutdown joins/cancels sound jobs and reaps the exact player.
+Synthetic tests check exact legacy WAV bytes, pre-cancel/no filesystem work,
+symlink preservation, malformed cache refusal and 300-file pruning. A verified
+TDLib-only Driver fixture checks admitted setting/preview scheduling, stale
+account completion and shutdown without dispatching synthetic native IDs or
+opening real storage. The private PipeWire fixture creates only a null sink,
+explicitly configures/links its consumer ports, and exercises actual `pw-play`
+completion/reap in a device/home/network/session-bus-free namespace. Physical
+sound and notification-triggered sound policy remain unverified/unimplemented.
+
+`file.open` validates requested native file identity/completion and media-root
+membership, then opens a no-follow descriptor. Original IPC ownership/current
+generation/expiry is checked before `xdg-open` starts; at most eight foreground
+openers with 60-second deadlines are retained/reaped. Actual xdg-open is tested
+using a disposable MIME registry and `/usr/bin/cat` handler, with a dummy
+nonexistent display address: original bytes survive path replacement, while
+symlinks and wrong/incomplete native files are refused. This does not attest
+real desktop application/portal handoff or long-lived app use.
+
+`profile.setPhoto` admits an explicitly selected upload outside account
+databases, snapshots bounded bytes for pipe-only ffmpeg conversion, and writes
+one private square JPEG under the explicit recording runtime. Decoder URLs and
+unrelated local files are refused by the `pipe` protocol allowlist. A shared
+input lease cleans unsubmitted/stale/cancelled preparations, successful replies
+and confirmed 4xx rejection. The lease is marked submitted at Driver native
+dispatch, not planning. Timeout/disconnect/408/5xx retain submitted input because
+local retirement cannot cancel TDLib use. Synthetic tests exercise actual ffmpeg,
+8x8 square output, private input cleanup, no-spawn pre-cancel, refused URL
+playlist and original Engine admission/native success/error/expiry outcomes.
+No real profile was changed; cumulative/crash-left retained-input GC remains open.
+
 Remaining work includes complete production startup and compatible hello,
 complete account/catalog synchronization and media roots,
-notification D-Bus actions and sounds, global shortcut effects, managed playback,
-voice/video capture and shutdown, full clipboard writer/file open/copy-image,
-profile-photo jobs, full animation/cache/diagnostics and live UI effects, bundled
+notification D-Bus actions and sounds, global shortcut effects, playback coverage,
+voice/video capture and shutdown, clipboard production environment/acceptance,
+desktop opener acceptance, full animation/cache/diagnostics and live UI effects, bundled
 bridge/proxy/menu/build helper replacement. Upload and recording snapshot
 retention/cleanup and cumulative disk limits also need acceptance. No Python
 runtime requirement is removed, installed candidate deployed or working account

@@ -54,6 +54,10 @@ pub struct Driver {
     startup_owners: std::collections::HashMap<crate::lifecycle::Token, StartupOwner>,
     startup_serial: u64,
     startup_queue: std::collections::VecDeque<StartupOwner>,
+    sound: Option<(crate::process::Managed, crate::sound_playback::Prepared)>,
+    file_openers: Vec<(crate::process::Managed, std::fs::File)>,
+    sound_jobs: crate::jobs::Pool,
+    sound_owners: std::collections::HashMap<crate::lifecycle::Token, (String, u64)>,
     clipboard_owner: Option<ClipboardOwner>,
     playback_serial: u64,
     player: Option<(String, u64, crate::process::Managed, std::fs::File)>,
@@ -70,6 +74,10 @@ impl Driver {
             startup_owners: std::collections::HashMap::new(),
             startup_serial: 1,
             startup_queue: std::collections::VecDeque::new(),
+            sound: None,
+            file_openers: vec![],
+            sound_jobs: Default::default(),
+            sound_owners: Default::default(),
             clipboard_owner: None,
             playback_serial: 0,
             player: None,
@@ -144,7 +152,7 @@ impl Driver {
             }
         }
         self.startup_queue = waiting;
-        while self.jobs.active() + self.startup_jobs.active() < 2 {
+        while self.jobs.active() + self.startup_jobs.active() + self.sound_jobs.active() < 2 {
             let Some(owner) = self.startup_queue.pop_front() else {
                 break;
             };
@@ -202,6 +210,76 @@ impl Driver {
             let next = self.complete_playback(token, start, Instant::now());
             effects.replies.extend(next.replies);
             effects.native.extend(next.native);
+        }
+        for (token, start) in std::mem::take(&mut effects.open_files) {
+            effects
+                .replies
+                .extend(self.runtime.expire(Instant::now()).replies);
+            let current = !self.runtime.stopping
+                && self
+                    .runtime
+                    .engine
+                    .job_owner(token)
+                    .is_some_and(|(id, generation)| {
+                        self.runtime
+                            .engine
+                            .accounts
+                            .get(&id)
+                            .is_some_and(|a| a.client > 0 && a.generation == generation)
+                    });
+            if !current {
+                continue;
+            }
+            let result = if self.file_openers.len() >= 8 {
+                Err("still opening an earlier file".into())
+            } else {
+                start.spawn().map(|helper| {
+                    self.file_openers.push(helper);
+                    crate::commands::Action::Reply(json!({}))
+                })
+            };
+            effects.replies.extend(
+                self.runtime
+                    .engine
+                    .job_complete(token, result, Instant::now())
+                    .replies,
+            );
+        }
+        for (token, prepared) in std::mem::take(&mut effects.sounds) {
+            effects
+                .replies
+                .extend(self.runtime.expire(Instant::now()).replies);
+            let current = !self.runtime.stopping
+                && self
+                    .runtime
+                    .engine
+                    .job_owner(token)
+                    .is_some_and(|(id, generation)| {
+                        self.runtime
+                            .engine
+                            .accounts
+                            .get(&id)
+                            .is_some_and(|a| a.client > 0 && a.generation == generation)
+                    });
+            if !current {
+                continue;
+            }
+            self.sound = None;
+            if let Ok(helper) = prepared.spawn() {
+                self.sound = Some((helper, prepared));
+            }
+            // Sound previews are best-effort, just as the original command:
+            // lack of a local player does not undo persisted settings.
+            effects.replies.extend(
+                self.runtime
+                    .engine
+                    .job_complete(
+                        token,
+                        Ok(crate::commands::Action::Reply(json!({}))),
+                        Instant::now(),
+                    )
+                    .replies,
+            );
         }
         for (token, offer) in std::mem::take(&mut effects.clipboard) {
             effects
@@ -263,7 +341,11 @@ impl Driver {
             }
         }
         for (token, work) in std::mem::take(&mut effects.work) {
-            let started = if self.jobs.active() + self.startup_jobs.active() >= 2 {
+            let started = if self.jobs.active()
+                + self.startup_jobs.active()
+                + self.sound_jobs.active()
+                >= 2
+            {
                 Err("still preparing an earlier message; try again in a moment".into())
             } else {
                 self.jobs.start(token, work)
@@ -277,6 +359,7 @@ impl Driver {
             }
         }
         for native in std::mem::take(&mut effects.native) {
+            self.runtime.engine.native_dispatched(&native.query);
             self.td.send(native.client, &native.query)?;
         }
         Ok(effects)
@@ -425,6 +508,51 @@ impl Driver {
                     );
                 }
             }
+            return self.dispatch(effects);
+        }
+        if request.command == "profile.setPhoto" {
+            let context = application.upload_context.clone();
+            let runtime = application.recording_runtime.clone();
+            let effects = self.runtime.engine.request_using(
+                peer,
+                request,
+                Instant::now(),
+                &mut |_, args, _| {
+                    let (_, databases) = context
+                        .as_ref()
+                        .ok_or("explicit profile photo context missing")?;
+                    let runtime = runtime
+                        .clone()
+                        .ok_or("explicit profile photo context missing")?;
+                    let source = crate::uploads::admit(&args["path"], databases)?;
+                    Ok(crate::commands::Action::Work(
+                        crate::jobs::Work::ProfilePhoto(crate::profile_photo::Job {
+                            source,
+                            runtime,
+                        }),
+                    ))
+                },
+            );
+            return self.dispatch(effects);
+        }
+        if request.command == "file.open" {
+            let environment = application
+                .clipboard_context
+                .as_ref()
+                .map(|c| c.environment.clone());
+            let effects = self.runtime.engine.request_using(
+                peer,
+                request,
+                Instant::now(),
+                &mut |_, args, _| {
+                    crate::file_open::Selection::prepare(
+                        args,
+                        environment
+                            .clone()
+                            .ok_or("explicit opener context missing")?,
+                    )
+                },
+            );
             return self.dispatch(effects);
         }
         if request.command == "credentials.set" {
@@ -615,7 +743,56 @@ impl Driver {
         } else {
             return self.request(peer, request);
         };
-        self.dispatch(effects)
+        let effects = self.dispatch(effects)?;
+        self.start_pending_sounds(application);
+        Ok(effects)
+    }
+    fn start_pending_sounds(&mut self, application: &mut crate::application::Application) {
+        if self.runtime.stopping {
+            application.settings.sounds_pending.clear();
+            return;
+        }
+        for seed in std::mem::take(&mut application.settings.sounds_pending) {
+            let Some((home, _)) = &application.upload_context else {
+                continue;
+            };
+            let Some(context) = &application.clipboard_context else {
+                continue;
+            };
+            let Some(job) = crate::sound_playback::Job::prepare(
+                home.clone(),
+                seed,
+                &application.settings.value,
+                context.environment.clone(),
+            ) else {
+                continue;
+            };
+            if self.jobs.active() + self.startup_jobs.active() + self.sound_jobs.active() >= 2 {
+                continue;
+            }
+            let id = self.runtime.engine.active.clone();
+            let Some(account) = self
+                .runtime
+                .engine
+                .accounts
+                .get(&id)
+                .filter(|a| a.client > 0)
+            else {
+                continue;
+            };
+            let Some(next) = self.startup_serial.checked_add(1) else {
+                continue;
+            };
+            let token = crate::lifecycle::Token::startup(self.startup_serial);
+            self.startup_serial = next;
+            if self
+                .sound_jobs
+                .start(token, crate::jobs::Work::Sound(job))
+                .is_ok()
+            {
+                self.sound_owners.insert(token, (id, account.generation));
+            }
+        }
     }
     pub fn tick_application(
         &mut self,
@@ -625,12 +802,14 @@ impl Driver {
     ) -> io::Result<Effects> {
         let effects = self.tick(parameters)?;
         application.diagnostic_runtime["jobs"] =
-            json!(self.jobs.active() + self.startup_jobs.active());
+            json!(self.jobs.active() + self.startup_jobs.active() + self.sound_jobs.active());
         application.diagnostic_runtime["task_queue"] = json!(self.startup_queue.len());
         application.diagnostic_runtime["receiver_alive"] = json!(!self.runtime.stopping);
         application.diagnostic_runtime["playing"] = json!(self.player.is_some());
         application.diagnostic_runtime["children"] = json!(
             usize::from(self.player.is_some())
+                + self.file_openers.len()
+                + usize::from(self.sound.is_some())
                 + self
                     .clipboard_owner
                     .as_ref()
@@ -741,8 +920,52 @@ impl Driver {
             let next = self.dispatch(next)?;
             effects.replies.extend(next.replies);
         }
+        let completed = self.sound_jobs.poll(&|token| {
+            !self.runtime.stopping
+                && self
+                    .sound_owners
+                    .get(&token)
+                    .is_some_and(|(id, generation)| {
+                        self.runtime
+                            .engine
+                            .accounts
+                            .get(id)
+                            .is_some_and(|a| a.client > 0 && a.generation == *generation)
+                    })
+        });
+        for done in completed {
+            let current = self
+                .sound_owners
+                .remove(&done.token)
+                .is_some_and(|(id, generation)| {
+                    !self.runtime.stopping
+                        && self
+                            .runtime
+                            .engine
+                            .accounts
+                            .get(&id)
+                            .is_some_and(|a| a.client > 0 && a.generation == generation)
+                });
+            if current && let Ok(crate::commands::Action::SoundReady(prepared)) = done.result {
+                self.sound = None;
+                if let Ok(helper) = prepared.spawn() {
+                    self.sound = Some((helper, prepared));
+                }
+            }
+        }
         effects.replies.extend(self.poll_player().replies);
         effects.replies.extend(self.poll_clipboard().replies);
+        self.file_openers.retain_mut(|(helper, _)| {
+            !self.runtime.stopping && helper.poll().is_ok_and(|out| out.is_none())
+        });
+        if self.runtime.stopping
+            || self
+                .sound
+                .as_mut()
+                .is_some_and(|(helper, _)| helper.poll().map_or(true, |out| out.is_some()))
+        {
+            self.sound = None;
+        }
         let queued = self.dispatch_startup();
         effects.replies.extend(queued.replies);
         let expired = self.runtime.expire(Instant::now());
@@ -864,6 +1087,10 @@ impl Driver {
     pub fn close(&mut self, timeout: Duration) -> io::Result<Effects> {
         self.runtime.stopping = true;
         self.player = None;
+        self.sound = None;
+        self.file_openers.clear();
+        self.sound_jobs = Default::default();
+        self.sound_owners.clear();
         self.clipboard_owner = None;
         self.jobs = crate::jobs::Pool::default();
         self.startup_jobs = crate::jobs::Pool::default();
@@ -1424,6 +1651,86 @@ mod tests {
         );
         assert!(!Path::new(&format!("/proc/{owner_pid}")).exists());
         assert!(!Path::new(&format!("/proc/{reader_pid}")).exists());
+    }
+    #[test]
+    #[ignore = "requires an explicitly provided verified TDLib library"]
+    fn sound_preview_workers_are_owned_without_a_real_audio_session() {
+        let library = std::env::var_os("TELEBAR_TEST_TDLIB").expect("verified library");
+        let root =
+            std::env::temp_dir().join(format!("telebar-driver-sound-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let home = crate::storage::Storage::open(&root).unwrap();
+        let mut app = crate::application::Application::load(&home).unwrap();
+        app.upload_context = Some((root.clone(), vec![]));
+        app.clipboard_context = Some(crate::clipboard::Context {
+            runtime: root.clone(),
+            databases: vec![],
+            environment: Default::default(),
+        });
+        let mut driver = Driver::open(Path::new(&library), "default".into(), "en".into()).unwrap();
+        driver.runtime.engine.accounts.insert(
+            "default".into(),
+            crate::engine::Account {
+                client: 41,
+                generation: 1,
+                state: Default::default(),
+                ready: true,
+            },
+        );
+        driver.runtime.metadata.insert(
+            "default".into(),
+            crate::authorization::Metadata::new("Synthetic".into()),
+        );
+        driver
+            .runtime
+            .engine
+            .accounts
+            .get_mut("default")
+            .unwrap()
+            .state
+            .me_id = 7;
+        let request = crate::wire::Request::parse(
+            br#"{"id":1,"cmd":"settings.sounds","args":{"style":"pop"}}"#,
+        )
+        .unwrap();
+        let done = driver
+            .request_application(&mut app, &home, 7, request)
+            .unwrap();
+        assert_eq!(done.replies[0].1["ok"], true);
+        assert_eq!(driver.sound_jobs.active(), 1);
+        assert_eq!(driver.sound_owners.len(), 1);
+        assert!(app.settings.sounds_pending.is_empty());
+        // Retire the captured generation before polling completed rendering: no
+        // pw-play/native account dispatch must follow a stale background job.
+        driver
+            .runtime
+            .engine
+            .accounts
+            .get_mut("default")
+            .unwrap()
+            .generation += 1;
+        let until = Instant::now() + Duration::from_secs(2);
+        while driver.sound_jobs.active() > 0 && Instant::now() < until {
+            driver.tick(&mut |_| Ok(None)).unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(driver.sound_jobs.active(), 0);
+        assert!(driver.sound_owners.is_empty());
+        assert!(driver.sound.is_none());
+        app.settings.sounds_pending = vec![7];
+        driver.start_pending_sounds(&mut app);
+        assert_eq!(driver.sound_jobs.active(), 1);
+        driver
+            .runtime
+            .engine
+            .accounts
+            .get_mut("default")
+            .unwrap()
+            .client = 0;
+        driver.close(Duration::ZERO).unwrap();
+        assert!(driver.sound_owners.is_empty());
+        assert_eq!(driver.sound_jobs.active(), 0);
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     #[ignore = "requires an explicitly provided verified TDLib library"]

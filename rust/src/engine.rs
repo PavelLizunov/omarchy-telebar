@@ -30,6 +30,8 @@ pub struct Effects {
     pub credentials_saved: Vec<(String, u64)>,
     pub playback: Vec<(Token, crate::playback::Start)>,
     pub clipboard: Vec<(Token, crate::clipboard::Offer)>,
+    pub sounds: Vec<(Token, crate::sound_playback::Prepared)>,
+    pub open_files: Vec<(Token, crate::file_open::Start)>,
 }
 struct Callback {
     token: Token,
@@ -58,6 +60,16 @@ impl Engine {
     }
     pub fn diagnostic_pending(&self, now: Instant) -> (usize, u128) {
         self.requests.metrics(now)
+    }
+    /// Mark input lifetime at the actual dispatch boundary, not when planning.
+    pub fn native_dispatched(&self, query: &Value) {
+        if let Some(callback) = query["@extra"]
+            .as_u64()
+            .and_then(|extra| self.callbacks.get(&extra))
+            && let Answer::ProfilePhoto(lease) = &callback.answer
+        {
+            lease.submitted();
+        }
     }
     pub fn native_pending(&self) -> usize {
         self.callbacks.len()
@@ -204,6 +216,8 @@ impl Engine {
             .get(&account)
             .expect("admitted account exists");
         match result {
+            Ok(Action::OpenFile(start)) => effects.open_files.push((token, start)),
+            Ok(Action::SoundReady(prepared)) => effects.sounds.push((token, prepared)),
             Ok(Action::ClipboardOffer(offer)) => effects.clipboard.push((token, offer)),
             Ok(Action::Playback(start)) => effects.playback.push((token, start)),
             Ok(Action::StartupPrepared(_)) => self.finish(
@@ -392,6 +406,8 @@ impl Engine {
         effects.credentials_saved.extend(next.credentials_saved);
         effects.playback.extend(next.playback);
         effects.clipboard.extend(next.clipboard);
+        effects.sounds.extend(next.sounds);
+        effects.open_files.extend(next.open_files);
         effects.disconnect = next.disconnect;
         effects
     }
@@ -534,6 +550,12 @@ impl Engine {
                                     Err(("invalid account continuation".into(), 0)),
                                     &mut effects,
                                 ),
+                                Action::OpenFile(start) => {
+                                    effects.open_files.push((callback.token, start))
+                                }
+                                Action::SoundReady(prepared) => {
+                                    effects.sounds.push((callback.token, prepared))
+                                }
                                 Action::ClipboardOffer(offer) => {
                                     effects.clipboard.push((callback.token, offer))
                                 }
@@ -801,6 +823,8 @@ impl Engine {
             other => other,
         };
         match result {
+            Ok(Action::OpenFile(start)) => effects.open_files.push((token, start)),
+            Ok(Action::SoundReady(prepared)) => effects.sounds.push((token, prepared)),
             Ok(Action::ClipboardOffer(offer)) => effects.clipboard.push((token, offer)),
             Ok(Action::Playback(start)) => effects.playback.push((token, start)),
             Ok(Action::StartupPrepared(_)) => self.finish(

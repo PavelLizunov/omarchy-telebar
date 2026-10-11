@@ -71,6 +71,10 @@ with tempfile.TemporaryDirectory(prefix="telebar-application-socket-") as name:
             assert json.loads(catalog.read_text())["active"] == added
             answer, _ = request(9, "fixture.snapshot")
             assert len(answer["result"]["accounts"]) == 3
+            answer, _ = request(14, "sounds.play", {"userId": 7})
+            assert answer["ok"]  # Explicit inert context has no sound route/device.
+            answer, _ = request(15, "sounds.play", {"userId": False})
+            assert answer["error"] == "userId must be an integer"
             answer, _ = request(11, "diagnostics.ui", {"window": True, "pending": 3, "password": "PRIVATE-CONTENT"})
             assert answer["ok"]
             answer, _ = request(12, "diagnostics.ui", {"pending": 99})

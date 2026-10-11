@@ -68,6 +68,9 @@ impl Settings {
             self.value = change.settings;
             self.globals_pending |= change.apply_globals;
             if let Some(seed) = change.play {
+                if self.sounds_pending.len() >= 2 {
+                    self.sounds_pending.remove(0);
+                }
                 self.sounds_pending.push(seed);
             }
             let result = self.view();

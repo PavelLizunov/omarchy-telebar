@@ -125,6 +125,8 @@ fn optional_text<'a>(args: &'a Value, name: &str, max: usize, error: &str) -> Re
 
 #[derive(Debug)]
 pub enum Action {
+    OpenFile(crate::file_open::Start),
+    SoundReady(crate::sound_playback::Prepared),
     ClipboardOffer(crate::clipboard::Offer),
     Playback(crate::playback::Start),
     Reply(Value),
@@ -154,6 +156,8 @@ pub enum Action {
 }
 #[derive(Debug)]
 pub enum Answer {
+    ProfilePhoto(crate::profile_photo::Lease),
+    OpenFile(crate::file_open::Selection),
     Playback(crate::playback::Selection),
     Empty,
     Recorded(String),
@@ -267,6 +271,18 @@ impl Answer {
         })
     }
     pub fn failed(&self, event: &Value) -> Result<Value> {
+        if let Self::ProfilePhoto(lease) = self {
+            let code = integer(&event["code"], 0);
+            if (400..500).contains(&code) && code != 408 {
+                lease.settled();
+            }
+            let message = text(&event["message"], 200);
+            return Err(if message.is_empty() {
+                "Telegram did not take the photo".into()
+            } else {
+                message
+            });
+        }
         if let Self::LinkDetail(answer) = self
             && let Some(result) = answer.failed()
         {
@@ -278,6 +294,13 @@ impl Answer {
         Err(text(&event["message"], 200))
     }
     pub fn complete(&self, event: &Value, state: &State) -> Result<Completion> {
+        if let Self::OpenFile(selection) = self {
+            return Ok(Completion {
+                result: Value::Null,
+                followups: vec![],
+                next: Some(Box::new(selection.complete(event, state)?)),
+            });
+        }
         if let Self::Playback(selection) = self {
             return Ok(Completion {
                 result: Value::Null,
@@ -327,7 +350,12 @@ impl Answer {
             Self::Export(_) => unreachable!("export completion handled above"),
             Self::Cache(_) => unreachable!("cache completion handled above"),
             Self::Playback(_) => unreachable!("playback completion handled above"),
+            Self::OpenFile(_) => unreachable!("open completion handled above"),
             Self::Recorded(_) => state.message(event),
+            Self::ProfilePhoto(lease) => {
+                lease.settled();
+                json!({})
+            }
             Self::Empty => json!({}),
             Self::Constant(v) => v.clone(),
             Self::Chat(id) => json!({"chat":state.chat_view(*id)}),
@@ -1412,7 +1440,9 @@ pub fn project(value: &Value, roots: &[String]) -> Value {
     ) {
         Err(error) => json!({"error":error}),
         Ok(Action::Reply(result)) => json!({"result":result,"queries":[]}),
-        Ok(Action::ClipboardOffer(_))
+        Ok(Action::OpenFile(_))
+        | Ok(Action::SoundReady(_))
+        | Ok(Action::ClipboardOffer(_))
         | Ok(Action::Playback(_))
         | Ok(Action::Work(_))
         | Ok(Action::Recorded { .. })
@@ -1442,7 +1472,9 @@ pub fn project(value: &Value, roots: &[String]) -> Value {
                     Action::AccountNative { .. } => {
                         return json!({"error":"fixture requires registered account routing","queries":queries});
                     }
-                    Action::ClipboardOffer(_)
+                    Action::OpenFile(_)
+                    | Action::SoundReady(_)
+                    | Action::ClipboardOffer(_)
                     | Action::Playback(_)
                     | Action::Work(_)
                     | Action::Recorded { .. }
