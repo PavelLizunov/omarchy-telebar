@@ -286,10 +286,18 @@ impl Driver {
         }
         if matches!(
             request.command.as_str(),
-            "videonote.send" | "recording.retry" | "recording.discard"
+            "videonote.send" | "videonote.discard" | "recording.retry" | "recording.discard"
         ) {
             let context = application.upload_context.clone();
             let runtime = application.recording_runtime.clone();
+            let protected: Vec<String> = self
+                .runtime
+                .engine
+                .accounts
+                .values()
+                .filter_map(|a| a.state.retained.record.as_ref())
+                .flat_map(|r| std::iter::once(r.path.clone()).chain(r.source.clone()))
+                .collect();
             let account = if request.account.is_null() {
                 self.runtime.engine.active.clone()
             } else {
@@ -312,6 +320,15 @@ impl Driver {
                     let runtime = runtime
                         .as_ref()
                         .ok_or("explicit recording context missing")?;
+                    if command == "videonote.discard"
+                        && args["path"]
+                            .as_str()
+                            .is_some_and(|path| protected.iter().any(|p| p == path))
+                    {
+                        return Err(
+                            "the recording is owned by a pending send; resolve it by token".into(),
+                        );
+                    }
                     crate::recording_jobs::plan(command, args, state, home, runtime, &account, wall)
                 },
             );

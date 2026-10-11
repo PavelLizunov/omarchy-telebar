@@ -56,6 +56,33 @@ pub fn plan(
     if !crate::paths::valid_account_id(account) {
         return Err("unknown account".into());
     }
+    if command == "videonote.discard" {
+        let path = args["path"]
+            .as_str()
+            .filter(|p| p.len() <= 4096)
+            .ok_or("that is not a recording of Telebar's")?;
+        let rec = runtime.join("omagram/rec");
+        if std::path::Path::new(path).parent() != Some(rec.as_path()) {
+            return Err("that is not a recording of Telebar's".into());
+        }
+        if state
+            .retained
+            .record
+            .as_ref()
+            .is_some_and(|r| r.path == path || r.source.as_deref() == Some(path))
+        {
+            return Err("the recording is owned by a pending send; resolve it by token".into());
+        }
+        let _ = owned_input(path, &rec).map_err(|_| "that is not a recording of Telebar's")?;
+        let name = std::path::Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("that is not a recording of Telebar's")?;
+        Storage::open(&rec)
+            .and_then(|s| s.remove_file(name))
+            .map_err(|_| "that is not a recording of Telebar's")?;
+        return Ok(Action::Reply(json!({})));
+    }
     if command == "recording.discard" {
         let token = args["token"]
             .as_str()

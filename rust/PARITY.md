@@ -114,7 +114,7 @@ extending the oracle with `run-differential.sh` still requires the matching dirt
 stabilization sources identified by those hashes. Do not silently regenerate it
 against old Git HEAD or publish unrelated stabilization work as a dependency.
 
-Observed source checks: 41 default unit tests and fourteen default integration-test
+Observed source checks: 41 default unit tests and fifteen default integration-test
 cases passed; two ignored-by-default verified-library tests passed explicitly
 (one synthetic startup ownership test and one three-client native driver test);
 Clippy with warnings denied and both fresh/frozen differential runs passed with
@@ -196,6 +196,13 @@ cap plus complete RIFF-size validation; note-cache trimming keeps 128 MiB / 512
 finished pictures. Real synthetic ffmpeg conversion/cache/cancellation checks
 passed. No actual reported clip, physical UI playback or camera input was tested.
 Crash-left snapshot GC and exhaustive cache-limit acceptance remain incomplete.
+
+`videonote.discard` now refuses any path owned by a retained send across
+accounts before deleting an admitted raw recording. Only a regular owned direct
+child of the explicit `omagram/rec` root is eligible; symlinks and unrelated
+paths are refused. Retained/unknown outcomes still require token discard and
+preserve potentially consumed inputs. Synthetic deletion/preservation checks
+passed; no live recording was deleted.
 
 Remaining work includes complete production startup and compatible hello,
 complete account/catalog synchronization and media roots,
