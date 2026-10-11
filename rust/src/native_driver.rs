@@ -1267,6 +1267,46 @@ mod tests {
         .unwrap();
         assert!(pasted.ok());
         assert_eq!(pasted.stdout, data);
+        let request = Request::parse(
+            json!({"id":4,"cmd":"file.copyImage","args":{}})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        let effects =
+            driver
+                .runtime
+                .engine
+                .request_using(8, request, Instant::now(), &mut |_, _, _| {
+                    Ok(crate::commands::Action::ClipboardOffer(
+                        crate::clipboard::Offer {
+                            data: data.clone(),
+                            environment: environment.clone(),
+                        },
+                    ))
+                });
+        driver.dispatch(effects).unwrap();
+        assert!(
+            !Path::new(&format!("/proc/{pid}")).exists(),
+            "replacement reaps the exact previous selection owner"
+        );
+        let pid = driver.clipboard_owner.as_ref().unwrap().helper.pid();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut accepted = false;
+        while driver
+            .clipboard_owner
+            .as_ref()
+            .is_some_and(|o| o.token.is_some())
+            && Instant::now() < deadline
+        {
+            accepted |= driver
+                .poll_clipboard()
+                .replies
+                .iter()
+                .any(|(_, v)| v["id"] == 4 && v["ok"] == true);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(accepted);
         // An explicitly mismatching read cannot produce success. Inject only a
         // finite inert reader; it does not touch another clipboard selection.
         let request = Request::parse(
