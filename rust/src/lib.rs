@@ -18,6 +18,7 @@ pub mod media;
 pub mod native_driver;
 pub mod notifications;
 pub mod paths;
+pub mod playback;
 pub mod preferences;
 pub mod preferences_commands;
 pub mod process;

@@ -114,7 +114,7 @@ extending the oracle with `run-differential.sh` still requires the matching dirt
 stabilization sources identified by those hashes. Do not silently regenerate it
 against old Git HEAD or publish unrelated stabilization work as a dependency.
 
-Observed source checks: 41 default unit tests and fifteen default integration-test
+Observed source checks: 41 default unit tests and seventeen default integration-test
 cases passed; two ignored-by-default verified-library tests passed explicitly
 (one synthetic startup ownership test and one three-client native driver test);
 Clippy with warnings denied and both fresh/frozen differential runs passed with
@@ -203,6 +203,18 @@ child of the explicit `omagram/rec` root is eligible; symlinks and unrelated
 paths are refused. Retained/unknown outcomes still require token discard and
 preserve potentially consumed inputs. Synthetic deletion/preservation checks
 passed; no live recording was deleted.
+
+`process::Managed` now provides pollable foreground helpers with bounded input,
+output/lifetime, explicit interrupt/terminate grace and exact unreaped process-group
+cleanup. Existing finite helpers reuse it. Actual cat/yes/sleep, cancel/timeout/drop
+and exited-leader descendant tests passed. Driver `media.play`/`media.stop` now own
+admitted selection serials, downloaded-file continuation, a foreground ffplay
+owner, account generation, no-retry content-open effect and bounded teardown.
+The player retains the admitted source descriptor through a parent `/proc` path,
+so path replacement cannot substitute media. A synthetic ffplay test used only
+SDL dummy audio/video drivers; no desktop, real audio or Telegram read state was
+accessed. Driver selection-change/stop/closure integration, actual sound/device
+consumer and complete capture/clipboard ownership still need acceptance.
 
 Remaining work includes complete production startup and compatible hello,
 complete account/catalog synchronization and media roots,

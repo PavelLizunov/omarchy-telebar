@@ -125,6 +125,7 @@ fn optional_text<'a>(args: &'a Value, name: &str, max: usize, error: &str) -> Re
 
 #[derive(Debug)]
 pub enum Action {
+    Playback(crate::playback::Start),
     Reply(Value),
     Work(crate::jobs::Work),
     Recorded {
@@ -152,6 +153,7 @@ pub enum Action {
 }
 #[derive(Debug)]
 pub enum Answer {
+    Playback(crate::playback::Selection),
     Empty,
     Recorded(String),
     Export(crate::export::Gate),
@@ -275,6 +277,13 @@ impl Answer {
         Err(text(&event["message"], 200))
     }
     pub fn complete(&self, event: &Value, state: &State) -> Result<Completion> {
+        if let Self::Playback(selection) = self {
+            return Ok(Completion {
+                result: Value::Null,
+                followups: Vec::new(),
+                next: Some(Box::new(selection.complete(event, state)?)),
+            });
+        }
         if let Self::Cache(answer) = self {
             return Ok(Completion {
                 result: Value::Null,
@@ -316,6 +325,7 @@ impl Answer {
             Self::LinkDetail(_) => unreachable!("link completion handled above"),
             Self::Export(_) => unreachable!("export completion handled above"),
             Self::Cache(_) => unreachable!("cache completion handled above"),
+            Self::Playback(_) => unreachable!("playback completion handled above"),
             Self::Recorded(_) => state.message(event),
             Self::Empty => json!({}),
             Self::Constant(v) => v.clone(),
@@ -1401,7 +1411,8 @@ pub fn project(value: &Value, roots: &[String]) -> Value {
     ) {
         Err(error) => json!({"error":error}),
         Ok(Action::Reply(result)) => json!({"result":result,"queries":[]}),
-        Ok(Action::Work(_))
+        Ok(Action::Playback(_))
+        | Ok(Action::Work(_))
         | Ok(Action::Recorded { .. })
         | Ok(Action::PrepareRecorded { .. })
         | Ok(Action::DiscardRecorded(_))
@@ -1429,7 +1440,8 @@ pub fn project(value: &Value, roots: &[String]) -> Value {
                     Action::AccountNative { .. } => {
                         return json!({"error":"fixture requires registered account routing","queries":queries});
                     }
-                    Action::Work(_)
+                    Action::Playback(_)
+                    | Action::Work(_)
                     | Action::Recorded { .. }
                     | Action::PrepareRecorded { .. }
                     | Action::DiscardRecorded(_)

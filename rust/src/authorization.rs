@@ -54,6 +54,13 @@ pub struct Runtime {
     pub stopping: bool,
 }
 impl Runtime {
+    pub fn open_content(&mut self, id: &str, chat: i128, message: i128, now: Instant) -> Effects {
+        let mut effects = Effects::default();
+        if !self.stopping {
+            self.query(id,json!({"@type":"openMessageContent","chat_id":number(chat),"message_id":number(message)}),Internal::Ignore,now,&mut effects);
+        }
+        effects
+    }
     pub fn read_reactions(&mut self, id: &str, chat: i128, now: Instant) -> Effects {
         let mut effects = Effects::default();
         if !self.stopping && self.engine.accounts.get(id).is_some_and(|a| a.ready) {

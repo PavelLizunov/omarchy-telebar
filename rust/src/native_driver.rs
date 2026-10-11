@@ -1,5 +1,6 @@
 //! One native/thread driver. Explicit account registrations and parameter
 //! provider; no discovery of working accounts, keyring or real-home storage.
+use crate::projection::number;
 use crate::{authorization::Runtime, engine::Effects, td::Td, wire::Request};
 use serde_json::{Value, json};
 use std::{
@@ -45,6 +46,8 @@ pub struct Driver {
     startup_owners: std::collections::HashMap<crate::lifecycle::Token, StartupOwner>,
     startup_serial: u64,
     startup_queue: std::collections::VecDeque<StartupOwner>,
+    playback_serial: u64,
+    player: Option<(String, u64, crate::process::Managed, std::fs::File)>,
 }
 impl Driver {
     pub fn open(library: &Path, active: String, language: String) -> io::Result<Self> {
@@ -58,6 +61,8 @@ impl Driver {
             startup_owners: std::collections::HashMap::new(),
             startup_serial: 1,
             startup_queue: std::collections::VecDeque::new(),
+            playback_serial: 0,
+            player: None,
         })
     }
     pub fn set_startup_context(&mut self, context: crate::startup::Context) {
@@ -183,6 +188,38 @@ impl Driver {
         self.dispatch(effects)
     }
     fn dispatch(&mut self, mut effects: Effects) -> io::Result<Effects> {
+        for (token, start) in std::mem::take(&mut effects.playback) {
+            effects
+                .replies
+                .extend(self.runtime.expire(Instant::now()).replies);
+            let owner = self.runtime.engine.job_owner(token);
+            if !self.runtime.engine.job_current(token) {
+                continue;
+            }
+            let result = if start.selection.serial != self.playback_serial {
+                Err("the playback selection changed".into())
+            } else {
+                if let Some((old, _, _, _)) = self.player.take() {
+                    effects
+                        .replies
+                        .push((0, json!({"event":"playing","fileId":0,"account":old})));
+                }
+                start.spawn().map(|(helper,source)| {
+                    let (account,generation)=owner.expect("current playback owner");
+                    let started=SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+                    self.player=Some((account.clone(),generation,helper,source));
+                    let seen=self.runtime.open_content(&account,start.selection.chat,start.selection.message,Instant::now());
+                    effects.native.extend(seen.native);
+                    effects.replies.push((0,json!({"event":"playing","fileId":number(start.selection.file),"chatId":number(start.selection.chat),"messageId":number(start.selection.message),"startedAt":started,"rate":start.selection.rate,"account":account})));
+                    crate::commands::Action::Reply(json!({"startedAt":started}))
+                })
+            };
+            let done = self
+                .runtime
+                .engine
+                .job_complete(token, result, Instant::now());
+            effects.replies.extend(done.replies);
+        }
         for (token, work) in std::mem::take(&mut effects.work) {
             let started = if self.jobs.active() + self.startup_jobs.active() >= 2 {
                 Err("still preparing an earlier message; try again in a moment".into())
@@ -243,6 +280,50 @@ impl Driver {
         self.runtime
             .engine
             .reserve_external(self.runtime.internal_pending());
+        if matches!(request.command.as_str(), "media.play" | "media.stop") {
+            let stopping = request.command == "media.stop";
+            let mut selected = false;
+            let next = self.playback_serial.checked_add(1);
+            let environment = application
+                .clipboard_context
+                .as_ref()
+                .map(|c| c.environment.clone());
+            let rate = application.settings.value["playbackRate"]
+                .as_f64()
+                .unwrap_or(1.0);
+            let mut effects = self.runtime.engine.request_using(
+                peer,
+                request,
+                Instant::now(),
+                &mut |command, args, _| {
+                    let serial = next.ok_or("the playback selection changed")?;
+                    let action = if command == "media.play" {
+                        crate::playback::Selection::prepare(
+                            args,
+                            serial,
+                            rate,
+                            environment
+                                .clone()
+                                .ok_or("explicit playback context missing")?,
+                        )?
+                    } else {
+                        crate::commands::Action::Reply(json!({}))
+                    };
+                    selected = true;
+                    Ok(action)
+                },
+            );
+            if selected {
+                self.playback_serial = next.expect("admitted serial");
+                if stopping && let Some((account, _, _, _)) = self.player.take() {
+                    effects.replies.insert(
+                        0,
+                        (0, json!({"event":"playing","fileId":0,"account":account})),
+                    );
+                }
+            }
+            return self.dispatch(effects);
+        }
         if request.command == "credentials.set" {
             let environment = application.keyring_environment.clone();
             let effects = self.runtime.engine.request_using(
@@ -528,6 +609,22 @@ impl Driver {
             let next = self.dispatch(next)?;
             effects.replies.extend(next.replies);
         }
+        let stop_player = if let Some((account, generation, helper, _)) = &mut self.player {
+            !self
+                .runtime
+                .engine
+                .accounts
+                .get(account)
+                .is_some_and(|a| a.client > 0 && a.generation == *generation)
+                || helper.poll().map_or(true, |out| out.is_some())
+        } else {
+            false
+        };
+        if stop_player && let Some((account, _, _, _)) = self.player.take() {
+            effects
+                .replies
+                .push((0, json!({"event":"playing","fileId":0,"account":account})));
+        }
         let queued = self.dispatch_startup();
         effects.replies.extend(queued.replies);
         let expired = self.runtime.expire(Instant::now());
@@ -553,6 +650,7 @@ impl Driver {
     }
     pub fn close(&mut self, timeout: Duration) -> io::Result<Effects> {
         self.runtime.stopping = true;
+        self.player = None;
         self.jobs = crate::jobs::Pool::default();
         self.startup_jobs = crate::jobs::Pool::default();
         self.startup_owners.clear();

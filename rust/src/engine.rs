@@ -28,6 +28,7 @@ pub struct Effects {
     pub work: Vec<(Token, crate::jobs::Work)>,
     pub disconnect: Option<u64>,
     pub credentials_saved: Vec<(String, u64)>,
+    pub playback: Vec<(Token, crate::playback::Start)>,
 }
 struct Callback {
     token: Token,
@@ -199,6 +200,7 @@ impl Engine {
             .get(&account)
             .expect("admitted account exists");
         match result {
+            Ok(Action::Playback(start)) => effects.playback.push((token, start)),
             Ok(Action::StartupPrepared(_)) => self.finish(
                 token,
                 Err(("invalid startup continuation".into(), 0)),
@@ -383,6 +385,7 @@ impl Engine {
         effects.native.extend(next.native);
         effects.work.extend(next.work);
         effects.credentials_saved.extend(next.credentials_saved);
+        effects.playback.extend(next.playback);
         effects.disconnect = next.disconnect;
         effects
     }
@@ -525,6 +528,9 @@ impl Engine {
                                     Err(("invalid account continuation".into(), 0)),
                                     &mut effects,
                                 ),
+                                Action::Playback(start) => {
+                                    effects.playback.push((callback.token, start))
+                                }
                                 Action::Work(work) => effects.work.push((callback.token, work)),
                                 Action::Reply(result) => {
                                     self.finish(callback.token, Ok(result), &mut effects)
@@ -736,6 +742,11 @@ impl Engine {
             answer: Answer::Recorded(record),
         })
     }
+    pub fn job_owner(&self, token: Token) -> Option<(String, u64)> {
+        self.requests
+            .get(token)
+            .map(|p| (p.account.clone(), p.generation))
+    }
     pub fn job_current(&self, token: Token) -> bool {
         self.requests.owns(token)
     }
@@ -781,6 +792,7 @@ impl Engine {
             other => other,
         };
         match result {
+            Ok(Action::Playback(start)) => effects.playback.push((token, start)),
             Ok(Action::StartupPrepared(_)) => self.finish(
                 token,
                 Err(("invalid startup continuation".into(), 0)),

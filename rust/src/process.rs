@@ -42,6 +42,20 @@ impl Owned {
         // SAFETY: si_pid reads the child-status union set by waitid.
         Ok(unsafe { info.si_pid() } != 0)
     }
+    fn signal(&self, signal: i32) -> io::Result<()> {
+        if self.reaped {
+            return Ok(());
+        }
+        let pid =
+            i32::try_from(self.child.id()).map_err(|_| io::Error::other("invalid helper pid"))?;
+        // SAFETY: unreaped owned leader pins group identity until final cleanup.
+        if unsafe { libc::kill(-pid, signal) } != 0
+            && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
     fn stop(&mut self) -> io::Result<Option<i32>> {
         if self.reaped {
             return Ok(None);
@@ -138,81 +152,173 @@ pub fn run_cancel(
             truncated: false,
         });
     }
-    let mut command = Command::new(executable);
-    command
-        .args(args)
-        .env_clear()
-        .envs(environment)
-        .env("PATH", "/usr/bin")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .process_group(0);
-    let mut child = Owned {
-        child: command.spawn()?,
-        reaped: false,
-    };
-    let mut stdin = child.child.stdin.take();
-    let mut stdout = child
-        .child
-        .stdout
-        .take()
-        .ok_or_else(|| io::Error::other("helper stdout missing"))?;
-    let mut stderr = child
-        .child
-        .stderr
-        .take()
-        .ok_or_else(|| io::Error::other("helper stderr missing"))?;
-    nonblocking(stdout.as_raw_fd())?;
-    nonblocking(stderr.as_raw_fd())?;
-    if let Some(pipe) = &stdin {
-        nonblocking(pipe.as_raw_fd())?;
-    }
-    let deadline = Instant::now() + timeout;
-    let mut out = Output {
-        code: None,
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        timed_out: false,
-        truncated: false,
-    };
-    let mut sent = 0;
+    let mut child = Managed::start(executable, args, environment, input, timeout, limit)?;
     loop {
-        out.truncated |= drain(&mut stdout, &mut out.stdout, limit)?;
-        out.truncated |= drain(&mut stderr, &mut out.stderr, limit)?;
-        if out.truncated
-            || Instant::now() >= deadline
-            || cancel.load(std::sync::atomic::Ordering::Relaxed)
-        {
-            out.timed_out = !out.truncated;
-            child.stop()?;
-            break;
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return child.cancel();
         }
-        if let Some(pipe) = &mut stdin {
-            if sent == input.len() {
-                stdin = None;
+        if let Some(output) = child.poll()? {
+            return Ok(output);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Pollable foreground helper, owned by the native loop or a finite worker.
+/// No auto-fork, detached child or restart loop is accepted by this owner.
+pub struct Managed {
+    child: Owned,
+    stdin: Option<std::process::ChildStdin>,
+    stdout: std::process::ChildStdout,
+    stderr: std::process::ChildStderr,
+    input: Vec<u8>,
+    sent: usize,
+    limit: usize,
+    deadline: Instant,
+    output: Output,
+    finished: bool,
+}
+impl Managed {
+    pub fn start(
+        executable: &str,
+        args: &[&str],
+        environment: &BTreeMap<String, String>,
+        input: &[u8],
+        timeout: Duration,
+        limit: usize,
+    ) -> io::Result<Self> {
+        if !executable.starts_with('/')
+            || timeout.is_zero()
+            || timeout > Duration::from_secs(3600)
+            || limit > 32 * 1024 * 1024
+            || input.len() > 32 * 1024 * 1024
+        {
+            return Err(io::Error::other("invalid helper bounds"));
+        }
+        let mut command = Command::new(executable);
+        command
+            .args(args)
+            .env_clear()
+            .envs(environment)
+            .env("PATH", "/usr/bin")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0);
+        let mut child = Owned {
+            child: command.spawn()?,
+            reaped: false,
+        };
+        let stdin = child.child.stdin.take();
+        let stdout = child
+            .child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("helper stdout missing"))?;
+        let stderr = child
+            .child
+            .stderr
+            .take()
+            .ok_or_else(|| io::Error::other("helper stderr missing"))?;
+        nonblocking(stdout.as_raw_fd())?;
+        nonblocking(stderr.as_raw_fd())?;
+        if let Some(pipe) = &stdin {
+            nonblocking(pipe.as_raw_fd())?;
+        }
+        Ok(Self {
+            child,
+            stdin,
+            stdout,
+            stderr,
+            input: input.to_vec(),
+            sent: 0,
+            limit,
+            deadline: Instant::now() + timeout,
+            output: Output {
+                code: None,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                timed_out: false,
+                truncated: false,
+            },
+            finished: false,
+        })
+    }
+    pub fn pid(&self) -> u32 {
+        self.child.child.id()
+    }
+    pub fn input_sent(&self) -> bool {
+        self.sent == self.input.len()
+    }
+    pub fn signal_stop(&mut self, signal: i32, grace: Duration) -> io::Result<()> {
+        if !matches!(signal, libc::SIGINT | libc::SIGTERM) || grace > Duration::from_secs(5) {
+            return Err(io::Error::other("invalid helper stop"));
+        }
+        if self.finished {
+            return Ok(());
+        }
+        self.child.signal(signal)?;
+        self.deadline = self.deadline.min(Instant::now() + grace);
+        Ok(())
+    }
+    fn finish(&mut self) -> io::Result<Output> {
+        self.output.code = self.child.stop()?;
+        self.stdin = None;
+        self.input.clear();
+        self.finished = true;
+        self.output.truncated |= drain(&mut self.stdout, &mut self.output.stdout, self.limit)?;
+        self.output.truncated |= drain(&mut self.stderr, &mut self.output.stderr, self.limit)?;
+        Ok(std::mem::replace(
+            &mut self.output,
+            Output {
+                code: None,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                timed_out: false,
+                truncated: false,
+            },
+        ))
+    }
+    pub fn cancel(&mut self) -> io::Result<Output> {
+        if self.finished {
+            return Err(io::Error::other("helper already retired"));
+        }
+        self.output.timed_out = true;
+        self.finish()
+    }
+    pub fn poll(&mut self) -> io::Result<Option<Output>> {
+        if self.finished {
+            return Ok(None);
+        }
+        self.output.truncated |= drain(&mut self.stdout, &mut self.output.stdout, self.limit)?;
+        self.output.truncated |= drain(&mut self.stderr, &mut self.output.stderr, self.limit)?;
+        if self.output.truncated || Instant::now() >= self.deadline {
+            self.output.timed_out = !self.output.truncated;
+            return self.finish().map(Some);
+        }
+        if let Some(pipe) = &mut self.stdin {
+            if self.sent == self.input.len() {
+                self.stdin = None;
+                self.input.clear();
+                self.sent = 0;
             } else {
-                match pipe.write(&input[sent..]) {
-                    Ok(n) => sent += n,
+                match pipe.write(&self.input[self.sent..]) {
+                    Ok(n) => self.sent += n,
                     Err(e)
                         if matches!(
                             e.kind(),
                             io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                         ) => {}
-                    Err(e) if e.kind() == io::ErrorKind::BrokenPipe => stdin = None,
+                    Err(e) if e.kind() == io::ErrorKind::BrokenPipe => self.stdin = None,
                     Err(e) => return Err(e),
                 }
             }
         }
-        if child.exited()? {
-            out.code = child.stop()?;
-            out.truncated |= drain(&mut stdout, &mut out.stdout, limit)?;
-            out.truncated |= drain(&mut stderr, &mut out.stderr, limit)?;
-            break;
+        if self.child.exited()? {
+            return self.finish().map(Some);
         }
-        std::thread::sleep(Duration::from_millis(2));
+        Ok(None)
     }
-    Ok(out)
 }
 
 #[cfg(test)]
