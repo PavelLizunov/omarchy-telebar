@@ -19,7 +19,7 @@ use std::{
     fs::File,
     io::{self, Read},
     path::Path,
-    time::Duration,
+    time::{Duration, Instant},
 };
 const TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -104,25 +104,57 @@ impl CredentialSave {
         self,
         cancel: &std::sync::atomic::AtomicBool,
     ) -> crate::commands::Result<crate::commands::Action> {
-        let keyring = Keyring::new(self.environment.clone());
+        let keyring = Keyring::until(
+            self.environment.clone(),
+            Instant::now() + Duration::from_secs(150),
+        );
         self.save_with(&mut |key, label, value| keyring.set_cancel(key, label, value, cancel))
     }
 }
 pub struct Keyring {
     environment: BTreeMap<String, String>,
+    deadline: Option<Instant>,
 }
 impl Keyring {
     pub fn new(environment: BTreeMap<String, String>) -> Self {
-        Self { environment }
+        Self {
+            environment,
+            deadline: None,
+        }
+    }
+    pub fn until(environment: BTreeMap<String, String>, deadline: Instant) -> Self {
+        Self {
+            environment,
+            deadline: Some(deadline),
+        }
+    }
+    fn budget(&self) -> io::Result<Duration> {
+        let budget = self.deadline.map_or(TIMEOUT, |deadline| {
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(TIMEOUT)
+        });
+        if budget.is_zero() {
+            return Err(io::Error::other("the keyring did not answer"));
+        }
+        Ok(budget)
     }
     pub fn get(&self, key: &str) -> io::Result<Option<String>> {
-        let output = process::run(
+        self.get_cancel(key, &std::sync::atomic::AtomicBool::new(false))
+    }
+    pub fn get_cancel(
+        &self,
+        key: &str,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<Option<String>> {
+        let output = process::run_cancel(
             "/usr/bin/secret-tool",
             &["lookup", "service", "omagram", "key", key],
             &self.environment,
             &[],
-            TIMEOUT,
+            self.budget()?,
             4096,
+            cancel,
         )?;
         classify_lookup(output)
     }
@@ -147,7 +179,7 @@ impl Keyring {
             &["store", &label, "service", "omagram", "key", key],
             &self.environment,
             value.as_bytes(),
-            TIMEOUT,
+            self.budget()?,
             4096,
             cancel,
         )?
@@ -171,47 +203,60 @@ impl Keyring {
             && self.set("api_hash", "Omagram API hash", hash)?)
     }
     pub fn database_key(&self, id: &str, home: &Storage) -> io::Result<String> {
-        if !valid_account_id(id) {
-            return Err(io::Error::other("invalid account id"));
-        }
-        let name = if id == "default" {
-            "database_key".into()
-        } else {
-            format!("database_key_{id}")
-        };
-        if let Some(key) = self.get(&name)? {
-            if !valid_key(&key) {
-                return Err(io::Error::other(
-                    "the database key in the keyring is malformed",
-                ));
-            }
-            return Ok(key);
-        }
-        let directory = if id == "default" {
-            ".local/share/omagram/database".into()
-        } else {
-            format!(".local/share/omagram/accounts/{id}/database")
-        };
-        if home.nonempty_directory(&directory)? {
-            return Err(io::Error::other(
-                "the database key is missing from the keyring",
-            ));
-        }
-        let mut entropy = [0u8; 32];
-        File::open("/dev/urandom")?.read_exact(&mut entropy)?;
-        let key = encode_base64(&entropy);
-        let label = if id == "default" {
-            "Omagram database key".into()
-        } else {
-            format!("Omagram database key ({id})")
-        };
-        if !self.set(&name, &label, &key)? {
-            return Err(io::Error::other(
-                "the database key could not be stored in the keyring",
-            ));
-        }
-        Ok(key)
+        database_key_with(
+            id,
+            home,
+            &mut |key| self.get(key),
+            &mut |key, label, value| self.set(key, label, value),
+        )
     }
+}
+pub fn database_key_with(
+    id: &str,
+    home: &Storage,
+    get: &mut dyn FnMut(&str) -> io::Result<Option<String>>,
+    set: &mut dyn FnMut(&str, &str, &str) -> io::Result<bool>,
+) -> io::Result<String> {
+    if !valid_account_id(id) {
+        return Err(io::Error::other("invalid account id"));
+    }
+    let name = if id == "default" {
+        "database_key".into()
+    } else {
+        format!("database_key_{id}")
+    };
+    if let Some(key) = get(&name)? {
+        if !valid_key(&key) {
+            return Err(io::Error::other(
+                "the database key in the keyring is malformed",
+            ));
+        }
+        return Ok(key);
+    }
+    let directory = if id == "default" {
+        ".local/share/omagram/database".into()
+    } else {
+        format!(".local/share/omagram/accounts/{id}/database")
+    };
+    if home.nonempty_directory(&directory)? {
+        return Err(io::Error::other(
+            "the database key is missing from the keyring",
+        ));
+    }
+    let mut entropy = [0u8; 32];
+    File::open("/dev/urandom")?.read_exact(&mut entropy)?;
+    let key = encode_base64(&entropy);
+    let label = if id == "default" {
+        "Omagram database key".into()
+    } else {
+        format!("Omagram database key ({id})")
+    };
+    if !set(&name, &label, &key)? {
+        return Err(io::Error::other(
+            "the database key could not be stored in the keyring",
+        ));
+    }
+    Ok(key)
 }
 pub fn parameters(
     home: &Path,

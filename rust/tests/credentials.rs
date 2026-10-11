@@ -125,3 +125,95 @@ fn secret_redaction_order_and_stale_completion_are_explicit() {
     });
     assert!(configured.replies.is_empty());
 }
+#[test]
+fn existing_database_key_is_preserved_and_lookup_failure_never_creates_one() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+    use telebar_runtime::{
+        keyring::{Keyring, database_key_with},
+        storage::Storage,
+    };
+    let root = std::env::temp_dir().join(format!("telebar-keyring-policy-{}", std::process::id()));
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let home = Storage::open(&root).unwrap();
+    home.write(
+        ".local/share/omagram/database/synthetic",
+        b"not a database",
+        0o600,
+    )
+    .unwrap();
+    let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=";
+    assert!(telebar_runtime::keyring::valid_key(key));
+    let mut stores = 0;
+    let kept = database_key_with(
+        "default",
+        &home,
+        &mut |_| Ok(Some(key.into())),
+        &mut |_, _, _| {
+            stores += 1;
+            Ok(true)
+        },
+    )
+    .unwrap();
+    assert_eq!(kept, key);
+    assert_eq!(stores, 0);
+    assert!(
+        database_key_with(
+            "default",
+            &home,
+            &mut |_| Err(std::io::Error::other("synthetic failure")),
+            &mut |_, _, _| {
+                stores += 1;
+                Ok(true)
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(stores, 0);
+    assert!(
+        database_key_with("default", &home, &mut |_| Ok(None), &mut |_, _, _| {
+            stores += 1;
+            Ok(true)
+        })
+        .is_err()
+    );
+    assert_eq!(stores, 0);
+    assert!(
+        database_key_with(
+            "default",
+            &home,
+            &mut |_| Ok(Some("bad".into())),
+            &mut |_, _, _| {
+                stores += 1;
+                Ok(true)
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(stores, 0);
+    let created = database_key_with(
+        "other",
+        &home,
+        &mut |name| {
+            assert_eq!(name, "database_key_other");
+            Ok(None)
+        },
+        &mut |name, label, value| {
+            assert_eq!(name, "database_key_other");
+            assert_eq!(label, "Omagram database key (other)");
+            assert!(telebar_runtime::keyring::valid_key(value));
+            stores += 1;
+            Ok(true)
+        },
+    )
+    .unwrap();
+    assert!(telebar_runtime::keyring::valid_key(&created));
+    assert_eq!(stores, 1);
+    // An exhausted budget rejects before creating a secret-tool process.
+    assert!(
+        Keyring::until(BTreeMap::new(), Instant::now())
+            .get("synthetic-unused")
+            .is_err()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
