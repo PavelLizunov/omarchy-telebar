@@ -114,7 +114,7 @@ extending the oracle with `run-differential.sh` still requires the matching dirt
 stabilization sources identified by those hashes. Do not silently regenerate it
 against old Git HEAD or publish unrelated stabilization work as a dependency.
 
-Observed source checks: 41 default unit tests and twenty-two default integration-test
+Observed source checks: 41 default unit tests and twenty-three default integration-test
 cases passed; four verified-library tests passed explicitly
 (startup ownership, three-client startup, dummy-audio Driver lifecycle and
 synthetic clipboard-owner retirement), plus one isolated real Wayland test.
@@ -304,10 +304,28 @@ local retirement cannot cancel TDLib use. Synthetic tests exercise actual ffmpeg
 playlist and original Engine admission/native success/error/expiry outcomes.
 No real profile was changed; cumulative/crash-left retained-input GC remains open.
 
+Recorder ownership now handles admitted `voice.start/stop` and
+`videonote.record/stop` using one explicit Driver capture context. Production
+argv stays fixed; fixture-only synthetic lavfi inputs are not exposed over IPC.
+Output is exclusively created mode 0600 under the compatible account sent or
+runtime recording root and ffmpeg writes the retained parent's descriptors;
+round-video output container is explicit, output capped at 512 MiB, microphone
+and camera helpers are limited to 605/65 seconds. Stop validates account,
+worker capacity and send/reply/topic/options before consuming capture. SIGINT
+has five-second grace, exact group reap precedes decoding, and send=true reserves
+retained state before stop/preparation workers. Current-session retirement and
+shutdown cancel/reap unsent captures and delete exact partial/preview outputs;
+retained preparation preserves its input on cancellation/failure for explicit
+retry. Synthetic lavfi tests exercise actual voice/video/preview preparation,
+stopped discard and exact helper reap with no devices/native sends. Driver
+fixture checks invalid-account/options preservation, admitted stop/idle and
+stale-generation cleanup. Hardware capture/session environment, original stale
+recording GC and live recording UI acceptance remain open.
+
 Remaining work includes complete production startup and compatible hello,
 complete account/catalog synchronization and media roots,
 notification D-Bus actions and sounds, global shortcut effects, playback coverage,
-voice/video capture and shutdown, clipboard production environment/acceptance,
+voice/video capture hardware/context/acceptance, clipboard production environment/acceptance,
 desktop opener acceptance, full animation/cache/diagnostics and live UI effects, bundled
 bridge/proxy/menu/build helper replacement. Upload and recording snapshot
 retention/cleanup and cumulative disk limits also need acceptance. No Python

@@ -24,6 +24,7 @@ use std::{
 };
 #[derive(Debug)]
 pub enum Work {
+    StopCapture(Box<crate::capture::Stop>),
     ProfilePhoto(crate::profile_photo::Job),
     Sound(crate::sound_playback::Job),
     CopyImage {
@@ -123,6 +124,7 @@ impl Work {
     }
     fn run(self, cancel: &AtomicBool) -> Result<Action> {
         match self {
+            Self::StopCapture(job) => job.run(cancel),
             Self::ProfilePhoto(job) => job.run(cancel),
             Self::Sound(job) => job.run(cancel),
             Self::CopyImage {

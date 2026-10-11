@@ -18,6 +18,7 @@ pub struct Preparation {
     pub kind: String,
     pub token: String,
     pub options: Value,
+    pub capture: Option<Box<crate::capture::Capture>>,
 }
 fn owned_input(path: &str, root: &std::path::Path) -> Result<Upload> {
     use std::os::unix::fs::MetadataExt;
@@ -182,6 +183,7 @@ pub fn plan(
                     kind: record.kind.clone(),
                     token: token.into(),
                     options,
+                    capture: None,
                 }),
             })
         };
@@ -238,11 +240,25 @@ pub fn plan(
             kind: "video".into(),
             token,
             options,
+            capture: None,
         }),
     })
 }
 impl Preparation {
     pub fn run(mut self, cancel: &AtomicBool) -> Result<Action> {
+        if let Some(mut capture) = self.capture.take() {
+            capture.finish(cancel)?;
+            capture.verify_input(&self.source.file)?;
+            self.source.size = self
+                .source
+                .file
+                .metadata()
+                .map_err(|_| "the retained recording is not available")?
+                .len();
+            if self.source.size == 0 || self.source.size > 512 * 1024 * 1024 {
+                return Err("The recording could not be prepared; it was kept for explicit retry or discard".into());
+            }
+        }
         if !crate::paths::valid_account_id(&self.account)
             || !matches!(self.kind.as_str(), "voice" | "video")
             || self.token.len() != 32

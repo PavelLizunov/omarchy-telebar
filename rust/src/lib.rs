@@ -2,6 +2,7 @@ pub mod accounts;
 pub mod application;
 pub mod authorization;
 pub mod batch;
+pub mod capture;
 pub mod chat_commands;
 pub mod clipboard;
 pub mod commands;

@@ -221,6 +221,20 @@ impl Storage {
         }
         Ok(Some(bytes))
     }
+    /// Exclusive task-owned output in a descriptor-pinned private parent.
+    pub fn create_file(&self, path: &str) -> io::Result<File> {
+        let parts = self.parts(path)?;
+        let dir = self.directory(&parts[..parts.len() - 1], true)?;
+        let file = open_at(
+            &dir,
+            parts[parts.len() - 1],
+            libc::O_RDWR | libc::O_CREAT | libc::O_EXCL,
+            0o600,
+        )?;
+        owned(&file, false)?;
+        dir.sync_all()?;
+        Ok(file)
+    }
     pub fn write(&self, path: &str, bytes: &[u8], mode: u32) -> io::Result<()> {
         let parts = self.parts(path)?;
         let dir = self.directory(&parts[..parts.len() - 1], true)?;

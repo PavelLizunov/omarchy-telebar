@@ -55,6 +55,8 @@ pub struct Driver {
     startup_serial: u64,
     startup_queue: std::collections::VecDeque<StartupOwner>,
     sound: Option<(crate::process::Managed, crate::sound_playback::Prepared)>,
+    pub capture_context: Option<crate::capture::Context>,
+    capture: Option<crate::capture::Capture>,
     file_openers: Vec<(crate::process::Managed, std::fs::File)>,
     sound_jobs: crate::jobs::Pool,
     sound_owners: std::collections::HashMap<crate::lifecycle::Token, (String, u64)>,
@@ -75,6 +77,8 @@ impl Driver {
             startup_serial: 1,
             startup_queue: std::collections::VecDeque::new(),
             sound: None,
+            capture_context: None,
+            capture: None,
             file_openers: vec![],
             sound_jobs: Default::default(),
             sound_owners: Default::default(),
@@ -510,6 +514,55 @@ impl Driver {
             }
             return self.dispatch(effects);
         }
+        if matches!(
+            request.command.as_str(),
+            "voice.start" | "videonote.record" | "voice.stop" | "videonote.stop"
+        ) {
+            let starting = matches!(request.command.as_str(), "voice.start" | "videonote.record");
+            let kind = if request.command.starts_with("voice.") {
+                "voice"
+            } else {
+                "video"
+            };
+            let context = self.capture_context.clone();
+            let capture = &mut self.capture;
+            let mut transition = None;
+            let aid = self.runtime.engine.routed_account(&request);
+            let generation = aid
+                .as_ref()
+                .and_then(|id| self.runtime.engine.accounts.get(id))
+                .map(|a| a.generation);
+            let capacity =
+                self.jobs.active() + self.startup_jobs.active() + self.sound_jobs.active() < 2;
+            let wall = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64();
+            let mut effects=self.runtime.engine.request_using(peer,request,Instant::now(),&mut|_,args,state|{
+                let context=context.as_ref().ok_or("explicit recorder context missing")?;let aid=aid.clone().ok_or("unknown account")?;let generation=generation.ok_or("unknown account")?;
+                if starting{
+                    if state.retained.record.is_some(){return Err("a recorded message is still pending; resolve or discard it first".into());}
+                    let chat=crate::commands::arg_int(args,"chatId",None,None,None)?;
+                    if capture.is_some(){return Err("a voice or video message is already being recorded".into());}
+                    let selected=crate::capture::Capture::start(context,aid,generation,kind,chat)?;
+                    let mut answer=json!({"startedAt":selected.started});let mut event=json!({"event":"recording","state":kind,"chatId":number(chat),"startedAt":selected.started,"account":selected.account});if let Some(preview)=&selected.preview{answer["preview"]=json!(preview);event["preview"]=json!(preview);}
+                    *capture=Some(selected);transition=Some(event);Ok(crate::commands::Action::Reply(answer))
+                }else{
+                    let current=capture.as_ref().filter(|c|c.kind==kind).ok_or(if kind=="voice"{"no voice message is being recorded"}else{"no video message is being recorded"})?;
+                    if current.account!=aid{return Err("the recording belongs to another account".into());}
+                    if !capacity{return Err("still preparing an earlier message; try stopping again in a moment".into());}
+                    let sending=args["send"]==true;
+                    if sending&&state.retained.record.is_some(){return Err("a recorded message is still pending; resolve or discard it first".into());}
+                    let options=if sending{crate::commands::reply(args)?;crate::commands::topic(args)?;crate::sending::options(args,state,wall)?}else{Value::Null};
+                    let selected=capture.take().expect("admitted capture");let action=if sending{selected.prepare_send(args.clone(),context.home.clone(),options)?}else{selected.stop(args.clone(),context.home.clone(),options)?};
+                    transition=Some(json!({"event":"recording","state":"idle","account":aid}));Ok(action)
+                }
+            });
+            if let Some(event) = transition {
+                effects.replies.insert(0, (0, event));
+            }
+            return self.dispatch(effects);
+        }
         if request.command == "profile.setPhoto" {
             let context = application.upload_context.clone();
             let runtime = application.recording_runtime.clone();
@@ -806,9 +859,11 @@ impl Driver {
         application.diagnostic_runtime["task_queue"] = json!(self.startup_queue.len());
         application.diagnostic_runtime["receiver_alive"] = json!(!self.runtime.stopping);
         application.diagnostic_runtime["playing"] = json!(self.player.is_some());
+        application.diagnostic_runtime["recording"] = json!(self.capture.is_some());
         application.diagnostic_runtime["children"] = json!(
             usize::from(self.player.is_some())
                 + self.file_openers.len()
+                + usize::from(self.capture.is_some())
                 + usize::from(self.sound.is_some())
                 + self
                     .clipboard_owner
@@ -955,6 +1010,23 @@ impl Driver {
         }
         effects.replies.extend(self.poll_player().replies);
         effects.replies.extend(self.poll_clipboard().replies);
+        let retire_capture = self.capture.as_ref().is_some_and(|c| {
+            self.runtime.stopping
+                || !self
+                    .runtime
+                    .engine
+                    .accounts
+                    .get(&c.account)
+                    .is_some_and(|a| a.client > 0 && a.generation == c.generation)
+        });
+        if retire_capture && let Some(capture) = self.capture.take() {
+            let account = capture.account.clone();
+            capture.discard();
+            effects.replies.push((
+                0,
+                json!({"event":"recording","state":"idle","account":account}),
+            ));
+        }
         self.file_openers.retain_mut(|(helper, _)| {
             !self.runtime.stopping && helper.poll().is_ok_and(|out| out.is_none())
         });
@@ -1088,6 +1160,9 @@ impl Driver {
         self.runtime.stopping = true;
         self.player = None;
         self.sound = None;
+        if let Some(capture) = self.capture.take() {
+            capture.discard();
+        }
         self.file_openers.clear();
         self.sound_jobs = Default::default();
         self.sound_owners.clear();
@@ -1720,6 +1795,91 @@ mod tests {
         app.settings.sounds_pending = vec![7];
         driver.start_pending_sounds(&mut app);
         assert_eq!(driver.sound_jobs.active(), 1);
+        driver.capture_context = Some(crate::capture::Context {
+            home: root.clone(),
+            runtime: root.clone(),
+            environment: Default::default(),
+        });
+        let synthetic = || {
+            ["-re", "-f", "lavfi", "-i", "sine=frequency=400:duration=3"]
+                .map(str::to_owned)
+                .to_vec()
+        };
+        let capture = crate::capture::Capture::start_with(
+            driver.capture_context.as_ref().unwrap(),
+            "default".into(),
+            2,
+            "voice",
+            42,
+            Some(synthetic()),
+        )
+        .unwrap();
+        let pid = capture.pid();
+        let path = capture.path.clone();
+        driver.capture = Some(capture);
+        let request = crate::wire::Request::parse(
+            br#"{"id":9,"cmd":"voice.stop","args":{"send":false},"account":"other"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            driver
+                .request_application(&mut app, &home, 7, request)
+                .unwrap()
+                .replies[0]
+                .1["error"],
+            "unknown account"
+        );
+        assert!(driver.capture.is_some());
+        let request = crate::wire::Request::parse(
+            br#"{"id":10,"cmd":"voice.stop","args":{"send":true,"replyToMessageId":false}}"#,
+        )
+        .unwrap();
+        let result = driver
+            .request_application(&mut app, &home, 7, request)
+            .unwrap();
+        assert_eq!(result.replies[0].1["ok"], false);
+        assert!(driver.capture.is_some());
+        let request =
+            crate::wire::Request::parse(br#"{"id":11,"cmd":"voice.stop","args":{"send":false}}"#)
+                .unwrap();
+        let result = driver
+            .request_application(&mut app, &home, 7, request)
+            .unwrap();
+        assert!(
+            result
+                .replies
+                .iter()
+                .any(|(_, e)| e["event"] == "recording" && e["state"] == "idle")
+        );
+        assert!(driver.capture.is_none());
+        let until = Instant::now() + Duration::from_secs(2);
+        while driver.jobs.active() > 0 && Instant::now() < until {
+            driver.tick(&mut |_| Ok(None)).unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!path.exists());
+        assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        let capture = crate::capture::Capture::start_with(
+            driver.capture_context.as_ref().unwrap(),
+            "default".into(),
+            2,
+            "voice",
+            42,
+            Some(synthetic()),
+        )
+        .unwrap();
+        let path = capture.path.clone();
+        driver.capture = Some(capture);
+        driver
+            .runtime
+            .engine
+            .accounts
+            .get_mut("default")
+            .unwrap()
+            .generation = 3;
+        driver.tick(&mut |_| Ok(None)).unwrap();
+        assert!(driver.capture.is_none());
+        assert!(!path.exists());
         driver
             .runtime
             .engine

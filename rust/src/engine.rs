@@ -55,6 +55,13 @@ pub struct Engine {
     recordings: HashMap<Token, (String, String)>,
 }
 impl Engine {
+    pub fn routed_account(&self, request: &Request) -> Option<String> {
+        if request.account.is_null() {
+            Some(self.active.clone())
+        } else {
+            request.account.as_str().map(str::to_owned)
+        }
+    }
     pub fn reserve_external(&mut self, count: usize) {
         self.requests.reserve_external(count);
     }
