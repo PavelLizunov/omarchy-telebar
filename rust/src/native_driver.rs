@@ -44,6 +44,7 @@ pub struct Driver {
     startup_context: Option<crate::startup::Context>,
     startup_owners: std::collections::HashMap<crate::lifecycle::Token, StartupOwner>,
     startup_serial: u64,
+    startup_queue: std::collections::VecDeque<StartupOwner>,
 }
 impl Driver {
     pub fn open(library: &Path, active: String, language: String) -> io::Result<Self> {
@@ -56,35 +57,45 @@ impl Driver {
             startup_context: None,
             startup_owners: std::collections::HashMap::new(),
             startup_serial: 1,
+            startup_queue: std::collections::VecDeque::new(),
         })
     }
     pub fn set_startup_context(&mut self, context: crate::startup::Context) {
         self.startup_context = Some(context);
     }
     fn start_parameters(&mut self, id: &str) -> Effects {
-        let mut effects = Effects::default();
-        let Some(context) = self.startup_context.clone() else {
-            return effects;
-        };
-        if self.runtime.stopping {
+        let effects = Effects::default();
+        if self.startup_context.is_none() {
             return effects;
         }
-        if self.jobs.active() + self.startup_jobs.active() >= 2 {
-            return self.runtime.configure(
-                id,
-                Err("still preparing an earlier request; try again in a moment".into()),
-                Instant::now(),
-            );
+        if self.runtime.stopping || self.runtime.parameters_pending(id) {
+            return effects;
         }
         let Some(account) = self
             .runtime
             .engine
             .accounts
             .get(id)
-            .filter(|a| a.client > 0)
+            .filter(|a| a.client > 0 && !a.ready)
         else {
             return effects;
         };
+        if self
+            .startup_owners
+            .values()
+            .chain(self.startup_queue.iter())
+            .any(|p| p.account == id && p.current(&self.runtime))
+        {
+            return effects;
+        }
+        self.startup_queue.retain(|p| p.account != id);
+        if self.startup_queue.len() >= 10 {
+            return self.runtime.configure(
+                id,
+                Err("the startup worker capacity was exhausted".into()),
+                Instant::now(),
+            );
+        }
         let Some(meta) = self.runtime.metadata.get_mut(id) else {
             return effects;
         };
@@ -97,31 +108,59 @@ impl Driver {
             auth: meta.auth.clone(),
             started: Instant::now(),
         };
-        let Some(next) = self.startup_serial.checked_add(1) else {
-            return self.runtime.configure(
-                id,
-                Err("the startup worker capacity was exhausted".into()),
-                Instant::now(),
-            );
-        };
-        let token = crate::lifecycle::Token::startup(self.startup_serial);
-        self.startup_serial = next;
-        match self.startup_jobs.start(
-            token,
-            crate::jobs::Work::Startup {
-                context,
-                account: id.into(),
-            },
-        ) {
-            Ok(()) => {
-                self.startup_owners.insert(token, owner);
-            }
-            Err(_) => {
-                effects = self.runtime.configure(
-                    id,
-                    Err("still preparing an earlier request; try again in a moment".into()),
+        self.startup_queue.push_back(owner);
+        effects
+    }
+    fn dispatch_startup(&mut self) -> Effects {
+        let mut effects = Effects::default();
+        self.startup_queue.retain(|p| p.current(&self.runtime));
+        // Queue time is part of the attempt, not a fresh budget on dispatch.
+        let mut waiting = std::collections::VecDeque::new();
+        for owner in self.startup_queue.drain(..) {
+            if owner.started.elapsed() >= Duration::from_secs(180) {
+                let failed = self.runtime.configure(
+                    &owner.account,
+                    Err("the startup credential preparation deadline was exceeded".into()),
                     Instant::now(),
                 );
+                effects.replies.extend(failed.replies);
+            } else {
+                waiting.push_back(owner);
+            }
+        }
+        self.startup_queue = waiting;
+        while self.jobs.active() + self.startup_jobs.active() < 2 {
+            let Some(owner) = self.startup_queue.pop_front() else {
+                break;
+            };
+            let id = owner.account.clone();
+            let Some(next) = self.startup_serial.checked_add(1) else {
+                let failed = self.runtime.configure(
+                    &id,
+                    Err("the startup worker capacity was exhausted".into()),
+                    Instant::now(),
+                );
+                effects.replies.extend(failed.replies);
+                continue;
+            };
+            let token = crate::lifecycle::Token::startup(self.startup_serial);
+            self.startup_serial = next;
+            let Some(context) = self.startup_context.clone() else {
+                continue;
+            };
+            let work = crate::jobs::Work::Startup {
+                context,
+                account: id.clone(),
+            };
+            if self.startup_jobs.start(token, work).is_ok() {
+                self.startup_owners.insert(token, owner);
+            } else {
+                let failed = self.runtime.configure(
+                    &id,
+                    Err("the startup worker could not be started".into()),
+                    Instant::now(),
+                );
+                effects.replies.extend(failed.replies);
             }
         }
         effects
@@ -323,6 +362,23 @@ impl Driver {
             );
             return self.dispatch(effects);
         }
+        if matches!(
+            request.command.as_str(),
+            "sticker.lottie" | "storage.stats" | "storage.clear"
+        ) {
+            let context = application.upload_context.as_ref().map(|c| c.0.clone());
+            let effects = self.runtime.engine.request_using(
+                peer,
+                request,
+                Instant::now(),
+                &mut |command, args, _| {
+                    let home = context.clone().ok_or("explicit cache context missing")?;
+                    crate::sticker_cache::plan(command, args, home)
+                        .unwrap_or_else(|| Err("unknown command".into()))
+                },
+            );
+            return self.dispatch(effects);
+        }
         if request.command == "file.save" {
             let context = application
                 .upload_context
@@ -451,35 +507,39 @@ impl Driver {
             })
         });
         for done in completed {
-            let Some(owner) = self.startup_owners.remove(&done.token) else {
-                continue;
-            };
-            if !owner.current(&self.runtime) {
-                continue;
-            }
-            let query = if owner.started.elapsed() >= Duration::from_secs(180) {
-                Err("the startup credential preparation deadline was exceeded".into())
-            } else {
-                match done.result {
-                    Ok(crate::commands::Action::StartupPrepared(prepared)) => prepared.0,
-                    _ => Err("the startup credentials could not be prepared".into()),
-                }
-            };
-            let next = self
-                .runtime
-                .configure(&owner.account, query, Instant::now());
+            let next = self.complete_startup(done, Instant::now());
             let next = self.dispatch(next)?;
             effects.replies.extend(next.replies);
         }
+        let queued = self.dispatch_startup();
+        effects.replies.extend(queued.replies);
         let expired = self.runtime.expire(Instant::now());
         effects.replies.extend(expired.replies);
         Ok(effects)
+    }
+    fn complete_startup(&mut self, done: crate::jobs::Completion, now: Instant) -> Effects {
+        let Some(owner) = self.startup_owners.remove(&done.token) else {
+            return Effects::default();
+        };
+        if !owner.current(&self.runtime) {
+            return Effects::default();
+        }
+        let query = if now.saturating_duration_since(owner.started) >= Duration::from_secs(180) {
+            Err("the startup credential preparation deadline was exceeded".into())
+        } else {
+            match done.result {
+                Ok(crate::commands::Action::StartupPrepared(prepared)) => prepared.0,
+                _ => Err("the startup credentials could not be prepared".into()),
+            }
+        };
+        self.runtime.configure(&owner.account, query, now)
     }
     pub fn close(&mut self, timeout: Duration) -> io::Result<Effects> {
         self.runtime.stopping = true;
         self.jobs = crate::jobs::Pool::default();
         self.startup_jobs = crate::jobs::Pool::default();
         self.startup_owners.clear();
+        self.startup_queue.clear();
         let mut effects = self.runtime.engine.cancel_all("the connection was closed");
         for account in self
             .runtime
@@ -507,5 +567,172 @@ impl Driver {
         }
         self.td.close(Duration::ZERO)?;
         Ok(effects)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires an explicitly provided verified TDLib library"]
+    fn startup_queue_and_completion_own_account_auth_serial_and_deadline() {
+        let library = std::env::var_os("TELEBAR_TEST_TDLIB").expect("verified library");
+        let mut driver = Driver::open(Path::new(&library), "default".into(), "en".into()).unwrap();
+        // These synthetic registrations never allocate or send to native clients.
+        driver
+            .runtime
+            .register(
+                "default".into(),
+                "Synthetic".into(),
+                41,
+                vec![],
+                Instant::now(),
+            )
+            .unwrap();
+        driver.set_startup_context(crate::startup::Context {
+            home: "/fixture/not-home".into(),
+            environment: Default::default(),
+            version: "fixture".into(),
+            language: "en".into(),
+        });
+        driver.start_parameters("default");
+        driver.start_parameters("default");
+        assert_eq!(driver.startup_queue.len(), 1);
+        let token = crate::lifecycle::Token::startup(900);
+        let owner = driver.startup_queue.pop_front().unwrap();
+        driver.startup_owners.insert(token, owner);
+        let done = |value| crate::jobs::Completion {
+            token,
+            result: Ok(crate::commands::Action::StartupPrepared(
+                crate::startup::Prepared(Ok(Some(value))),
+            )),
+        };
+        let effects = driver.complete_startup(
+            done(json!({"@type":"setTdlibParameters","fixture":true})),
+            Instant::now(),
+        );
+        assert_eq!(effects.native.len(), 1);
+        assert_eq!(effects.native[0].client, 41);
+        assert!(driver.runtime.parameters_pending("default"));
+        driver.start_parameters("default");
+        assert!(driver.startup_queue.is_empty());
+        assert!(
+            driver
+                .complete_startup(done(json!({})), Instant::now())
+                .native
+                .is_empty()
+        );
+        driver
+            .runtime
+            .expire(Instant::now() + Duration::from_secs(181));
+        assert!(!driver.runtime.parameters_pending("default"));
+        for fault in [
+            "auth",
+            "serial",
+            "generation",
+            "client",
+            "stopping",
+            "deadline",
+        ] {
+            let old = driver.runtime.metadata["default"].auth.clone();
+            driver.runtime.stopping = false;
+            driver
+                .runtime
+                .engine
+                .accounts
+                .get_mut("default")
+                .unwrap()
+                .client = 41;
+            driver.start_parameters("default");
+            let mut owner = driver.startup_queue.pop_front().unwrap();
+            match fault {
+                "auth" => {
+                    driver.runtime.metadata.get_mut("default").unwrap().auth =
+                        json!({"state":"ready"})
+                }
+                "serial" => {
+                    driver
+                        .runtime
+                        .metadata
+                        .get_mut("default")
+                        .unwrap()
+                        .parameters_serial += 1
+                }
+                "generation" => {
+                    driver
+                        .runtime
+                        .engine
+                        .accounts
+                        .get_mut("default")
+                        .unwrap()
+                        .generation += 1
+                }
+                "client" => {
+                    driver
+                        .runtime
+                        .engine
+                        .accounts
+                        .get_mut("default")
+                        .unwrap()
+                        .client = 0
+                }
+                "stopping" => driver.runtime.stopping = true,
+                "deadline" => owner.started = Instant::now() - Duration::from_secs(181),
+                _ => unreachable!(),
+            }
+            driver.startup_owners.insert(token, owner);
+            let effects = driver
+                .complete_startup(done(json!({"@type":"setTdlibParameters"})), Instant::now());
+            assert!(effects.native.is_empty(), "{fault}");
+            assert!(driver.startup_owners.is_empty(), "{fault}");
+            if fault == "deadline" {
+                assert_eq!(
+                    driver.runtime.metadata["default"].auth["reason"],
+                    "the startup credential preparation deadline was exceeded"
+                );
+            } else {
+                assert!(effects.replies.is_empty(), "{fault}");
+            }
+            driver.runtime.metadata.get_mut("default").unwrap().auth = old;
+        }
+        driver.start_parameters("default");
+        driver.startup_queue.front_mut().unwrap().started =
+            Instant::now() - Duration::from_secs(181);
+        let expired = driver.dispatch_startup();
+        assert!(!expired.replies.is_empty());
+        assert_eq!(driver.startup_jobs.active(), 0);
+        assert!(driver.startup_queue.is_empty());
+        driver.start_parameters("default");
+        driver.runtime.metadata.get_mut("default").unwrap().auth = json!({"state":"ready"});
+        assert!(driver.dispatch_startup().replies.is_empty());
+        assert!(driver.startup_queue.is_empty());
+        driver.runtime.metadata.get_mut("default").unwrap().auth = json!({"state":"starting"});
+        for (id, client) in [("second", 42), ("third", 43)] {
+            driver
+                .runtime
+                .register(
+                    id.into(),
+                    "Synthetic".into(),
+                    client,
+                    vec![],
+                    Instant::now(),
+                )
+                .unwrap();
+        }
+        for id in ["default", "second", "third"] {
+            driver.start_parameters(id);
+        }
+        assert_eq!(driver.startup_queue.len(), 3);
+        assert!(driver.dispatch_startup().replies.is_empty());
+        assert_eq!(driver.startup_jobs.active(), 2);
+        assert_eq!(driver.startup_queue.len(), 1);
+        assert_eq!(driver.startup_queue[0].account, "third");
+        // No fake native identities reach TDLib; close still joins owned work.
+        for account in driver.runtime.engine.accounts.values_mut() {
+            account.client = 0;
+        }
+        driver.close(Duration::ZERO).unwrap();
+        assert!(driver.startup_queue.is_empty() && driver.startup_owners.is_empty());
+        assert_eq!(driver.startup_jobs.active(), 0);
     }
 }

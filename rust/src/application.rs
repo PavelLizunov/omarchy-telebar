@@ -16,6 +16,11 @@ pub struct Application {
     pub catalog: Value,
     pub revision: u64,
     pub windows: HashSet<u64>,
+    pub pending_open: Option<(std::time::Instant, Value)>,
+    pub notifier: crate::notifications::Notifier,
+    pub focus_peer: Option<u64>,
+    pub notifications_to_close: Vec<u32>,
+    pub quit_deadline: Option<std::time::Instant>,
     pub upload_context: Option<(std::path::PathBuf, Vec<std::path::PathBuf>)>,
     pub clipboard_context: Option<crate::clipboard::Context>,
     pub recording_runtime: Option<std::path::PathBuf>,
@@ -33,6 +38,11 @@ impl Application {
             catalog: crate::accounts::normalize(&raw),
             revision: 0,
             windows: HashSet::new(),
+            pending_open: None,
+            notifier: crate::notifications::Notifier::default(),
+            focus_peer: None,
+            notifications_to_close: Vec::new(),
+            quit_deadline: None,
             upload_context: None,
             clipboard_context: None,
             recording_runtime: None,
@@ -154,6 +164,9 @@ impl Application {
         matches!(
             command,
             "hello"
+                | "ui.open"
+                | "ui.focus"
+                | "app.quit"
                 | "account.list"
                 | "account.switch"
                 | "account.logout"
@@ -170,6 +183,10 @@ impl Application {
     }
     pub fn retire_peer(&mut self, peer: u64) {
         self.windows.remove(&peer);
+        if self.focus_peer == Some(peer) {
+            self.focus_peer = None;
+            self.notifier.focused = None;
+        }
     }
     pub fn accounts(&self, runtime: &Runtime) -> Value {
         json!(runtime.engine.accounts.iter().filter_map(|(id,account)|{
@@ -233,7 +250,15 @@ impl Application {
         } else {
             None
         };
+        let account = if request.account.is_null() {
+            runtime.engine.active.clone()
+        } else {
+            request.account.as_str().unwrap_or("").into()
+        };
         let mut mark_window = false;
+        let mut open = None;
+        let mut focus = None;
+        let mut quit = false;
         let mut effects = runtime.engine.request_using(
             peer,
             request,
@@ -246,9 +271,32 @@ impl Application {
                         answer: crate::commands::Answer::Empty,
                     });
                 }
+                if command == "app.quit" {
+                    quit = true;
+                    return Ok(Action::Reply(json!({})));
+                }
+                if command == "ui.focus" {
+                    focus = Some(crate::commands::arg_int(args,"chatId",None,None,Some(0))?);
+                    return Ok(Action::Reply(json!({})));
+                }
+                if command == "ui.open" {
+                    let target = if args.get("url").is_some() {
+                        let url = crate::commands::arg_str(args, "url", 2048, 1)?;
+                        if !crate::links::telegram(url) || url.chars().any(|c| c <= ' ') { return Err("only Telegram links open in Telebar".into()); }
+                        json!({"url":url,"account":account})
+                    } else {
+                        json!({"chatId":number(crate::commands::arg_int(args,"chatId",None,None,None)?),"reply":args["reply"]==true,"account":account})
+                    };
+                    open = Some(target);
+                    return Ok(Action::Reply(json!({})));
+                }
                 if let Some(snapshot) = &snapshot {
+                    let mut snapshot = snapshot.clone()?;
                     mark_window = window;
-                    return snapshot.clone().map(Action::Reply);
+                    if window && let Some((started, target)) = self.pending_open.take() && started.elapsed() < std::time::Duration::from_secs(30) {
+                        snapshot["open"] = target;
+                    }
+                    return Ok(Action::Reply(snapshot));
                 }
                 if let Some(accounts) = &accounts {
                     return Ok(Action::Reply(accounts.clone()));
@@ -258,8 +306,63 @@ impl Application {
                     .unwrap_or_else(|| Err("migration command is not implemented".into()))
             },
         );
+        if quit {
+            effects.replies.insert(0, (0, json!({"event":"quit"})));
+            self.quit_deadline =
+                Some(std::time::Instant::now() + std::time::Duration::from_millis(300));
+        }
         if mark_window {
             self.windows.insert(peer);
+        }
+        if let Some(chat) = focus {
+            self.focus_peer = (chat != 0).then_some(peer);
+            let key = (chat != 0).then(|| crate::notifications::Key {
+                account: account.clone(),
+                chat,
+            });
+            if let Some(key) = &key
+                && let Some(id) = self.notifier.withdraw(key)
+            {
+                // Finite identity queue; transport later drains exact withdrawals.
+                if self.notifications_to_close.len() >= 512 {
+                    self.notifications_to_close.remove(0);
+                }
+                self.notifications_to_close.push(id);
+            }
+            self.notifier.focused = key;
+            if chat != 0
+                && self
+                    .settings
+                    .value
+                    .get("reactionsSeen")
+                    .is_none_or(|v| v == true)
+                && runtime.engine.accounts[&account]
+                    .state
+                    .chats
+                    .get(&chat)
+                    .is_some_and(|c| crate::projection::integer(&c["reactions"], 0) > 0)
+            {
+                let seen = runtime.read_reactions(&account, chat, std::time::Instant::now());
+                effects.native.extend(seen.native);
+            }
+        }
+        if let Some(target) = open {
+            if self.windows.is_empty() {
+                self.pending_open = Some((std::time::Instant::now(), target));
+            } else {
+                self.pending_open = None;
+                let mut event = target;
+                event["event"] = json!("open");
+                // Open events precede the admitted terminal response, as in Python.
+                let mut replies: Vec<_> = self
+                    .windows
+                    .iter()
+                    .copied()
+                    .map(|p| (p, event.clone()))
+                    .collect();
+                replies.append(&mut effects.replies);
+                effects.replies = replies;
+            }
         }
         effects.replies.extend(
             std::mem::take(&mut self.settings.events)

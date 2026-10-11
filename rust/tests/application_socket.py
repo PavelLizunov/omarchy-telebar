@@ -6,7 +6,6 @@ compatible production hello remains rejected to avoid claiming complete parity.
 """
 import json
 import pathlib
-import signal
 import socket
 import subprocess
 import sys
@@ -72,10 +71,17 @@ with tempfile.TemporaryDirectory(prefix="telebar-application-socket-") as name:
             assert json.loads(catalog.read_text())["active"] == added
             answer, _ = request(9, "fixture.snapshot")
             assert len(answer["result"]["accounts"]) == 3
-        process.send_signal(signal.SIGTERM)
-        assert process.wait(timeout=7) == 0
+            answer, events = request(10, "app.quit")
+            assert answer["ok"] and answer["result"] == {}
+            assert events[-1]["event"] == "quit"
+            for _ in range(40):
+                if json.loads(watch.readline()).get("event") == "quit":
+                    break
+            else:
+                raise AssertionError("observer lost graceful quit broadcast")
+            assert process.wait(timeout=7) == 0
         assert not (root / "migration.sock").exists()
-        print(json.dumps({"application_socket": True, "native_clients": 3, "account_add": True, "persisted_switch": True, "observer_broadcast": True, "failed_save_preserved": True, "settings": True, "shutdown": True, "parameters_sent": False, "profile_opened": False, "production_hello": False}))
+        print(json.dumps({"application_socket": True, "native_clients": 3, "account_add": True, "persisted_switch": True, "observer_broadcast": True, "failed_save_preserved": True, "settings": True, "graceful_quit": True, "shutdown": True, "parameters_sent": False, "profile_opened": False, "production_hello": False}))
     finally:
         if process.poll() is None:
             process.kill()

@@ -527,6 +527,12 @@ fn serve(
                 let _ = peer.queue(value.clone());
             }
         }
+        if application
+            .as_ref()
+            .is_some_and(|(_, app)| app.quit_deadline.is_some_and(|d| Instant::now() >= d))
+        {
+            break;
+        }
         std::thread::sleep(Duration::from_millis(2));
     }
     if let Some(driver) = &mut driver {

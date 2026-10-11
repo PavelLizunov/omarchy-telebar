@@ -32,6 +32,7 @@ pub mod settings_projection;
 pub mod sounds;
 pub mod startup;
 pub mod state;
+pub mod sticker_cache;
 pub mod storage;
 pub mod td;
 pub mod uploads;

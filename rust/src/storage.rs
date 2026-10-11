@@ -329,6 +329,37 @@ impl Storage {
         }
         Ok(format!("{relative}/{container}/{name}"))
     }
+    /// Finite no-follow regular-file inventory relative to a pinned directory.
+    pub fn files(&self, path: &str, limit: usize) -> io::Result<Vec<(String, std::fs::Metadata)>> {
+        let parts = self.parts(path)?;
+        let dir = match self.directory(&parts, false) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            result => result?,
+        };
+        let mut entries = Vec::new();
+        for (index, entry) in
+            std::fs::read_dir(format!("/proc/self/fd/{}", dir.as_raw_fd()))?.enumerate()
+        {
+            if index >= limit {
+                return Err(io::Error::other("storage directory exceeds limit"));
+            }
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let file = match open_at(&dir, &name, libc::O_RDONLY | libc::O_NONBLOCK, 0) {
+                Ok(file) => file,
+                Err(_) => continue,
+            };
+            if owned(&file, false).is_ok() {
+                entries.push((name, file.metadata()?));
+            }
+        }
+        Ok(entries)
+    }
     pub fn nonempty_directory(&self, path: &str) -> io::Result<bool> {
         let parts = self.parts(path)?;
         let dir = match self.directory(&parts, false) {

@@ -155,6 +155,7 @@ pub enum Answer {
     Empty,
     Recorded(String),
     Export(crate::export::Gate),
+    Cache(crate::sticker_cache::CacheAnswer),
     ChatDetail(crate::chat_commands::ChatAnswer),
     Constant(Value),
     Continue(Continuation),
@@ -274,6 +275,13 @@ impl Answer {
         Err(text(&event["message"], 200))
     }
     pub fn complete(&self, event: &Value, state: &State) -> Result<Completion> {
+        if let Self::Cache(answer) = self {
+            return Ok(Completion {
+                result: Value::Null,
+                followups: Vec::new(),
+                next: Some(Box::new(answer.complete(event, state)?)),
+            });
+        }
         if let Self::Export(gate) = self {
             return Ok(Completion {
                 result: Value::Null,
@@ -307,6 +315,7 @@ impl Answer {
             Self::ChatDetail(answer) => answer.complete(event, state)?,
             Self::LinkDetail(_) => unreachable!("link completion handled above"),
             Self::Export(_) => unreachable!("export completion handled above"),
+            Self::Cache(_) => unreachable!("cache completion handled above"),
             Self::Recorded(_) => state.message(event),
             Self::Empty => json!({}),
             Self::Constant(v) => v.clone(),

@@ -1,5 +1,6 @@
-//! Admitted finite helper work. Workers never access TDLib, account state or
-//! credentials; main-thread Engine owns the request token and continuations.
+//! Admitted finite helper work. Workers never access TDLib or mutable account
+//! state. Credential/startup work uses explicit redacted Secret Service context;
+//! the main-thread Engine/Driver owns request tokens and continuations.
 use crate::{
     batch::{Aggregate, Batch},
     commands::{Action, Answer, Result, arg_int, reply, topic},
@@ -23,6 +24,7 @@ use std::{
 };
 #[derive(Debug)]
 pub enum Work {
+    Cache(crate::sticker_cache::Job),
     Startup {
         context: crate::startup::Context,
         account: String,
@@ -114,6 +116,7 @@ impl Work {
     }
     fn run(self, cancel: &AtomicBool) -> Result<Action> {
         match self {
+            Self::Cache(job) => job.run(cancel),
             Self::Startup { context, account } => {
                 Ok(Action::StartupPrepared(context.run(&account, cancel)))
             }

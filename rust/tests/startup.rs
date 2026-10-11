@@ -44,6 +44,28 @@ fn preparation_preserves_identity_redacts_failures_and_never_opens_database() {
     assert!(!format!("{prepared:?}").contains(hash));
     let query = prepared.0.unwrap().unwrap();
     assert_eq!(query["database_encryption_key"], key);
+    // Feed the actual prepared parameters through the native effect boundary,
+    // without dispatching them or opening the disposable/working database.
+    let mut runtime = telebar_runtime::authorization::Runtime::new("other".into());
+    runtime
+        .register(
+            "other".into(),
+            "Synthetic".into(),
+            41,
+            vec![],
+            std::time::Instant::now(),
+        )
+        .unwrap();
+    let sent = runtime.configure("other", Ok(Some(query.clone())), std::time::Instant::now());
+    assert_eq!(sent.native.len(), 1);
+    assert_eq!(sent.native[0].client, 41);
+    assert_eq!(sent.native[0].query["database_encryption_key"], key);
+    assert_eq!(sent.native[0].query["api_hash"], hash);
+    assert!(runtime.parameters_pending("other"));
+    let rejected = runtime.receive(json!({"@type":"error","@client_id":41,"@extra":sent.native[0].query["@extra"],"code":400,"message":hash}),std::time::Instant::now(),&mut |_|panic!("no re-preparation"),&mut |_|None);
+    assert!(!runtime.parameters_pending("other"));
+    assert!(rejected.native.is_empty());
+    assert!(!format!("{:?}", rejected.replies).contains(hash));
     assert_eq!(
         query["database_directory"],
         json!(root.join(".local/share/omagram/accounts/other/database"))

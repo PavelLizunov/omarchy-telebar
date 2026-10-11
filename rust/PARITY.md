@@ -114,8 +114,9 @@ extending the oracle with `run-differential.sh` still requires the matching dirt
 stabilization sources identified by those hashes. Do not silently regenerate it
 against old Git HEAD or publish unrelated stabilization work as a dependency.
 
-Observed source checks: 41 unit tests and twelve default integration-test cases
-passed; one explicit verified-library startup-driver test passed separately;
+Observed source checks: 41 default unit tests and fourteen default integration-test
+cases passed; two ignored-by-default verified-library tests passed explicitly
+(one synthetic startup ownership test and one three-client native driver test);
 Clippy with warnings denied and both fresh/frozen differential runs passed with
 21,136 inputs and zero differences. These are bounded migration checks, not
 coverage of all 170 commands. Disposable native/application socket checks verify
@@ -146,21 +147,51 @@ before session-owned startup, and retired/expired tokens or stale generations
 cannot trigger parameters. Synthetic fake-store checks passed; no real keyring
 was contacted. Explicit asynchronous startup preparation is now integrated into
 the single native Driver with account/client/generation/serial/auth ownership.
-Startup and user jobs share a two-worker admission ceiling; shutdown cancels and
-joins both pools. A real TDLib pre-parameter driver check used an invalid disposable
-storage root, so preparation failed before Secret Service and no profile/parameters
-were opened. Complete successful startup and production context still require
+Startup and user jobs share a two-worker admission ceiling; a bounded FIFO
+queues up to ten account startups without retry loops, deduplicates current
+attempts and drops stale account/auth/serial entries. Shutdown cancels and joins
+both pools and retires the queue. Current native parameter attempts also suppress
+repeated wait-parameters events. Queue time counts toward the 180-second owner
+deadline. Explicit regressions cover successful synthetic parameter effects,
+terminal-once, auth/serial/generation/client replacement, expiry and shutdown.
+A real TDLib pre-parameter driver check used an invalid disposable storage root
+for three native clients, so preparation failed before Secret Service and no
+profile/parameters were opened. Complete successful startup and production context still require
 acceptance. Shared keyring lookup/store budgets now
 support an explicit deadline and cancellation. An injected database-key policy
 check confirms that a stored noncanonical Base64 representation is preserved,
 lookup failure or an existing nonempty database never generates a replacement,
 and an exhausted deadline starts no helper.
 
+Local `ui.open` now targets window peers only, preserves selected-account
+identity and ordered open-before-terminal delivery, and retains one pending
+open for 30 seconds. Only an admitted window hello consumes it. `ui.focus`
+withdraws the exact account/chat notification identity, keeps peer ownership,
+and emits an owned no-retry reaction-read effect when enabled. Notification
+withdrawals still need the desktop transport. Peer retirement clears focus only
+for its owner. `app.quit` broadcasts before acknowledging and the actual inert
+application socket drains for 300 milliseconds before bounded native shutdown.
+Synthetic routing/admission tests and actual socket quit passed; no desktop
+window was opened or real read-state changed.
+
+Explicit `sticker.lottie`, `storage.stats` and `storage.clear` native
+continuations now dispatch bounded cache workers. The gzip helper receives only
+admitted private bytes, not paths or shell text; input is at most 1 MiB, output
+16 MiB and helper time ten seconds. Parsed JSON has depth/item/string bounds and
+must be an object. Cache writes retain SHA-256 identity and mode 0600; finite
+no-follow inventory trims toward the existing 256 MiB / 4096-file ceilings.
+An overfull uninspectable directory refuses new writes rather than treating an
+inventory failure as empty (a deliberate resource-safety refinement).
+Synthetic tests cover actual gzip/worker/Engine completion, corrupt/nonobject
+input, expansion overflow, cancellation, symlink refusal and preserved sent
+files. Failed-hash memoization, exact scheduling/capacity errors and actual QML
+Lottie rendering remain unverified; no production storage was cleared.
+
 Remaining work includes complete production startup and compatible hello,
-credential preparation, complete account/catalog synchronization and media roots,
+complete account/catalog synchronization and media roots,
 notification D-Bus actions and sounds, global shortcut effects, managed playback,
 voice/video capture and shutdown, full clipboard writer/file open/copy-image,
-profile-photo jobs, storage/animation/diagnostics/UI/quit commands and bundled
+profile-photo jobs, full animation/cache/diagnostics and live UI effects, bundled
 bridge/proxy/menu/build helper replacement. Upload and recording snapshot
 retention/cleanup and cumulative disk limits also need acceptance. No Python
 runtime requirement is removed, installed candidate deployed or working account

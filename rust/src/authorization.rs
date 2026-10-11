@@ -54,6 +54,24 @@ pub struct Runtime {
     pub stopping: bool,
 }
 impl Runtime {
+    pub fn read_reactions(&mut self, id: &str, chat: i128, now: Instant) -> Effects {
+        let mut effects = Effects::default();
+        if !self.stopping && self.engine.accounts.get(id).is_some_and(|a| a.ready) {
+            self.query(
+                id,
+                json!({"@type":"readAllChatReactions","chat_id":number(chat)}),
+                Internal::Ignore,
+                now,
+                &mut effects,
+            );
+        }
+        effects
+    }
+    pub fn parameters_pending(&self, id: &str) -> bool {
+        self.pending.values().any(|p| p.account == id && matches!(&p.answer, Internal::Parameters { serial, auth }
+            if self.metadata.get(id).is_some_and(|m| m.parameters_serial == *serial && m.auth == *auth)
+            && self.engine.accounts.get(id).is_some_and(|a| a.client == p.client && a.generation == p.generation)))
+    }
     pub fn internal_pending(&self) -> usize {
         self.pending.len()
     }

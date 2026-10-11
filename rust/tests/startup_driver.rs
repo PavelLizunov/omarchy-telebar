@@ -28,27 +28,36 @@ fn asynchronous_startup_failure_is_bounded_and_never_prepares_real_parameters() 
         version: "fixture".into(),
         language: "en".into(),
     });
-    driver
-        .register("default".into(), "Synthetic".into(), vec![])
-        .unwrap();
+    for id in ["default", "other", "third"] {
+        driver
+            .register(id.into(), "Synthetic".into(), vec![])
+            .unwrap();
+    }
     let until = Instant::now() + Duration::from_secs(5);
-    let mut observed = false;
+    let mut observed = std::collections::HashSet::new();
     while Instant::now() < until {
         let effect = driver
             .tick(&mut |_| {
                 panic!("configured startup uses the bounded worker, not the synchronous provider")
             })
             .unwrap();
-        observed |= effect
-            .replies
-            .iter()
-            .any(|(_, r)| r["auth"]["state"] == "error");
-        if observed {
+        for (_, r) in effect.replies {
+            if r["auth"]["state"] == "error" {
+                observed.insert(r["account"].as_str().unwrap().to_owned());
+            }
+        }
+        if observed.len() == 3 {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(observed);
+    assert_eq!(observed.len(), 3);
+    for id in ["default", "other", "third"] {
+        assert_eq!(
+            driver.runtime.metadata[id].auth["reason"],
+            "the startup credentials could not be prepared; check the keyring and account storage"
+        );
+    }
     assert_eq!(
         driver.runtime.metadata["default"].auth["reason"],
         "the startup credentials could not be prepared; check the keyring and account storage"
