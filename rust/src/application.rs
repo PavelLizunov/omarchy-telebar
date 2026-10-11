@@ -26,7 +26,7 @@ impl Application {
     pub fn load(home: &Storage) -> std::io::Result<Self> {
         let raw = home
             .read(".local/share/omagram/accounts.json", 64 * 1024)?
-            .and_then(|b| crate::wire::bounded_json(&b, 6, 256, 1024).ok())
+            .and_then(|b| crate::wire::bounded_json(&b, 6, 256, 4096).ok())
             .unwrap_or(Value::Null);
         Ok(Self {
             settings: Settings::load(home)?,

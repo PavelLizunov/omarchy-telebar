@@ -127,6 +127,17 @@ pub fn run_cancel(
     {
         return Err(io::Error::other("invalid helper bounds"));
     }
+    // A worker retired before dispatch must not start even a short-lived
+    // helper that can mutate an external service (for example Secret Service).
+    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(Output {
+            code: None,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            timed_out: true,
+            truncated: false,
+        });
+    }
     let mut command = Command::new(executable);
     command
         .args(args)
@@ -210,6 +221,18 @@ mod tests {
     #[test]
     fn cancellation_reaps_the_exact_helper_without_waiting_for_deadline() {
         let cancel = std::sync::atomic::AtomicBool::new(true);
+        // Missing executable proves a pre-cancelled request never spawns.
+        let missing = run_cancel(
+            "/fixture/nonexistent-helper",
+            &[],
+            &BTreeMap::new(),
+            &[],
+            Duration::from_secs(5),
+            4096,
+            &cancel,
+        )
+        .unwrap();
+        assert!(missing.timed_out && missing.code.is_none());
         let at = Instant::now();
         let output = run_cancel(
             "/usr/bin/sleep",
