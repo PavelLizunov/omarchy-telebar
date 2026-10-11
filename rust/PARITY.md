@@ -115,8 +115,9 @@ stabilization sources identified by those hashes. Do not silently regenerate it
 against old Git HEAD or publish unrelated stabilization work as a dependency.
 
 Observed source checks: 41 default unit tests and seventeen default integration-test
-cases passed; two ignored-by-default verified-library tests passed explicitly
-(one synthetic startup ownership test and one three-client native driver test);
+cases passed; three ignored-by-default verified-library tests passed explicitly
+(startup ownership, three-client startup and dummy-audio Driver lifecycle). Run
+these native tests serially with `-- --ignored --test-threads=1`;
 Clippy with warnings denied and both fresh/frozen differential runs passed with
 21,136 inputs and zero differences. These are bounded migration checks, not
 coverage of all 170 commands. Disposable native/application socket checks verify
@@ -213,8 +214,10 @@ owner, account generation, no-retry content-open effect and bounded teardown.
 The player retains the admitted source descriptor through a parent `/proc` path,
 so path replacement cannot substitute media. A synthetic ffplay test used only
 SDL dummy audio/video drivers; no desktop, real audio or Telegram read state was
-accessed. Driver selection-change/stop/closure integration, actual sound/device
-consumer and complete capture/clipboard ownership still need acceptance.
+accessed. Driver tests additionally cover stale-selection refusal, retained
+previous owner, admitted stop ordering/reap and generation-change cleanup without
+dispatching synthetic native IDs. Actual sound/device consumer, normal-end/quit
+coverage and complete capture/clipboard ownership still need acceptance.
 
 Remaining work includes complete production startup and compatible hello,
 complete account/catalog synchronization and media roots,

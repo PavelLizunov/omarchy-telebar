@@ -189,36 +189,9 @@ impl Driver {
     }
     fn dispatch(&mut self, mut effects: Effects) -> io::Result<Effects> {
         for (token, start) in std::mem::take(&mut effects.playback) {
-            effects
-                .replies
-                .extend(self.runtime.expire(Instant::now()).replies);
-            let owner = self.runtime.engine.job_owner(token);
-            if !self.runtime.engine.job_current(token) {
-                continue;
-            }
-            let result = if start.selection.serial != self.playback_serial {
-                Err("the playback selection changed".into())
-            } else {
-                if let Some((old, _, _, _)) = self.player.take() {
-                    effects
-                        .replies
-                        .push((0, json!({"event":"playing","fileId":0,"account":old})));
-                }
-                start.spawn().map(|(helper,source)| {
-                    let (account,generation)=owner.expect("current playback owner");
-                    let started=SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
-                    self.player=Some((account.clone(),generation,helper,source));
-                    let seen=self.runtime.open_content(&account,start.selection.chat,start.selection.message,Instant::now());
-                    effects.native.extend(seen.native);
-                    effects.replies.push((0,json!({"event":"playing","fileId":number(start.selection.file),"chatId":number(start.selection.chat),"messageId":number(start.selection.message),"startedAt":started,"rate":start.selection.rate,"account":account})));
-                    crate::commands::Action::Reply(json!({"startedAt":started}))
-                })
-            };
-            let done = self
-                .runtime
-                .engine
-                .job_complete(token, result, Instant::now());
-            effects.replies.extend(done.replies);
+            let next = self.complete_playback(token, start, Instant::now());
+            effects.replies.extend(next.replies);
+            effects.native.extend(next.native);
         }
         for (token, work) in std::mem::take(&mut effects.work) {
             let started = if self.jobs.active() + self.startup_jobs.active() >= 2 {
@@ -238,6 +211,67 @@ impl Driver {
             self.td.send(native.client, &native.query)?;
         }
         Ok(effects)
+    }
+    fn complete_playback(
+        &mut self,
+        token: crate::lifecycle::Token,
+        start: crate::playback::Start,
+        now: Instant,
+    ) -> Effects {
+        let mut effects = self.runtime.expire(now);
+        let Some((account, generation)) = self.runtime.engine.job_owner(token) else {
+            return effects;
+        };
+        let current = !self.runtime.stopping
+            && self
+                .runtime
+                .engine
+                .accounts
+                .get(&account)
+                .is_some_and(|a| a.client > 0 && a.generation == generation);
+        let result = if !current {
+            Err("the account session was closed".into())
+        } else if start.selection.serial != self.playback_serial {
+            Err("the playback selection changed".into())
+        } else {
+            if let Some((old, _, _, _)) = self.player.take() {
+                effects
+                    .replies
+                    .push((0, json!({"event":"playing","fileId":0,"account":old})));
+            }
+            start.spawn().map(|(helper,source)|{
+                    let started=SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+                    self.player=Some((account.clone(),generation,helper,source));
+                    let seen=self.runtime.open_content(&account,start.selection.chat,start.selection.message,now);
+                    effects.native.extend(seen.native);
+                    effects.replies.push((0,json!({"event":"playing","fileId":number(start.selection.file),"chatId":number(start.selection.chat),"messageId":number(start.selection.message),"startedAt":started,"rate":start.selection.rate,"account":account})));
+                    crate::commands::Action::Reply(json!({"startedAt":started}))
+                })
+        };
+        let done = self.runtime.engine.job_complete(token, result, now);
+        effects.replies.extend(done.replies);
+        effects
+    }
+    fn poll_player(&mut self) -> Effects {
+        let mut effects = Effects::default();
+        let stop = if let Some((account, generation, helper, _)) = &mut self.player {
+            self.runtime.stopping
+                || !self
+                    .runtime
+                    .engine
+                    .accounts
+                    .get(account)
+                    .is_some_and(|a| a.client > 0 && a.generation == *generation)
+                || helper.poll().map_or(true, |out| out.is_some())
+        } else {
+            false
+        };
+        if stop && let Some((account, _, _, _)) = self.player.take() {
+            effects
+                .replies
+                .push((0, json!({"event":"playing","fileId":0,"account":account})));
+        }
+        effects
     }
     pub fn request(&mut self, peer: u64, request: Request) -> io::Result<Effects> {
         self.request_with_local(peer, request, &mut |_, _, _| None)
@@ -609,22 +643,7 @@ impl Driver {
             let next = self.dispatch(next)?;
             effects.replies.extend(next.replies);
         }
-        let stop_player = if let Some((account, generation, helper, _)) = &mut self.player {
-            !self
-                .runtime
-                .engine
-                .accounts
-                .get(account)
-                .is_some_and(|a| a.client > 0 && a.generation == *generation)
-                || helper.poll().map_or(true, |out| out.is_some())
-        } else {
-            false
-        };
-        if stop_player && let Some((account, _, _, _)) = self.player.take() {
-            effects
-                .replies
-                .push((0, json!({"event":"playing","fileId":0,"account":account})));
-        }
+        effects.replies.extend(self.poll_player().replies);
         let queued = self.dispatch_startup();
         effects.replies.extend(queued.replies);
         let expired = self.runtime.expire(Instant::now());
@@ -849,5 +868,135 @@ mod tests {
         driver.close(Duration::ZERO).unwrap();
         assert!(driver.startup_queue.is_empty() && driver.startup_owners.is_empty());
         assert_eq!(driver.startup_jobs.active(), 0);
+    }
+    #[test]
+    #[ignore = "requires an explicitly provided verified TDLib library"]
+    fn playback_driver_retires_stale_selections_and_owned_helpers() {
+        use crate::{
+            engine::Account,
+            playback::{Selection, Start},
+            wire::Request,
+        };
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let library = std::env::var_os("TELEBAR_TEST_TDLIB").expect("verified library");
+        let root =
+            std::env::temp_dir().join(format!("telebar-driver-playback-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let bytes = crate::sounds::render(&crate::sounds::motif("synthetic", 0), "pop").unwrap();
+        let path = root.join("voice.wav");
+        fs::write(&path, bytes).unwrap();
+        let mut driver = Driver::open(Path::new(&library), "default".into(), "en".into()).unwrap();
+        driver.runtime.engine.accounts.insert(
+            "default".into(),
+            Account {
+                client: 41,
+                generation: 1,
+                state: crate::state::State::default(),
+                ready: true,
+            },
+        );
+        let mut app =
+            crate::application::Application::load(&crate::storage::Storage::open(&root).unwrap())
+                .unwrap();
+        let home = crate::storage::Storage::open(&root).unwrap();
+        let make = |id, serial| {
+            let request = Request::parse(
+                json!({"id":id,"cmd":"media.play","args":{}})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            let start = Start {
+                selection: Selection {
+                    serial,
+                    chat: 42,
+                    message: 7,
+                    file: 3,
+                    rate: 1.0,
+                    environment: std::collections::BTreeMap::from([
+                        ("SDL_AUDIODRIVER".into(), "dummy".into()),
+                        ("SDL_VIDEODRIVER".into(), "dummy".into()),
+                    ]),
+                },
+                path: path.to_str().unwrap().into(),
+                roots: vec![root.to_str().unwrap().into()],
+            };
+            (request, start)
+        };
+        driver.playback_serial = 1;
+        let (request, start) = make(1, 1);
+        let mut start = Some(start);
+        let mut e =
+            driver
+                .runtime
+                .engine
+                .request_using(7, request, Instant::now(), &mut |_, _, _| {
+                    Ok(crate::commands::Action::Playback(start.take().unwrap()))
+                });
+        let (token, start) = e.playback.pop().unwrap();
+        let e = driver.complete_playback(token, start, Instant::now());
+        assert_eq!(e.replies[0].1["event"], "playing");
+        assert_eq!(e.replies[1].1["ok"], true);
+        assert_eq!(e.native[0].query["@type"], "openMessageContent");
+        let pid = driver.player.as_ref().unwrap().2.pid();
+        let (request, start) = make(2, 1);
+        let mut start = Some(start);
+        let mut e =
+            driver
+                .runtime
+                .engine
+                .request_using(7, request, Instant::now(), &mut |_, _, _| {
+                    Ok(crate::commands::Action::Playback(start.take().unwrap()))
+                });
+        let (token, start) = e.playback.pop().unwrap();
+        driver.playback_serial = 2;
+        let stale = driver.complete_playback(token, start, Instant::now());
+        assert!(stale.native.is_empty());
+        assert_eq!(
+            stale.replies[0].1["error"],
+            "the playback selection changed"
+        );
+        assert_eq!(driver.player.as_ref().unwrap().2.pid(), pid);
+        let stop = Request::parse(br#"{"id":3,"cmd":"media.stop"}"#).unwrap();
+        let stopped = driver
+            .request_application(&mut app, &home, 7, stop)
+            .unwrap();
+        assert_eq!(stopped.replies[0].1["event"], "playing");
+        assert_eq!(stopped.replies[1].1["ok"], true);
+        assert!(driver.player.is_none());
+        assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        let (request, start) = make(4, driver.playback_serial);
+        let mut start = Some(start);
+        let mut e =
+            driver
+                .runtime
+                .engine
+                .request_using(7, request, Instant::now(), &mut |_, _, _| {
+                    Ok(crate::commands::Action::Playback(start.take().unwrap()))
+                });
+        let (token, start) = e.playback.pop().unwrap();
+        driver.complete_playback(token, start, Instant::now());
+        let pid = driver.player.as_ref().unwrap().2.pid();
+        driver
+            .runtime
+            .engine
+            .accounts
+            .get_mut("default")
+            .unwrap()
+            .generation += 1;
+        let retired = driver.poll_player();
+        assert_eq!(retired.replies[0].1["fileId"], 0);
+        assert!(driver.player.is_none());
+        assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        driver
+            .runtime
+            .engine
+            .accounts
+            .get_mut("default")
+            .unwrap()
+            .client = 0;
+        driver.close(Duration::ZERO).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 }
