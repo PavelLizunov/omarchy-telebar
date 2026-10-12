@@ -55,6 +55,17 @@ fn synthetic_owned_capture_stops_and_prepares_retained_inputs_without_sends() {
         };
         assert_eq!(record.kind, kind);
         assert_eq!(record.chat, 42);
+        let checkpoint =
+            telebar_runtime::recording_checkpoint::Checkpoint::open(&root, &root, "default")
+                .unwrap();
+        let restored = checkpoint.load().unwrap().unwrap();
+        assert_eq!(restored.token, record.token);
+        assert_eq!(restored.chat, 42);
+        assert_eq!(restored.kind, kind);
+        assert_eq!(
+            restored.status,
+            telebar_runtime::recorded_send::Status::PrepareFailed
+        );
         let Action::Recorded { content, input, .. } =
             preparation.run(&AtomicBool::new(false)).unwrap()
         else {
@@ -157,4 +168,63 @@ fn synthetic_owned_capture_stops_and_prepares_retained_inputs_without_sends() {
     );
     fs::remove_dir_all(&moved).unwrap();
     fs::remove_dir_all(root).unwrap();
+    // Checkpoint open/save failure retains stopped raw ownership and returns a
+    // resolvable recovery action, never an orphan UI 'recording' or deleted file.
+    for open_failure in [false, true] {
+        let root = std::env::temp_dir().join(format!(
+            "telebar-capture-checkpoint-{open_failure}-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let context = Context {
+            home: root.clone(),
+            runtime: root.clone(),
+            environment: Default::default(),
+        };
+        let capture = Capture::start_with(
+            &context,
+            "default".into(),
+            1,
+            "voice",
+            42,
+            Some(input("voice")),
+        )
+        .unwrap();
+        let path = capture.path.clone();
+        let store = telebar_runtime::storage::Storage::open(&root).unwrap();
+        if !open_failure {
+            store
+                .ensure_dir(".local/share/omagram/retained-recording-v1.json")
+                .unwrap();
+        }
+        let bad = root.join("bad-home");
+        fs::write(&bad, b"not a directory").unwrap();
+        let target = if open_failure { bad } else { root.clone() };
+        let Action::RecoverRecorded(record) = capture
+            .prepare_send(json!({"send":true}), target, json!({}))
+            .unwrap()
+        else {
+            panic!("checkpoint failure must return owned recording recovery");
+        };
+        assert!(path.exists());
+        assert_eq!(record.chat, 42);
+        let mut retained = telebar_runtime::recorded_send::Retained::default();
+        retained
+            .attach(
+                telebar_runtime::recording_checkpoint::Checkpoint::open(&root, &root, "default")
+                    .unwrap(),
+            )
+            .unwrap();
+        if retained.recovery_blocked() {
+            retained.discard(&"0".repeat(32)).unwrap_err();
+            fs::remove_dir(root.join(".local/share/omagram/retained-recording-v1.json")).unwrap();
+            retained.discard(&"0".repeat(32)).unwrap();
+            assert!(path.exists());
+        } else {
+            retained.recover_live(record).unwrap();
+            assert_eq!(retained.view("default")["state"], "prepareFailed");
+        }
+        assert!(path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
 }

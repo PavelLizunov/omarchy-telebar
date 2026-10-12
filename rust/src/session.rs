@@ -132,6 +132,17 @@ impl Context {
                 .ok_or_else(|| io::Error::other("account registration failed"))?
                 .state
                 .me_id = crate::projection::integer(&row["meId"], 0);
+            let retained = &mut driver
+                .runtime
+                .engine
+                .accounts
+                .get_mut(id)
+                .expect("registered account")
+                .state
+                .retained;
+            let checkpoint =
+                crate::recording_checkpoint::Checkpoint::open(&self.home, &self.runtime, id)?;
+            retained.attach(checkpoint)?;
         }
         let active = app.catalog["active"]
             .as_str()

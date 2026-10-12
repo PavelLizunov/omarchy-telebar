@@ -246,6 +246,7 @@ impl Capture {
         Ok(())
     }
     pub fn prepare_send(mut self, args: Value, home: PathBuf, options: Value) -> Result<Action> {
+        self.keep_input = true; // Stop-with-send never deletes raw input on setup failure.
         let mut bytes = [0u8; 16];
         File::open("/dev/urandom")
             .and_then(|mut f| f.read_exact(&mut bytes))
@@ -259,7 +260,7 @@ impl Capture {
                 .try_clone()
                 .map_err(|_| "the retained recording is not available")?,
         };
-        let picked = [
+        let picked: serde_json::Map<String, Value> = [
             "replyToMessageId",
             "topicId",
             "threadId",
@@ -269,10 +270,30 @@ impl Capture {
         .into_iter()
         .filter_map(|k| args.get(k).map(|v| (k.into(), v.clone())))
         .collect();
-        self.helper
+        let stopped = self
+            .helper
             .signal_stop(libc::SIGINT, Duration::from_secs(5))
-            .map_err(|_| "cannot stop the recorder")?;
+            .is_ok();
+        // A crash between capture stop and main-thread reservation must still
+        // expose the original recording and destination. No native send occurs.
         self.keep_input = true;
+        let recording = crate::recorded_send::Recording {
+            token: token.clone(),
+            kind: self.kind.clone(),
+            path: source.path.to_string_lossy().into_owned(),
+            source: None,
+            chat: self.chat,
+            args: Value::Object(picked.clone()),
+            content: None,
+            status: crate::recorded_send::Status::Preparing,
+            input: None,
+        };
+        let checkpoint =
+            crate::recording_checkpoint::Checkpoint::open(&home, &self.root, &self.account)
+                .and_then(|checkpoint| checkpoint.save(Some(&recording), false));
+        if checkpoint.is_err() || !stopped {
+            return Ok(Action::RecoverRecorded(recording));
+        }
         Ok(Action::PrepareRecorded {
             recording: Some(crate::recorded_send::Recording {
                 token: token.clone(),

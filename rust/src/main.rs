@@ -505,6 +505,9 @@ fn serve_mode(
                 telebar_runtime::launcher::language(&launch.environment),
             )?;
             context.configure_application(&mut app)?;
+            context.register_catalog(&app, owner)?;
+            // Restore retained metadata first so journal cleanup cannot remove
+            // the prepared input backing an explicitly recoverable recording.
             // Reclaim only journal-proven unsent generated copies after the
             // exclusive owner lock, before workers/startup can submit inputs.
             // Sent/uncertain/legacy files count toward admission, never age GC.
@@ -515,7 +518,25 @@ fn serve_mode(
                     } else {
                         format!(".local/share/omagram/accounts/{id}/sent")
                     };
-                    let _ = telebar_runtime::upload_lease::recover_unsent(&home, &directory);
+                    if owner
+                        .runtime
+                        .engine
+                        .accounts
+                        .get(id)
+                        .is_some_and(|a| a.state.retained.recovery_blocked())
+                    {
+                        continue;
+                    }
+                    let protected = owner
+                        .runtime
+                        .engine
+                        .accounts
+                        .get(id)
+                        .map(|a| a.state.retained.protected_inputs(&context.home))
+                        .unwrap_or_default();
+                    let _ = telebar_runtime::upload_lease::recover_unsent_preserving(
+                        &home, &directory, &protected,
+                    );
                 }
             }
             let _ = telebar_runtime::gc::raw(&context.runtime, &[], std::time::SystemTime::now());
@@ -527,7 +548,6 @@ fn serve_mode(
                 binary: launch.binary.clone(),
                 environment: context.environment.clone(),
             });
-            context.register_catalog(&app, owner)?;
             owner.restore_saved_bridge(&app);
             owner
                 .apply_initial_globals(&mut app)

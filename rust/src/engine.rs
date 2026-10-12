@@ -80,15 +80,12 @@ impl Engine {
                 Answer::ProfilePhoto(lease) => lease.submitted()?,
                 Answer::Upload(lease, _) => lease.submitted()?,
                 Answer::Recorded(token) => {
-                    if let Some(input) = self
-                        .accounts
+                    self.accounts
                         .get(&callback.account)
-                        .and_then(|a| a.state.retained.record.as_ref())
-                        .filter(|r| r.token == *token)
-                        .and_then(|r| r.input.as_ref())
-                    {
-                        input.submitted()?;
-                    }
+                        .ok_or_else(|| std::io::Error::other("recording account missing"))?
+                        .state
+                        .retained
+                        .native_dispatched(token)?;
                 }
                 _ => {}
             }
@@ -235,6 +232,9 @@ impl Engine {
             Ok(Action::DiscardRecorded(record)) => {
                 self.discard_recorded(&account, &record, &mut effects)
             }
+            Ok(Action::RecoverRecorded(record)) => {
+                self.recover_recorded(&account, record, &mut effects)
+            }
             Ok(Action::PrepareRecorded {
                 recording,
                 preparation,
@@ -278,7 +278,7 @@ impl Engine {
                 &mut effects,
             ),
             Ok(Action::CredentialsSaved)
-            | Ok(Action::DiscardRecorded(_))
+            | Ok(Action::DiscardRecorded(_) | Action::RecoverRecorded(_))
             | Ok(Action::PrepareRecorded { .. })
             | Ok(Action::Recorded { .. }) => {
                 unreachable!("recorded action resolved")
@@ -596,6 +596,7 @@ impl Engine {
                                 Action::StartupPrepared(_)
                                 | Action::CredentialsSaved
                                 | Action::DiscardRecorded(_)
+                                | Action::RecoverRecorded(_)
                                 | Action::PrepareRecorded { .. }
                                 | Action::Recorded { .. } => self.finish(
                                     callback.token,
@@ -722,6 +723,25 @@ impl Engine {
         }
         effects
     }
+    fn recover_recorded(
+        &mut self,
+        account: &str,
+        record: crate::recorded_send::Recording,
+        effects: &mut Effects,
+    ) -> crate::commands::Result<Action> {
+        let retained = &mut self
+            .accounts
+            .get_mut(account)
+            .ok_or("unknown account")?
+            .state
+            .retained;
+        retained.recover_live(record)?;
+        effects.replies.push((
+            0,
+            json!({"event":"recordedSend","account":account,"recordedSend":retained.view(account)}),
+        ));
+        Err("The recording checkpoint could not be saved; the stopped recording was kept for explicit retry or discard".into())
+    }
     fn discard_recorded(
         &mut self,
         account: &str,
@@ -779,6 +799,11 @@ impl Engine {
                 return Err("invalid recording continuation".into());
             }
             retained.checked(&preparation.token)?.status = crate::recorded_send::Status::Preparing;
+            if let Err(error) = retained.persist() {
+                retained.fail_preparation(&preparation.token);
+                effects.replies.push((0,json!({"event":"recordedSend","account":account,"recordedSend":retained.view(account)})));
+                return Err(error.into());
+            }
         }
         effects.replies.push((
             0,
@@ -834,6 +859,9 @@ impl Engine {
         }
         retained.content = Some(content.clone());
         if let Some(input) = input {
+            if let Some(previous) = retained.input.take() {
+                previous.rejected(400);
+            }
             retained.input = Some(input);
         }
         state.retained.sending(&record)?;
@@ -895,6 +923,9 @@ impl Engine {
             Ok(Action::DiscardRecorded(record)) => {
                 self.discard_recorded(&account, &record, &mut effects)
             }
+            Ok(Action::RecoverRecorded(record)) => {
+                self.recover_recorded(&account, record, &mut effects)
+            }
             Ok(Action::PrepareRecorded {
                 recording,
                 preparation,
@@ -904,14 +935,22 @@ impl Engine {
                 content,
                 options,
                 input,
-            }) => self.recorded_action(
-                token,
-                &account,
-                record,
-                (content, input),
-                options,
-                &mut effects,
-            ),
+            }) => {
+                let result = self.recorded_action(
+                    token,
+                    &account,
+                    record.clone(),
+                    (content, input),
+                    options,
+                    &mut effects,
+                );
+                if result.is_err()
+                    && let Some(session) = self.accounts.get_mut(&account)
+                {
+                    session.state.retained.fail_preparation(&record);
+                }
+                result
+            }
             other => other,
         };
         match result {
@@ -934,7 +973,7 @@ impl Engine {
                 &mut effects,
             ),
             Ok(Action::CredentialsSaved)
-            | Ok(Action::DiscardRecorded(_))
+            | Ok(Action::DiscardRecorded(_) | Action::RecoverRecorded(_))
             | Ok(Action::PrepareRecorded { .. })
             | Ok(Action::Recorded { .. }) => {
                 unreachable!("recorded action resolved")

@@ -862,7 +862,7 @@ impl Driver {
             let mut effects=self.runtime.engine.request_using(peer,request,Instant::now(),&mut|_,args,state|{
                 let context=context.as_ref().ok_or("explicit recorder context missing")?;let aid=aid.clone().ok_or("unknown account")?;let generation=generation.ok_or("unknown account")?;
                 if starting{
-                    if state.retained.record.is_some(){return Err("a recorded message is still pending; resolve or discard it first".into());}
+                    if state.retained.record.is_some() || state.retained.recovery_blocked(){return Err("a recorded message is still pending; resolve or discard it first".into());}
                     let chat=crate::commands::arg_int(args,"chatId",None,None,None)?;
                     if capture.is_some(){return Err("a voice or video message is already being recorded".into());}
                     let selected=crate::capture::Capture::start(context,aid,generation,kind,chat)?;
@@ -873,10 +873,11 @@ impl Driver {
                     if current.account!=aid{return Err("the recording belongs to another account".into());}
                     if !capacity{return Err("still preparing an earlier message; try stopping again in a moment".into());}
                     let sending=args["send"]==true;
-                    if sending&&state.retained.record.is_some(){return Err("a recorded message is still pending; resolve or discard it first".into());}
+                    if sending&&(state.retained.record.is_some() || state.retained.recovery_blocked()){return Err("a recorded message is still pending; resolve or discard it first".into());}
                     let options=if sending{crate::commands::reply(args)?;crate::commands::topic(args)?;crate::sending::options(args,state,wall)?}else{Value::Null};
-                    let selected=capture.take().expect("admitted capture");let action=if sending{selected.prepare_send(args.clone(),context.home.clone(),options)?}else{selected.stop(args.clone(),context.home.clone(),options)?};
-                    transition=Some(json!({"event":"recording","state":"idle","account":aid}));Ok(action)
+                    let selected=capture.take().expect("admitted capture");
+                    transition=Some(json!({"event":"recording","state":"idle","account":aid}));
+                    if sending{selected.prepare_send(args.clone(),context.home.clone(),options)}else{selected.stop(args.clone(),context.home.clone(),options)}
                 }
             });
             if let Some(event) = transition {

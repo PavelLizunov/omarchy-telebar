@@ -85,6 +85,9 @@ pub fn plan(
         return Ok(Action::Reply(json!({})));
     }
     if command == "recording.discard" {
+        if state.retained.recovery_blocked() && args["token"] == "0".repeat(32) {
+            return Ok(Action::DiscardRecorded("0".repeat(32)));
+        }
         let token = args["token"]
             .as_str()
             .ok_or("that recorded message is no longer available")?;
@@ -97,7 +100,7 @@ pub fn plan(
         if matches!(record.status, Status::Preparing | Status::Sending) {
             return Err("the recorded message is still being prepared or sent".into());
         }
-        if record.status != Status::Unknown {
+        if record.status != Status::Unknown && !state.retained.has_checkpoint() {
             let sent = if account == "default" {
                 home.join(".local/share/omagram/sent")
             } else {

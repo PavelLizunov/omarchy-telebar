@@ -406,7 +406,20 @@ check cleanup entries without overwrite, and reserve 16 KiB journal headroom.
 Exact capture/root/controlled-unlink and near-cap/Driver controls pass; newly
 created upload-container reachability is fsynced before journal copying. This is
 coordinator-verified closure of cited findings, not cross-family acceptance or a
-power-loss proof. Retained UI/crash metadata and real media use remain open.
+power-loss proof. Retained UI/crash metadata is now durably checkpointed and
+restored per account before unsent cleanup. Original destination/options survive;
+uncertain/corrupt/substituted input restores unknown with retry disabled. Recovery
+never deserializes native content into automatic work. Real abrupt test-owner
+termination, socket restart, hello UI state, explicit discard/dismiss and durable
+resolution pass on inert media. Complete Main recovery states render against the
+actual Rust/native socket at radius 0/8 and are inspected; real media use,
+power-loss and physical/compositor interaction remain unverified. Same-family
+review found the checkpoint-before-journal unknown-dismiss crash window and two
+checkpoint-failure lifecycle gaps. Shared corrections durably preserve unknown
+inputs before dismissal, roll retry back before its error, and retain stopped
+capture recovery through an explicit action/idle event. Synthetic exact crash-
+window, failed-write, capture-open/save and native Driver recovery checks pass;
+reviewer execution, cross-family independence and full migration are not claimed.
 
 Fixed system helpers now require root-owned non-writable /usr executables and
 safe ancestors; application helpers require owned non-writable files. The

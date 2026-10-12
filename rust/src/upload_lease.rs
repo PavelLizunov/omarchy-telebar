@@ -209,10 +209,42 @@ pub fn reserve(
     }
     Ok(lock)
 }
+/// Unknown/corrupt recording dismissal must not release the only protection
+/// for a crash-window false journal. Durably retire all current unsent copies
+/// from reclamation, without sending or deleting anything. Admission stays finite.
+pub fn preserve_unsent(store: &Storage, directory: &str) -> io::Result<()> {
+    store.ensure_dir(directory)?;
+    let cancel = AtomicBool::new(false);
+    let _lock = store.lock(
+        &format!("{directory}/{LOCK}"),
+        &cancel,
+        Instant::now() + std::time::Duration::from_secs(2),
+    )?;
+    for (name, m) in store.entries(directory, MAX_ENTRIES)? {
+        if !m.is_dir() || child(&format!("{directory}/{name}/input")).is_none() {
+            continue;
+        }
+        let path = format!("{directory}/{name}");
+        if let Ok(mut journal) = read_journal(store, &path)
+            && !journal.submitted
+        {
+            journal.submitted = true;
+            write_journal(store, &path, &journal)?;
+        }
+    }
+    Ok(())
+}
 /// Startup only, after the single session owner lock and before admitting jobs.
 /// The journal is changed to submitted durably *before* native dispatch. Missing,
 /// malformed, submitted and inode-replaced journals/inputs remain untouched.
 pub fn recover_unsent(store: &Storage, directory: &str) -> io::Result<usize> {
+    recover_unsent_preserving(store, directory, &[])
+}
+pub fn recover_unsent_preserving(
+    store: &Storage,
+    directory: &str,
+    protected: &[String],
+) -> io::Result<usize> {
     store.ensure_dir(directory)?;
     let cancel = AtomicBool::new(false);
     let _lock = store.lock(
@@ -226,6 +258,12 @@ pub fn recover_unsent(store: &Storage, directory: &str) -> io::Result<usize> {
             continue;
         }
         let path = format!("{directory}/{name}");
+        if protected
+            .iter()
+            .any(|p| Path::new(p).parent() == Some(Path::new(&path)))
+        {
+            continue;
+        }
         if let Ok(journal) = read_journal(store, &path)
             && !journal.submitted
         {
@@ -264,6 +302,37 @@ impl Lease {
             paths: vec![],
             submitted: AtomicBool::new(false),
         })))
+    }
+    /// Reconstruct an existing retained generated input without changing its
+    /// durable dispatch truth. Its checkpoint, not a worker Drop, owns disposal.
+    pub fn restore(home: PathBuf, path: &str) -> io::Result<Self> {
+        let mut lease = Self::new(home)?;
+        let file = lease.0.store.open_read(path)?;
+        let m = file.metadata()?;
+        let (directory, name) =
+            child(path).ok_or_else(|| io::Error::other("invalid retained generated input"))?;
+        let journal = read_journal(&lease.0.store, directory)?;
+        if m.nlink() != 1
+            || !journal
+                .files
+                .iter()
+                .any(|e| e.name == name && e.dev == m.dev() && e.ino == m.ino())
+        {
+            return Err(io::Error::other("retained input journal changed"));
+        }
+        Arc::get_mut(&mut lease.0)
+            .expect("unique recovery owner")
+            .paths
+            .push((
+                path.into(),
+                Entry {
+                    name: name.into(),
+                    dev: m.dev(),
+                    ino: m.ino(),
+                },
+            ));
+        lease.transferred();
+        Ok(lease)
     }
     pub fn add(&mut self, path: String) -> io::Result<()> {
         let owned = Arc::get_mut(&mut self.0)

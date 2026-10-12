@@ -41,6 +41,7 @@ pub mod projection;
 pub mod proxy;
 pub mod proxy_crypto;
 pub mod recorded_send;
+pub mod recording_checkpoint;
 pub mod recording_jobs;
 pub mod registry;
 pub mod rich_projection;

@@ -75,11 +75,23 @@ Telegram may reference local inputs for subsequent playback. Accepted messages
 and timeout/disconnect do not authorize age-based deletion. Raw recordings and
 unknown profile-photo inputs are preserved across restart; only stale clipboard
 scratch has an age policy. Explicit confirmed recording discard still owns its
-narrow validated files. Crash recovery does not yet reconstruct retained-recording
-UI/retry metadata; that user-facing recovery remains an acceptance gate.
+narrow validated files. Per-account retained-recording metadata is checkpointed before preparation and
+native dispatch. Restart restores the original token, chat, reply/topic and send
+options through the actual hello snapshot. Proven-unsent work requires explicit
+re-preparation; uncertain dispatch restores `unknown` with retry disabled. Missing,
+substituted or corrupt metadata never authorizes deletion/resending. Corrupt
+checkpoints expose an unknown/dismiss-only guard, preserving all media. Explicit
+resolution clears durable metadata so another restart does not resurrect it.
+No recovery action sends automatically or contacts credentials/account databases.
+Dismissal of unknown/corrupt metadata first durably prevents unsent-journal cleanup
+from reclaiming the account's existing generated inputs, including the narrow
+checkpoint-before-journal crash window. Failed retry persistence rolls the live
+state back; failed capture checkpoint setup returns explicit retained recovery
+and reports the stopped recorder rather than deleting raw input or stranding UI.
 
 ```sh
 cargo test --manifest-path rust/Cargo.toml --locked --offline --test input_recovery
+cargo test --manifest-path rust/Cargo.toml --locked --offline --test recording_checkpoint --test recording_recovery_socket
 TELEBAR_TEST_INERT_ABI=/absolute/fixture/lib/libtdjson.so \
   cargo test --manifest-path rust/Cargo.toml --locked --offline --test input_driver -- --ignored
 ```

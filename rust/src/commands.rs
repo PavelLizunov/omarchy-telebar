@@ -143,6 +143,7 @@ pub enum Action {
     CredentialsSaved,
     StartupPrepared(crate::startup::Prepared),
     DiscardRecorded(String),
+    RecoverRecorded(crate::recorded_send::Recording),
     PrepareRecorded {
         recording: Option<crate::recorded_send::Recording>,
         preparation: Box<crate::recording_jobs::Preparation>,
@@ -1485,7 +1486,7 @@ pub fn project(value: &Value, roots: &[String]) -> Value {
         | Ok(Action::Work(_))
         | Ok(Action::Recorded { .. })
         | Ok(Action::PrepareRecorded { .. })
-        | Ok(Action::DiscardRecorded(_))
+        | Ok(Action::DiscardRecorded(_) | Action::RecoverRecorded(_))
         | Ok(Action::CredentialsSaved)
         | Ok(Action::StartupPrepared(_)) => {
             json!({"error":"fixture cannot execute helper jobs"})
@@ -1521,6 +1522,7 @@ pub fn project(value: &Value, roots: &[String]) -> Value {
                     | Action::Recorded { .. }
                     | Action::PrepareRecorded { .. }
                     | Action::DiscardRecorded(_)
+                    | Action::RecoverRecorded(_)
                     | Action::CredentialsSaved
                     | Action::StartupPrepared(_) => {
                         return json!({"error":"fixture cannot execute helper jobs","queries":queries});
