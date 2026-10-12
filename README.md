@@ -4,6 +4,10 @@
 
 <h1 align="center">Telebar</h1>
 
+The standalone [Rust runtime candidate](rust/README.md) is in progress and is not
+the installed backend. Its production cutover remains disabled until full parity
+and consumer acceptance pass.
+
 Independently maintained by [PavelLizunov](https://github.com/PavelLizunov),
 based on [Omagram by ReidenXerx](https://github.com/ReidenXerx/omarchy-omagram).
 Upstream changes are adopted selectively; this project has its own development direction.

@@ -179,6 +179,7 @@ pub struct Managed {
     output: Output,
     finished: bool,
     input_complete: bool,
+    keep_stdin: bool,
 }
 impl Managed {
     pub fn start(
@@ -231,6 +232,7 @@ impl Managed {
         {
             return Err(io::Error::other("invalid helper bounds"));
         }
+        let executable = crate::executable::checked(std::path::Path::new(executable))?;
         let mut command = Command::new(executable);
         command
             .args(args)
@@ -241,6 +243,14 @@ impl Managed {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);
+        Self::spawn_command(command, input, deadline, limit)
+    }
+    fn spawn_command(
+        mut command: Command,
+        input: &[u8],
+        deadline: Option<Instant>,
+        limit: usize,
+    ) -> io::Result<Self> {
         let mut child = Owned {
             child: command.spawn()?,
             reaped: false,
@@ -279,7 +289,21 @@ impl Managed {
             },
             finished: false,
             input_complete: input.is_empty(),
+            keep_stdin: false,
         })
+    }
+    /// Keep stdin as an owner-lifetime pipe after a bounded startup config.
+    pub fn keep_stdin_open(&mut self) {
+        self.keep_stdin = true;
+    }
+    pub fn output_snapshot(&self) -> (&[u8], &[u8]) {
+        (&self.output.stdout, &self.output.stderr)
+    }
+    pub fn take_stdout(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.output.stdout)
+    }
+    pub fn take_stderr(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.output.stderr)
     }
     pub fn pid(&self) -> u32 {
         self.child.child.id()
@@ -340,7 +364,9 @@ impl Managed {
         }
         if let Some(pipe) = &mut self.stdin {
             if self.sent == self.input.len() {
-                self.stdin = None;
+                if !self.keep_stdin {
+                    self.stdin = None;
+                }
                 self.input.clear();
                 self.sent = 0;
             } else {
@@ -366,6 +392,52 @@ impl Managed {
     }
 }
 
+/// Finite long build invocation with a tail-only private log. Command was
+/// constructed by the pinned helper, never from a request-provided executable.
+pub fn run_command_logged(
+    command: Command,
+    timeout: Duration,
+    home: &crate::storage::Storage,
+    path: &str,
+    limit: usize,
+    argv: &[&str],
+) -> io::Result<bool> {
+    if timeout.is_zero() || timeout > Duration::from_secs(4 * 3600) || limit > 8 * 1024 * 1024 {
+        return Err(io::Error::other("invalid build bounds"));
+    }
+    let mut helper = Managed::spawn_command(
+        command,
+        &[],
+        Some(Instant::now() + timeout),
+        64 * 1024 * 1024,
+    )?;
+    let mut tail = home.read(path, limit).ok().flatten().unwrap_or_default();
+    tail.extend_from_slice(format!("\n$ {}\n", argv.join(" ")).as_bytes());
+    let mut total = 0usize;
+    let completed = loop {
+        let done = helper.poll()?;
+        let (out, err) = if let Some(done) = &done {
+            (done.stdout.clone(), done.stderr.clone())
+        } else {
+            (helper.take_stdout(), helper.take_stderr())
+        };
+        total = total.saturating_add(out.len() + err.len());
+        tail.extend(out);
+        tail.extend(err);
+        if tail.len() > limit {
+            tail.drain(..tail.len() - limit);
+        }
+        if total > 64 * 1024 * 1024 {
+            break false;
+        }
+        if let Some(done) = done {
+            break done.ok();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    home.write(path, &tail, 0o600)?;
+    Ok(completed)
+}
 #[cfg(test)]
 mod tests {
     use super::*;

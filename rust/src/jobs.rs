@@ -24,6 +24,13 @@ use std::{
 };
 #[derive(Debug)]
 pub enum Work {
+    StartBridge(crate::bridge::Context),
+    // Planned on the owning thread after the earlier global operation settles.
+    DeferredSettings {
+        command: String,
+        args: Value,
+    },
+    GlobalShortcuts(crate::global_shortcuts::Job),
     StopCapture(Box<crate::capture::Stop>),
     ProfilePhoto(crate::profile_photo::Job),
     Sound(crate::sound_playback::Job),
@@ -124,6 +131,9 @@ impl Work {
     }
     fn run(self, cancel: &AtomicBool) -> Result<Action> {
         match self {
+            Self::StartBridge(context) => context.start(cancel),
+            Self::DeferredSettings { .. } => Err("invalid deferred settings worker".into()),
+            Self::GlobalShortcuts(job) => job.run(cancel),
             Self::StopCapture(job) => job.run(cancel),
             Self::ProfilePhoto(job) => job.run(cancel),
             Self::Sound(job) => job.run(cancel),
@@ -159,6 +169,7 @@ impl Work {
                 } else {
                     args.get("asPhoto").unwrap_or(&Value::Bool(true)) == &Value::Bool(true)
                 };
+                let mut lease = crate::upload_lease::Lease::new(home.clone());
                 let mut kinds = Vec::new();
                 let mut contents = Vec::new();
                 let started = Instant::now();
@@ -183,6 +194,7 @@ impl Work {
                             deadline,
                         )
                         .map_err(|_| "that file is not readable")?;
+                    lease.add(relative.clone());
                     let snapshot = home.join(relative);
                     let snapshot = snapshot.to_str().ok_or("that file is not readable")?;
                     let probed = if matches!(kind, "video" | "audio") {
@@ -207,16 +219,21 @@ impl Work {
                 if !album {
                     return Ok(Action::Native {
                         query: json!({"@type":"sendMessage","chat_id":chat,"topic_id":topic,"options":options,"reply_to":reply,"reply_markup":null,"input_message_content":contents.remove(0)}),
-                        answer: Answer::Message,
+                        answer: Answer::Upload(lease, false),
                     });
                 }
                 let groups = uploads::groups(&kinds);
                 let count = groups.len();
                 let queries=groups.into_iter().enumerate().map(|(i,group)|{
+                    // Each group owns only its own inputs: another group's
+                    // rejection cannot delete already-dispatched album files.
+                    let mut group_lease = crate::upload_lease::Lease::new(home.clone());
+                    for index in &group { group_lease.add(lease.path(*index).to_owned()); }
                     let mut q=json!({"chat_id":chat,"topic_id":topic,"options":options,"reply_to":if i==0{reply.clone()}else{Value::Null}});
                     if group.len()==1{q["@type"]=json!("sendMessage");q["reply_markup"]=Value::Null;q["input_message_content"]=contents[group[0]].clone();}else{q["@type"]=json!("sendMessageAlbum");q["input_message_contents"]=json!(group.into_iter().map(|n|contents[n].clone()).collect::<Vec<_>>());}
-                    (i.to_string(),q,Answer::Empty)
+                    (i.to_string(),q,Answer::Upload(group_lease, true))
                 }).collect();
+                lease.submitted(); // ownership transferred to independent groups
                 Ok(Action::Batch(Batch {
                     queries,
                     aggregate: Aggregate::Uploads { groups: count },

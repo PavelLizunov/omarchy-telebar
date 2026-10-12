@@ -4,10 +4,7 @@ use std::{
     io::{self, Read, Write},
     os::{
         fd::AsRawFd,
-        unix::{
-            fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
-            net::{UnixListener, UnixStream},
-        },
+        unix::{fs::MetadataExt, net::UnixStream},
     },
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
@@ -26,7 +23,7 @@ extern "C" fn stop(_: libc::c_int) {
 
 fn main() {
     if run().is_err() {
-        eprintln!("telebar-runtime: operation failed; no live account cutover performed");
+        eprintln!("telebar-runtime: operation failed; see local diagnostics");
         std::process::exit(1);
     }
 }
@@ -34,6 +31,37 @@ fn main() {
 fn run() -> io::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
+        [mode, rest @ ..] if mode == "--launch" || mode == "--host-window" => {
+            telebar_runtime::launcher::Context::discover()?.run(rest, mode == "--host-window")
+        }
+        [mode, args @ ..] if mode == "--build-tdlib" => {
+            let context = telebar_runtime::launcher::Context::discover()?;
+            telebar_runtime::tdlib_build::run(&context, args)
+        }
+        [mode, args @ ..] if mode == "--menu" => {
+            if args.len() > 1 {
+                return Err(io::Error::other("invalid menu arguments"));
+            }
+            let context = telebar_runtime::launcher::Context::discover()?;
+            let home = telebar_runtime::storage::Storage::open(&context.home)?;
+            if let Some(body) = telebar_runtime::menu::apply(
+                &home,
+                &context.plugin,
+                args.first().map_or("install", String::as_str),
+            )? {
+                println!("{body}");
+            }
+            Ok(())
+        }
+        [mode] if mode == "--proxy" => {
+            unsafe {
+                libc::signal(libc::SIGTERM, stop as *const () as libc::sighandler_t);
+                libc::signal(libc::SIGINT, stop as *const () as libc::sighandler_t);
+            }
+            telebar_runtime::proxy::run(&STOP)
+        }
+        [mode] if mode == "--daemon" => serve_daemon(false),
+        [mode, parent] if mode == "--daemon" && parent == "--with-parent" => serve_daemon(true),
         [mode] if mode == "--project" => project_stream(),
         [mode, path] if mode == "--probe-tdlib" => {
             let mut td = Td::open(Path::new(path))?;
@@ -157,6 +185,9 @@ fn run() -> io::Result<()> {
         }
         [mode, directory, library] if mode == "--inert-application" => {
             serve(Path::new(directory), false, Some(Path::new(library)), true)
+        }
+        [mode, directory, library] if mode == "--inert-consumer" => {
+            serve_consumer(Path::new(directory), Path::new(library))
         }
         _ => {
             eprintln!(
@@ -289,21 +320,68 @@ impl Peer {
     }
 }
 
-struct SocketCleanup<'a>(&'a Path);
-impl Drop for SocketCleanup<'_> {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(self.0);
-    }
-}
-
 fn serve(
     directory: &Path,
     with_engine: bool,
     library: Option<&Path>,
     with_application: bool,
 ) -> io::Result<()> {
-    // An inert fixture directory is explicit; this mode never derives a real
-    // runtime/home, opens TDLib, reads keyring or loads accounts/settings.
+    serve_mode(
+        directory,
+        with_engine,
+        library,
+        with_application,
+        false,
+        None,
+    )
+}
+fn serve_consumer(directory: &Path, library: &Path) -> io::Result<()> {
+    serve_mode(directory, false, Some(library), true, true, None)
+}
+fn serve_daemon(with_parent: bool) -> io::Result<()> {
+    // The full session owner is implemented below, but a migration checkpoint
+    // must not open working profiles before helper/consumer/cutover acceptance.
+    if !telebar_runtime::session::CUTOVER_READY {
+        return Err(io::Error::other(
+            "migration acceptance incomplete; working profiles are not opened",
+        ));
+    }
+    let context = telebar_runtime::launcher::Context::discover()?;
+    // Recovery user namespaces may hide root-owned helpers. Never weaken trust
+    // or contact credentials there; the user manager launches the host owner.
+    if fs::metadata("/usr/bin/systemd-run")?.uid() != 0 {
+        return if context.start_service()? {
+            Ok(())
+        } else {
+            Err(io::Error::other("host owner unavailable"))
+        };
+    }
+    if with_parent {
+        // SAFETY: fixed Linux lifecycle control, no borrowed memory; a parent
+        // that exited before registration cannot leave an orphan daemon.
+        if unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if unsafe { libc::getppid() } == 1 {
+            return Ok(());
+        }
+    }
+    let runtime = telebar_runtime::storage::Storage::open(&context.runtime)?;
+    runtime.create_directory("omagram", 0o700)?;
+    let directory = context.runtime.join("omagram");
+    let library = context.home.join(".local/share/omagram/lib/libtdjson.so");
+    serve_mode(&directory, false, Some(&library), true, true, Some(context))
+}
+fn serve_mode(
+    directory: &Path,
+    with_engine: bool,
+    library: Option<&Path>,
+    with_application: bool,
+    consumer: bool,
+    production: Option<telebar_runtime::launcher::Context>,
+) -> io::Result<()> {
+    // Inert modes use only an explicit private fixture root. Production context
+    // reaches this shared consumer only after the compile-time cutover gate.
     let meta = fs::symlink_metadata(directory)?;
     // SAFETY: getuid has no pointer arguments or mutable caller memory.
     let uid = unsafe { libc::getuid() };
@@ -316,32 +394,24 @@ fn serve(
             "fixture directory must be owned mode 0700",
         ));
     }
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-        .open(directory.join("migration.lock"))?;
-    // SAFETY: flock operates on the valid owned open descriptor.
-    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        return Err(io::Error::other("fixture already owned"));
-    }
-    let socket_path = directory.join("migration.sock");
-    // Refuse any existing path rather than remove a potentially foreign socket.
-    if fs::symlink_metadata(&socket_path).is_ok() {
-        return Err(io::Error::other("fixture socket already exists"));
-    }
-    // SAFETY: setting umask is process-global; no worker threads exist here.
-    let mask = unsafe { libc::umask(0o177) };
-    let listener_result = UnixListener::bind(&socket_path);
-    // SAFETY: restore the original process mask, before starting any workers.
-    unsafe { libc::umask(mask) };
-    let listener = listener_result?;
-    let _cleanup = SocketCleanup(&socket_path);
-    fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))?;
-    listener.set_nonblocking(true)?;
+    let production_mode = production.is_some();
+    let socket_owner = match telebar_runtime::socket_owner::Owner::acquire(
+        directory,
+        if production_mode {
+            "omagram.sock"
+        } else {
+            "migration.sock"
+        },
+        if production_mode {
+            "omagram.lock"
+        } else {
+            "migration.lock"
+        },
+    ) {
+        Err(error) if production_mode && error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
+        result => result?,
+    };
+    let listener = &socket_owner.listener;
     // SAFETY: fixed signal handlers only store a lock-free atomic boolean;
     // signatures match libc signal and no memory/lifetime is passed to C.
     unsafe {
@@ -349,9 +419,20 @@ fn serve(
         libc::signal(libc::SIGINT, stop as *const () as libc::sighandler_t);
         libc::signal(libc::SIGHUP, stop as *const () as libc::sighandler_t);
     }
+    let language = production.as_ref().map_or_else(
+        || "en".into(),
+        |context| telebar_runtime::launcher::language(&context.environment),
+    );
     let mut driver = if let Some(library) = library {
-        let mut driver =
-            telebar_runtime::native_driver::Driver::open(library, "default".into(), "en".into())?;
+        let mut driver = if production_mode {
+            telebar_runtime::native_driver::Driver::open_optional(
+                library,
+                "default".into(),
+                language,
+            )
+        } else {
+            telebar_runtime::native_driver::Driver::open(library, "default".into(), language)?
+        };
         if !with_application {
             driver.register("default".into(), "Inert native socket".into(), vec![])?;
         }
@@ -360,7 +441,11 @@ fn serve(
         None
     };
     let mut application = if with_application {
-        let home = telebar_runtime::storage::Storage::open(directory)?;
+        let home = telebar_runtime::storage::Storage::open(
+            production
+                .as_ref()
+                .map_or(directory, |context| context.home.as_path()),
+        )?;
         let mut app = telebar_runtime::application::Application::load(&home)?;
         app.diagnostics = telebar_runtime::diagnostics::Diagnostics::start(&home).ok();
         let mut databases = vec![directory.join(".local/share/omagram/database")];
@@ -377,35 +462,86 @@ fn serve(
         let owner = driver
             .as_mut()
             .ok_or_else(|| io::Error::other("application fixture requires native owner"))?;
-        for row in app.catalog["accounts"].as_array().into_iter().flatten() {
-            let id = row["id"]
-                .as_str()
-                .ok_or_else(|| io::Error::other("invalid fixture account"))?;
-            if !owner.runtime.engine.accounts.contains_key(id) {
-                owner.register(id.into(), row["name"].as_str().unwrap_or(id).into(), vec![])?;
-            }
-            let meta = owner
-                .runtime
-                .metadata
-                .get_mut(id)
-                .expect("registered fixture account");
-            meta.phone = row["phone"].as_str().unwrap_or("").into();
+        if let Some(launch) = &production {
+            let context = telebar_runtime::session::Context::new(
+                launch.home.clone(),
+                launch.runtime.clone(),
+                launch.environment.clone(),
+                telebar_runtime::launcher::language(&launch.environment),
+            )?;
+            context.configure_application(&mut app)?;
+            // Best-effort compatible startup cleanup only; submitted/sent
+            // inputs and database content are never age-deleted here.
+            let _ = telebar_runtime::gc::raw(&context.runtime, &[], std::time::SystemTime::now());
+            app.desktop_context = Some(launch.clone());
+            context.configure_desktop(&mut app, launch.plugin.clone());
+            context.configure_driver(&mut app, owner);
+            app.bridge.context = Some(telebar_runtime::bridge::Context {
+                binary: launch.binary.clone(),
+                environment: context.environment.clone(),
+            });
+            context.register_catalog(&app, owner)?;
+            owner.restore_saved_bridge(&app);
             owner
-                .runtime
-                .engine
-                .accounts
-                .get_mut(id)
-                .expect("registered fixture account")
-                .state
-                .me_id = telebar_runtime::projection::integer(&row["meId"], 0);
+                .apply_initial_globals(&mut app)
+                .map_err(io::Error::other)?;
+            if let Some(address) = launch.environment.get("DBUS_SESSION_BUS_ADDRESS") {
+                let icon = format!(
+                    "file://{}",
+                    launch.plugin.join("assets/omagram.svg").display()
+                );
+                // Notification absence never makes the account owner fail.
+                owner.notification_transport =
+                    telebar_runtime::notification_bus::Transport::start(address.clone(), icon).ok();
+            }
+        } else if consumer {
+            let context = telebar_runtime::session::Context::new(
+                directory.to_owned(),
+                directory.to_owned(),
+                Default::default(),
+                "en".into(),
+            )?;
+            context.configure_application(&mut app)?;
+            app.settings.global_context = Some(telebar_runtime::global_shortcuts::Context {
+                plugin: directory.to_owned(),
+                environment: context.environment.clone(),
+            });
+            context.register_catalog(&app, owner)?;
+            // No configure_driver here: isolated consumer mode must never
+            // discover credentials, send parameters or open account databases.
+        } else {
+            for row in app.catalog["accounts"].as_array().into_iter().flatten() {
+                let id = row["id"]
+                    .as_str()
+                    .ok_or_else(|| io::Error::other("invalid fixture account"))?;
+                owner.register(id.into(), row["name"].as_str().unwrap_or(id).into(), vec![])?;
+                owner
+                    .runtime
+                    .metadata
+                    .get_mut(id)
+                    .expect("registered fixture account")
+                    .phone = row["phone"].as_str().unwrap_or("").into();
+                owner
+                    .runtime
+                    .engine
+                    .accounts
+                    .get_mut(id)
+                    .expect("registered fixture account")
+                    .state
+                    .me_id = telebar_runtime::projection::integer(&row["meId"], 0);
+            }
+            owner.runtime.engine.active =
+                app.catalog["active"].as_str().unwrap_or("default").into();
         }
-        owner.runtime.engine.active = app.catalog["active"].as_str().unwrap_or("default").into();
         Some((home, app))
     } else {
         None
     };
-    println!("{}", json!({"event":"ready","production_profiles":false}));
-    let deadline = Instant::now() + Duration::from_secs(120);
+    println!(
+        "{}",
+        json!({"event":"ready","production_profiles":production_mode,"runtime":"rust","revision":env!("CARGO_PKG_VERSION")})
+    );
+    let deadline = (!production_mode).then(|| Instant::now() + Duration::from_secs(120));
     let mut engine = telebar_runtime::engine::Engine::new("default".into());
     if with_engine {
         for (id, client) in [("default", 1), ("other", 2)] {
@@ -421,8 +557,9 @@ fn serve(
         }
     }
     let mut next_peer = 1;
+    let mut ipc_requests = 0u64;
     let mut peers: Vec<Peer> = Vec::new();
-    while !STOP.load(Ordering::Relaxed) && Instant::now() < deadline {
+    while !STOP.load(Ordering::Relaxed) && deadline.is_none_or(|end| Instant::now() < end) {
         match listener.accept() {
             Ok((socket, _)) => {
                 let mut credential = libc::ucred {
@@ -462,7 +599,7 @@ fn serve(
             Err(error) => return Err(error),
         }
         if let Some((_, app)) = &mut application {
-            app.diagnostic_runtime = json!({"event_queue":0,"task_queue":0,"recording":false,"oldest_td_ms":null,"td_idle_ms":null,"counts":{},"socket_in_bytes":peers.iter().map(|p|p.inbox.len()).sum::<usize>(),"socket_out_bytes":peers.iter().map(|p|p.outbox.len().saturating_sub(p.written)).sum::<usize>()});
+            app.diagnostic_runtime = json!({"event_queue":0,"task_queue":0,"recording":false,"oldest_td_ms":null,"td_idle_ms":null,"counts":{"ipc_requests":ipc_requests},"socket_in_bytes":peers.iter().map(|p|p.inbox.len()).sum::<usize>(),"socket_out_bytes":peers.iter().map(|p|p.outbox.len().saturating_sub(p.written)).sum::<usize>()});
             if let Some(log) = &app.diagnostics {
                 log.progress(telebar_runtime::diagnostics::Phase::Ipc);
             }
@@ -471,10 +608,11 @@ fn serve(
         peers.retain_mut(|peer| {
             let id=peer.id;
             let result=peer.pump(&mut |request|{
+                ipc_requests = ipc_requests.saturating_add(1);
                 // Deliberately no compatible hello in either fixture mode: a
                 // partial daemon must not impersonate the production backend.
                 if request.command=="diagnostics.status" && application.is_none(){return Ok(vec![wire::success(request.id,json!({"runtime":"rust","migration_complete":false,"production_profiles":false}))]);}
-                if request.command=="hello"{return Ok(vec![wire::failure(request.id,"migration command is not implemented",0)]);}
+                if request.command=="hello"&&!consumer{return Ok(vec![wire::failure(request.id,"migration command is not implemented",0)]);}
                 if request.command=="fixture.version"&&let Some(driver)=&mut driver{return Ok(vec![wire::success(request.id,driver.version()?.unwrap_or(Value::Null))]);}
                 if let Some(driver)=&mut driver{
                     let effects=if let Some((home,app))=&mut application{let mut request=request;if request.command=="fixture.snapshot"{request.command="hello".into();}driver.request_application(app,home,id,request)?}else{driver.request(id,request)?};
@@ -560,6 +698,9 @@ fn serve(
         && let Some(log) = &app.diagnostics
     {
         log.progress(telebar_runtime::diagnostics::Phase::Shutdown);
+    }
+    if let Some((_, app)) = &mut application {
+        app.bridge.running = None;
     }
     if let Some(driver) = &mut driver {
         driver.close(Duration::from_secs(5))?;

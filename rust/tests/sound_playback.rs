@@ -94,23 +94,43 @@ fn actual_notification_sound_uses_only_the_isolated_null_sink() {
     assert!(runtime.contains("telebar-pipewire-"));
     let environment = BTreeMap::from([("XDG_RUNTIME_DIR".into(), runtime.clone())]);
     let settings = json!({"sounds":{"style":"pop","variants":{}}});
-    let Action::SoundReady(prepared) = Job::prepare(runtime.into(), 7, &settings, environment)
-        .unwrap()
-        .run(&AtomicBool::new(false))
-        .unwrap()
+    let Action::SoundReady(_prepared) =
+        Job::prepare(runtime.clone().into(), 7, &settings, environment)
+            .unwrap()
+            .run(&AtomicBool::new(false))
+            .unwrap()
     else {
         panic!("prepared")
     };
-    let mut child = prepared.spawn().unwrap();
-    let pid = child.pid();
+    // Integration crates link the non-test library: trust checks are not
+    // overridden for overflow UID. This private namespace verifies PipeWire
+    // consumer output; host tests separately verify Prepared::spawn policy.
+    use std::os::unix::fs::MetadataExt;
+    let tool = std::path::Path::new("/usr/bin/pw-play");
+    let m = tool.metadata().unwrap();
+    assert!(m.is_file() && m.mode() & 0o022 == 0 && m.mode() & 0o111 != 0);
+    let sound = fs::read_dir(std::path::Path::new(&runtime).join(".cache/omagram/sounds"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut child = std::process::Command::new(tool)
+        .args(["--media-role", "Notification"])
+        .arg(sound)
+        .env_clear()
+        .env("XDG_RUNTIME_DIR", &runtime)
+        .spawn()
+        .unwrap();
+    let pid = child.id();
     let deadline = Instant::now() + Duration::from_secs(5);
     let output = loop {
-        if let Some(out) = child.poll().unwrap() {
+        if let Some(out) = child.try_wait().unwrap() {
             break out;
         }
         assert!(Instant::now() < deadline, "isolated sound did not finish");
         std::thread::sleep(Duration::from_millis(2));
     };
-    assert!(output.ok(), "private PipeWire playback failed");
+    assert!(output.success(), "private PipeWire playback failed");
     assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
 }

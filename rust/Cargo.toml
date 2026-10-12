@@ -14,6 +14,16 @@ indexmap = "2"
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
 sha2 = "0.10"
 unicode-general-category = "1.1"
+zbus = "5.19"
+async-io = "2"
+async-channel = "2"
+futures-lite = "2"
+openssl = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
+tokio-tungstenite = { version = "0.29", features = ["native-tls"] }
+futures-util = { version = "0.3", features = ["sink"] }
+native-tls = "0.2"
+tokio-native-tls = "0.3"
 
 [profile.release]
 overflow-checks = true

@@ -283,6 +283,8 @@ impl Preparation {
             .ok_or("the retained recording is not available")?;
         let copied = home.snapshot_upload(&relative, &mut self.source.file, self.source.size, name, cancel, deadline)
             .map_err(|_| "The recording could not be prepared; it was kept for explicit retry or discard")?;
+        let mut lease = crate::upload_lease::Lease::new(self.home.clone());
+        lease.add(copied.clone());
         let source = self.home.join(&copied);
         let source = source
             .to_str()
@@ -304,6 +306,12 @@ impl Preparation {
                 name
             };
             let target = source_path.with_file_name(name);
+            let relative = target
+                .strip_prefix(&self.home)
+                .ok()
+                .and_then(|p| p.to_str())
+                .ok_or("invalid recording output")?;
+            lease.add(relative.to_owned());
             let target = target
                 .to_str()
                 .ok_or("the retained recording is not available")?;
@@ -317,6 +325,7 @@ impl Preparation {
         if cancel.load(Ordering::Relaxed) || Instant::now() >= deadline {
             return Err("the connection was closed".into());
         }
+        lease.submitted(); // retained owner now holds generated input paths
         Ok(Action::Recorded {
             token: self.token,
             content,

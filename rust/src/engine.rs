@@ -32,6 +32,8 @@ pub struct Effects {
     pub clipboard: Vec<(Token, crate::clipboard::Offer)>,
     pub sounds: Vec<(Token, crate::sound_playback::Prepared)>,
     pub open_files: Vec<(Token, crate::file_open::Start)>,
+    pub bridge_mutations: Vec<(Token, crate::bridge::Mutation)>,
+    pub bridge_operations: Vec<(Token, crate::bridge::Operation)>,
 }
 struct Callback {
     token: Token,
@@ -73,9 +75,12 @@ impl Engine {
         if let Some(callback) = query["@extra"]
             .as_u64()
             .and_then(|extra| self.callbacks.get(&extra))
-            && let Answer::ProfilePhoto(lease) = &callback.answer
         {
-            lease.submitted();
+            match &callback.answer {
+                Answer::ProfilePhoto(lease) => lease.submitted(),
+                Answer::Upload(lease, _) => lease.submitted(),
+                _ => {}
+            }
         }
     }
     pub fn native_pending(&self) -> usize {
@@ -223,6 +228,15 @@ impl Engine {
             .get(&account)
             .expect("admitted account exists");
         match result {
+            Ok(Action::BridgeOperation(operation)) => {
+                effects.bridge_operations.push((token, operation))
+            }
+            Ok(Action::BridgeMutation(change)) => effects.bridge_mutations.push((token, change)),
+            Ok(Action::BridgeReady(_)) => self.finish(
+                token,
+                Err(("invalid bridge continuation".into(), 0)),
+                &mut effects,
+            ),
             Ok(Action::OpenFile(start)) => effects.open_files.push((token, start)),
             Ok(Action::SoundReady(prepared)) => effects.sounds.push((token, prepared)),
             Ok(Action::ClipboardOffer(offer)) => effects.clipboard.push((token, offer)),
@@ -415,6 +429,8 @@ impl Engine {
         effects.clipboard.extend(next.clipboard);
         effects.sounds.extend(next.sounds);
         effects.open_files.extend(next.open_files);
+        effects.bridge_mutations.extend(next.bridge_mutations);
+        effects.bridge_operations.extend(next.bridge_operations);
         effects.disconnect = next.disconnect;
         effects
     }
@@ -462,6 +478,9 @@ impl Engine {
             };
             if let Some(key) = callback.batch_key {
                 let value = if event["@type"] == "error" {
+                    if let Answer::Upload(lease, _) = &callback.answer {
+                        lease.rejected(integer(&event["code"], 0));
+                    }
                     if self.batches.get(&callback.token).is_some_and(|b| {
                         matches!(b.aggregate, crate::batch::Aggregate::Uploads { .. })
                     }) {
@@ -550,6 +569,17 @@ impl Engine {
                                 | Action::Recorded { .. } => self.finish(
                                     callback.token,
                                     Err(("invalid recording continuation".into(), 0)),
+                                    &mut effects,
+                                ),
+                                Action::BridgeOperation(operation) => {
+                                    effects.bridge_operations.push((callback.token, operation))
+                                }
+                                Action::BridgeMutation(change) => {
+                                    effects.bridge_mutations.push((callback.token, change))
+                                }
+                                Action::BridgeReady(_) => self.finish(
+                                    callback.token,
+                                    Err(("invalid bridge continuation".into(), 0)),
                                     &mut effects,
                                 ),
                                 Action::AccountNative { .. } => self.finish(
@@ -780,6 +810,9 @@ impl Engine {
             answer: Answer::Recorded(record),
         })
     }
+    pub fn job_request(&self, token: Token) -> Option<(u64, Value)> {
+        self.requests.get(token).map(|p| (p.peer, p.id.clone()))
+    }
     pub fn job_owner(&self, token: Token) -> Option<(String, u64)> {
         self.requests
             .get(token)
@@ -830,6 +863,15 @@ impl Engine {
             other => other,
         };
         match result {
+            Ok(Action::BridgeOperation(operation)) => {
+                effects.bridge_operations.push((token, operation))
+            }
+            Ok(Action::BridgeMutation(change)) => effects.bridge_mutations.push((token, change)),
+            Ok(Action::BridgeReady(_)) => self.finish(
+                token,
+                Err(("invalid bridge continuation".into(), 0)),
+                &mut effects,
+            ),
             Ok(Action::OpenFile(start)) => effects.open_files.push((token, start)),
             Ok(Action::SoundReady(prepared)) => effects.sounds.push((token, prepared)),
             Ok(Action::ClipboardOffer(offer)) => effects.clipboard.push((token, offer)),

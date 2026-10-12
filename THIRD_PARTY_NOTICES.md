@@ -27,7 +27,15 @@ that plugin's `tools/build-data.py` generates from:
 https://github.com/Flowseal/tg-ws-proxy, revision
 `caa949bee0873d2b95dfb4fbeb1b7868b0ee3843`. MIT, copyright (c) 2026 Flowseal.
 The license is preserved in `bin/vendor/flowseal/LICENSE`; local changes are described
-in that directory's README. No Flowseal tray UI, updater or server list is bundled.
+in that directory's README. The Rust candidate's `rust/src/proxy_crypto.rs` adapts
+the same handshake/packet algorithms and retains this attribution. No Flowseal
+tray UI, updater or server list is bundled.
+
+Rust candidate dependencies are pinned in `rust/Cargo.lock`. OpenSSL bindings use
+the system OpenSSL library (Apache-2.0 for current OpenSSL); the `openssl` Rust
+crate is Apache-2.0. Tokio and Tungstenite are MIT; native-tls is MIT/Apache-2.0.
+Dependency metadata and upstream license files remain the authoritative notices;
+a successful build is not an advisory or license audit.
 
 ## Interface drawings
 

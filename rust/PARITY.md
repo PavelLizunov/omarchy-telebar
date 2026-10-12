@@ -114,7 +114,7 @@ extending the oracle with `run-differential.sh` still requires the matching dirt
 stabilization sources identified by those hashes. Do not silently regenerate it
 against old Git HEAD or publish unrelated stabilization work as a dependency.
 
-Observed source checks: 41 default unit tests and twenty-three default integration-test
+Observed source checks: 41 default unit tests and twenty-four default integration-test
 cases passed; four verified-library tests passed explicitly
 (startup ownership, three-client startup, dummy-audio Driver lifecycle and
 synthetic clipboard-owner retirement), plus one isolated real Wayland test.
@@ -322,15 +322,93 @@ fixture checks invalid-account/options preservation, admitted stop/idle and
 stale-generation cleanup. Hardware capture/session environment, original stale
 recording GC and live recording UI acceptance remain open.
 
-Remaining work includes complete production startup and compatible hello,
-complete account/catalog synchronization and media roots,
-notification D-Bus actions and sounds, global shortcut effects, playback coverage,
-voice/video capture hardware/context/acceptance, clipboard production environment/acceptance,
-desktop opener acceptance, full animation/cache/diagnostics and live UI effects, bundled
-bridge/proxy/menu/build helper replacement. Upload and recording snapshot
-retention/cleanup and cumulative disk limits also need acceptance. No Python
-runtime requirement is removed, installed candidate deployed or working account
-opened by this checkpoint. The sent-video P1 remains independently unresolved.
+Verdict: Compose for desktop notification transport. Maintained `zbus` 5.19
+(minimum Rust 1.87) owns D-Bus encoding/authentication/signals, rather than custom
+FFI or putting message text into `gdbus` argv. Direct async-io/channel/futures-lite
+use supports one private owner thread with bounded 64-command/event queues,
+three-second initialization and two-second calls, no retry loops, explicit local
+Unix address and shutdown flag/join. Notification replacement is serialized in
+transport even before the account owner consumes acknowledgements. Policy
+preserves quiet/focus/silent/latest-message/account title/no-preview rules,
+original message IDs for read/mute/react buttons, 1.2-second global/four-second
+person sound gaps, Omarchy's `.local/state/omarchy/notifications.json` DND and
+200-image/250-inventory tiny JPEG cache. Driver pins account generation and
+notification serial before accepting display/action/sound; stale native replies
+cannot make a new-generation button active. Read/mute/react are allowlisted
+internal no-retry native requests. Open/reply reach existing window routes or
+pending-open state; shell summon/new-window launcher fallback remains incomplete.
+Actual isolated bus/server checks show escaped previews, replacement, action/
+closed signals and finite teardown; actual Driver fixture checks reply route and
+read query without dispatching synthetic client IDs. Synthetic policy checks
+cover quiet/focus/silent/hidden/account text, buttons, sound gaps/DND and picture
+membership. Working notification server, sound devices and profiles untouched.
+
+The session owner, native launcher, global shortcut worker, bundled proxy/bridge,
+menu and TDLib-build entry points now exist in source. `CUTOVER_READY` remains
+false, so daemon/window entry points refuse working-profile access. No Python
+runtime requirement is removed and no Rust application is deployed.
+
+Global shortcut work is single-flight across accounts and shares the aggregate
+two-worker limit. Later settings mutations wait before persistence; current
+responses precede settings events. Completion pins the original IPC token,
+not a reusable wire ID; disconnect/expiry cannot save deferred settings or
+start a stale helper. Captured binding insertion order and unavailable/failed/
+taken/off statuses are preserved. Initial saved globals and shortcuts.apply use
+the same owner. Session/catalog and compatible hello are exercised in disposable
+pre-parameter mode, never credentials/database opening.
+
+Native launcher parity covers arguments, account-safe runtime paths, private
+links/generated shell, desktop-entry identity and Hidden/NoDisplay preservation,
+reuse of an existing backend and host-managed fixed-argv starts. Production
+startup supplies explicit capture/keyring/clipboard/notification/global contexts
+only after the single socket lock. The implemented main loop has no production
+120-second expiry; inert modes stay finite. It is not cutover accepted.
+
+Verdict: Compose for bridge transport: `openssl` 0.10.81 supplies AES-256-CTR
+and system TLS, `tokio-tungstenite` 0.29.0 supplies maintained WebSocket framing
+and handshake checks, and Tokio 1.53.2 owns at most 32 connection tasks in the
+separate child process. Original Telegram hosts/DC fallback and Flowseal MIT
+attribution remain. Finite config/handshake/write deadlines and owner EOF/signal
+shutdown are tested. Native bridge enable/disable continuations preserve previous
+proxy identity, persist only current metadata and release stale admission.
+One saved-account restoration attempt is queued after bridge-ready parameters;
+no automatic retries of uncertain mutations. This differs from the Python
+30-second retry loop and needs explicit recovery acceptance. Real Telegram TLS/
+relay connectivity, account proxy restoration and full-duplex pressure/ping
+behavior remain unverified. A finite 295-input helper corpus has zero differences
+for AES, obfuscation, packet splitting and managed menu text. It is not network
+acceptance. The real proxy process survives 32 inert loopback connections and
+exits on its private owner pipe closing in a host-network-free namespace.
+
+Generated upload inputs now carry leases: failure/cancellation before native
+dispatch removes exact snapshots; submitted/408/5xx inputs survive unknown use.
+Album groups own separate leases so one rejection cannot remove other groups'
+submitted inputs. Recording preparation errors clean generated copies while
+preserving the retained original. Cumulative/crash-left resource policy and
+post-send file update cleanup remain unfinished.
+
+Fixed system helpers now require root-owned non-writable /usr executables and
+safe ancestors; application helpers require owned non-writable files. The
+isolated Wayland test-only build pins host-verified helper hashes where root UID
+is unmapped. No release/application environment override weakens these checks.
+Actual offscreen Quickshell Socket/TelebarClient acceptance passed hello shape,
+settings response-before-event and window-only fields against the Rust socket.
+The initial stock QtTest attempt lacked dynamic Quickshell plugins; the verified
+native static qml-preview adapter supplied the actual consumer instead. The
+viewed diagnostic PNG does not prove Main layout, hardware or compositor use.
+
+Remaining work: exact completed-command/helper acceptance, safe native package/
+launcher/QML cutover, production account/catalog/notification/bridge behavior,
+resource retention/GC/disk policy, startup and absent-library degradation,
+original cache memoization/animation semantics, device/media/clipboard/opener
+acceptance, trust/advisory review and actual loaded application identity.
+Missing/unloadable TDLib now retains local hello/settings and reports noLibrary
+instead of ending the IPC owner; a disposable no-library consumer test passes.
+Native production identity/language and receive/request counters are explicit.
+Finite legacy raw note/paste startup cleanup protects named retained inputs and
+never traverses symlinks or age-deletes sent inputs/databases. Submitted-input
+cumulative/crash-left cleanup remains a separate unfinished policy. The
+sent-video P1 remains independently unresolved.
 
 ## Acceptance and remaining scope
 

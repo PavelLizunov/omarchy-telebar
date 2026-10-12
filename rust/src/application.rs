@@ -16,11 +16,14 @@ pub struct Application {
     pub diagnostic_peers: crate::diagnostics::Peers,
     pub diagnostic_runtime: Value,
     pub settings: Settings,
+    pub bridge: crate::bridge::Bridge,
+    pub desktop_context: Option<crate::launcher::Context>,
     pub catalog: Value,
     pub revision: u64,
     pub windows: HashSet<u64>,
     pub pending_open: Option<(std::time::Instant, Value)>,
     pub notifier: crate::notifications::Notifier,
+    pub notification_policy: crate::notification_policy::Policy,
     pub focus_peer: Option<u64>,
     pub notifications_to_close: Vec<u32>,
     pub quit_deadline: Option<std::time::Instant>,
@@ -41,11 +44,14 @@ impl Application {
             diagnostic_peers: Default::default(),
             diagnostic_runtime: json!({}),
             settings: Settings::load(home)?,
+            bridge: crate::bridge::Bridge::load(home),
+            desktop_context: None,
             catalog: crate::accounts::normalize(&raw),
             revision: 0,
             windows: HashSet::new(),
             pending_open: None,
             notifier: crate::notifications::Notifier::default(),
+            notification_policy: Default::default(),
             focus_peer: None,
             notifications_to_close: Vec::new(),
             quit_deadline: None,
@@ -179,6 +185,7 @@ impl Application {
                 | "account.switch"
                 | "account.logout"
                 | "settings.set"
+                | "shortcuts.apply"
                 | "settings.playback"
                 | "settings.chatListWidth"
                 | "settings.reactions"

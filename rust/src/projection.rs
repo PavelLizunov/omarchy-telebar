@@ -443,6 +443,16 @@ pub fn auth_view(value: &Value) -> Value {
 pub fn project(operation: &str, value: &Value, roots: &[String]) -> Result<Value, &'static str> {
     Ok(match operation {
         "state_sequence" => crate::state::project(value, roots),
+        "proxy_crypto" => crate::proxy_crypto::project(value),
+        "menu_helper" => match value["kind"].as_str() {
+            Some("strip") => json!(crate::menu::strip_jsonc(
+                value["raw"].as_str().unwrap_or("")
+            )),
+            Some("valid") => json!(crate::menu::valid(value["raw"].as_str().unwrap_or(""))),
+            _ => json!(crate::menu::without_block(
+                value["raw"].as_str().unwrap_or("")
+            )),
+        },
         "command" => crate::commands::project(value, roots),
         "preferences" => crate::preferences::project(value),
         "preferences_command" => crate::preferences_commands::project(value),

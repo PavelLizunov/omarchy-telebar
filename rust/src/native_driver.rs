@@ -44,17 +44,61 @@ impl StartupOwner {
                 .is_some_and(|m| m.parameters_serial == self.serial && m.auth == self.auth)
     }
 }
+struct Native(Option<Td>);
+impl Native {
+    fn create_client(&mut self) -> io::Result<i32> {
+        self.0
+            .as_mut()
+            .ok_or_else(|| io::Error::other("Telegram is not available"))?
+            .create_client()
+    }
+    fn send(&mut self, client: i32, query: &Value) -> io::Result<()> {
+        self.0
+            .as_mut()
+            .ok_or_else(|| io::Error::other("Telegram is not available"))?
+            .send(client, query)
+    }
+    fn execute(&mut self, query: &Value) -> io::Result<Option<Value>> {
+        self.0.as_mut().map_or(Ok(None), |td| td.execute(query))
+    }
+    fn receive(&mut self, timeout: Duration) -> io::Result<Option<Value>> {
+        self.0.as_mut().map_or(Ok(None), |td| td.receive(timeout))
+    }
+    fn close(&mut self, timeout: Duration) -> io::Result<()> {
+        self.0.as_mut().map_or(Ok(()), |td| td.close(timeout))
+    }
+}
 pub struct Driver {
     pub runtime: Runtime,
-    td: Td,
+    td: Native,
     language: String,
     jobs: crate::jobs::Pool,
+    global_jobs: crate::jobs::Pool,
+    global_owner: Option<(crate::lifecycle::Token, Option<crate::lifecycle::Token>)>,
+    global_queue: std::collections::VecDeque<(Option<crate::lifecycle::Token>, crate::jobs::Work)>,
+    global_done: Vec<(
+        Option<crate::lifecycle::Token>,
+        crate::commands::Result<crate::commands::Action>,
+    )>,
+    global_serial: u64,
+    bridge_owners:
+        std::collections::HashMap<crate::lifecycle::Token, (String, crate::bridge::Operation)>,
+    bridge_done: Vec<crate::jobs::Completion>,
+    bridge_operations: Vec<(crate::lifecycle::Token, crate::bridge::Operation)>,
+    bridge_mutations: Vec<(crate::lifecycle::Token, crate::bridge::Mutation)>,
+    bridge_restore: std::collections::VecDeque<String>,
+    bridge_restore_serial: u64,
+    desktop_helpers: Vec<crate::desktop::Pending>,
+    last_receive: Option<Instant>,
+    received_events: u64,
     startup_jobs: crate::jobs::Pool,
     startup_context: Option<crate::startup::Context>,
     startup_owners: std::collections::HashMap<crate::lifecycle::Token, StartupOwner>,
     startup_serial: u64,
     startup_queue: std::collections::VecDeque<StartupOwner>,
     sound: Option<(crate::process::Managed, crate::sound_playback::Prepared)>,
+    pub notification_transport: Option<crate::notification_bus::Transport>,
+    notification_updates: Vec<(String, Value)>,
     pub capture_context: Option<crate::capture::Context>,
     capture: Option<crate::capture::Capture>,
     file_openers: Vec<(crate::process::Managed, std::fs::File)>,
@@ -66,17 +110,43 @@ pub struct Driver {
 }
 impl Driver {
     pub fn open(library: &Path, active: String, language: String) -> io::Result<Self> {
-        Ok(Self {
+        Ok(Self::with_native(
+            Some(Td::open(library)?),
+            active,
+            language,
+        ))
+    }
+    pub fn open_optional(library: &Path, active: String, language: String) -> Self {
+        Self::with_native(Td::open(library).ok(), active, language)
+    }
+    fn with_native(td: Option<Td>, active: String, language: String) -> Self {
+        Self {
             runtime: Runtime::new(active),
-            td: Td::open(library)?,
+            td: Native(td),
             language,
             jobs: crate::jobs::Pool::default(),
+            global_jobs: Default::default(),
+            global_owner: None,
+            global_queue: Default::default(),
+            global_done: Vec::new(),
+            global_serial: 1,
+            bridge_owners: Default::default(),
+            bridge_done: Vec::new(),
+            bridge_operations: Vec::new(),
+            bridge_mutations: Vec::new(),
+            bridge_restore: Default::default(),
+            bridge_restore_serial: 1,
+            desktop_helpers: Vec::new(),
+            last_receive: None,
+            received_events: 0,
             startup_jobs: crate::jobs::Pool::default(),
             startup_context: None,
             startup_owners: std::collections::HashMap::new(),
             startup_serial: 1,
             startup_queue: std::collections::VecDeque::new(),
             sound: None,
+            notification_transport: None,
+            notification_updates: vec![],
             capture_context: None,
             capture: None,
             file_openers: vec![],
@@ -85,7 +155,141 @@ impl Driver {
             clipboard_owner: None,
             playback_serial: 0,
             player: None,
-        })
+        }
+    }
+    fn worker_count(&self) -> usize {
+        self.jobs.active()
+            + self.startup_jobs.active()
+            + self.sound_jobs.active()
+            + self.global_jobs.active()
+    }
+    fn global_current(runtime: &Runtime, token: crate::lifecycle::Token) -> bool {
+        !runtime.stopping
+            && runtime
+                .engine
+                .job_owner(token)
+                .is_some_and(|(id, generation)| {
+                    runtime
+                        .engine
+                        .accounts
+                        .get(&id)
+                        .is_some_and(|a| a.client > 0 && a.generation == generation)
+                })
+    }
+    /// Startup reapplication has no IPC peer, but uses the same single owner.
+    pub fn apply_initial_globals(
+        &mut self,
+        app: &mut crate::application::Application,
+    ) -> crate::commands::Result<()> {
+        if self.global_owner.is_some()
+            || !self.global_queue.is_empty()
+            || app.settings.globals_pending
+        {
+            return Err("shortcut application already pending".into());
+        }
+        let crate::commands::Action::Work(work) = app.settings.globals_work()? else {
+            unreachable!()
+        };
+        self.global_queue.push_back((None, work));
+        Ok(())
+    }
+    fn pump_globals(
+        &mut self,
+        app: &mut crate::application::Application,
+        home: &crate::storage::Storage,
+        effects: &mut Effects,
+    ) {
+        // Queue time is part of IPC admission; expire before any persisted
+        // mutation or external helper, not only at final acknowledgement.
+        effects
+            .replies
+            .extend(self.runtime.expire(Instant::now()).replies);
+        for (request, result) in std::mem::take(&mut self.global_done) {
+            // Completed settings are committed even if the submitting peer has
+            // gone. The disconnected peer must not get a reused-ID response.
+            let event = match &result {
+                Ok(crate::commands::Action::Reply(view)) => app.settings.complete_globals(view),
+                _ => Some(app.settings.fail_globals()),
+            };
+            if let Some(token) = request {
+                effects.replies.extend(
+                    self.runtime
+                        .engine
+                        .job_complete(token, result, Instant::now())
+                        .replies,
+                );
+            }
+            if let Some(event) = event {
+                effects.replies.push((0, event));
+            }
+        }
+        if self.runtime.stopping || self.global_owner.is_some() {
+            return;
+        }
+        for _ in 0..64 {
+            let Some((request, work)) = self.global_queue.pop_front() else {
+                break;
+            };
+            if request.is_some_and(|token| !Self::global_current(&self.runtime, token)) {
+                // A persisted mutation still needs a terminal status for its
+                // observers. A deferred command has not saved anything yet.
+                if matches!(&work, crate::jobs::Work::GlobalShortcuts(_)) {
+                    effects.replies.push((0, app.settings.fail_globals()));
+                }
+                continue;
+            }
+            match work {
+                crate::jobs::Work::DeferredSettings { command, args } => {
+                    let token = request.expect("deferred IPC owner");
+                    let action = self
+                        .runtime
+                        .engine
+                        .job_owner(token)
+                        .and_then(|(id, _)| self.runtime.engine.accounts.get(&id))
+                        .map(|account| {
+                            app.settings
+                                .command(home, &command, &args, &account.state)
+                                .unwrap_or_else(|| Err("unknown command".into()))
+                        });
+                    if let Some(action) = action {
+                        let mut next =
+                            self.runtime
+                                .engine
+                                .job_complete(token, action, Instant::now());
+                        // The queue reserves the position of this mutation. A
+                        // new global job must precede later deferred requests.
+                        for (token, work) in next.work.drain(..).rev() {
+                            self.global_queue.push_front((Some(token), work));
+                        }
+                        effects.replies.extend(next.replies);
+                        effects.replies.extend(
+                            std::mem::take(&mut app.settings.events)
+                                .into_iter()
+                                .map(|event| (0, event)),
+                        );
+                    }
+                }
+                work @ crate::jobs::Work::GlobalShortcuts(_) => {
+                    if self.worker_count() >= 2 {
+                        self.global_queue.push_front((request, work));
+                        break;
+                    }
+                    let Some(next) = self.global_serial.checked_add(1) else {
+                        self.global_done
+                            .push((request, Err("shortcut worker identity exhausted".into())));
+                        break;
+                    };
+                    let worker = crate::lifecycle::Token::startup(self.global_serial);
+                    self.global_serial = next;
+                    match self.global_jobs.start(worker, work) {
+                        Ok(()) => self.global_owner = Some((worker, request)),
+                        Err(error) => self.global_done.push((request, Err(error))),
+                    }
+                    break;
+                }
+                _ => unreachable!("only settings work enters the serial queue"),
+            }
+        }
     }
     pub fn set_startup_context(&mut self, context: crate::startup::Context) {
         self.startup_context = Some(context);
@@ -156,7 +360,7 @@ impl Driver {
             }
         }
         self.startup_queue = waiting;
-        while self.jobs.active() + self.startup_jobs.active() + self.sound_jobs.active() < 2 {
+        while self.worker_count() < 2 {
             let Some(owner) = self.startup_queue.pop_front() else {
                 break;
             };
@@ -202,6 +406,21 @@ impl Driver {
         name: String,
         roots: Vec<String>,
     ) -> io::Result<Effects> {
+        if self.td.0.is_none() {
+            self.runtime.engine.accounts.insert(
+                id.clone(),
+                crate::engine::Account {
+                    client: 0,
+                    generation: 1,
+                    state: crate::state::State::new(roots),
+                    ready: false,
+                },
+            );
+            let mut meta = crate::authorization::Metadata::new(name);
+            meta.auth = json!({"state":"noLibrary","reason":"TDLib is not installed or could not be loaded"});
+            self.runtime.metadata.insert(id, meta);
+            return Ok(Effects::default());
+        }
         let client = self.td.create_client()?;
         let effects = self
             .runtime
@@ -344,12 +563,36 @@ impl Driver {
                 ),
             }
         }
+        self.bridge_operations
+            .append(&mut effects.bridge_operations);
+        self.bridge_mutations.append(&mut effects.bridge_mutations);
         for (token, work) in std::mem::take(&mut effects.work) {
-            let started = if self.jobs.active()
-                + self.startup_jobs.active()
-                + self.sound_jobs.active()
-                >= 2
-            {
+            if matches!(
+                &work,
+                crate::jobs::Work::GlobalShortcuts(_) | crate::jobs::Work::DeferredSettings { .. }
+            ) {
+                if self.global_queue.len() < 64 {
+                    self.global_queue.push_back((Some(token), work));
+                } else if matches!(&work, crate::jobs::Work::GlobalShortcuts(_)) {
+                    self.global_done.push((
+                        Some(token),
+                        Err("too many pending settings requests".into()),
+                    ));
+                } else {
+                    effects.replies.extend(
+                        self.runtime
+                            .engine
+                            .job_complete(
+                                token,
+                                Err("too many pending settings requests".into()),
+                                Instant::now(),
+                            )
+                            .replies,
+                    );
+                }
+                continue;
+            }
+            let started = if self.worker_count() >= 2 {
                 Err("still preparing an earlier message; try again in a moment".into())
             } else {
                 self.jobs.start(token, work)
@@ -470,6 +713,54 @@ impl Driver {
         self.runtime
             .engine
             .reserve_external(self.runtime.internal_pending());
+        if matches!(
+            request.command.as_str(),
+            "bridge.status" | "bridge.test" | "bridge.set"
+        ) {
+            let account = self
+                .runtime
+                .engine
+                .routed_account(&request)
+                .unwrap_or_default();
+            let status = application.bridge.status(&account);
+            let busy = if request.command == "bridge.test" {
+                !application.bridge.busy.is_empty()
+            } else {
+                application.bridge.busy.contains(&account)
+            };
+            let configured = application.bridge.context.is_some();
+            let effects = self.runtime.engine.request_using(
+                peer,
+                request,
+                Instant::now(),
+                &mut |command, args, _| {
+                    if command == "bridge.status" {
+                        return Ok(crate::commands::Action::Reply(status.clone()));
+                    }
+                    if command == "bridge.set" && !args["enabled"].is_boolean() {
+                        return Err("enabled must be true or false".into());
+                    }
+                    if !configured {
+                        return Err("the bundled bridge is not available".into());
+                    }
+                    if busy {
+                        return Err("a bridge operation is already running".into());
+                    }
+                    Ok(crate::commands::Action::BridgeOperation(
+                        if command == "bridge.test" {
+                            crate::bridge::Operation::Test
+                        } else if args["enabled"] == true {
+                            crate::bridge::Operation::Enable
+                        } else {
+                            crate::bridge::Operation::Disable
+                        },
+                    ))
+                },
+            );
+            let mut effects = self.dispatch(effects)?;
+            self.pump_bridge(application, home, &mut effects)?;
+            return Ok(effects);
+        }
         if matches!(request.command.as_str(), "media.play" | "media.stop") {
             let stopping = request.command == "media.stop";
             let mut selected = false;
@@ -525,6 +816,7 @@ impl Driver {
                 "video"
             };
             let context = self.capture_context.clone();
+            let capacity = self.worker_count() < 2;
             let capture = &mut self.capture;
             let mut transition = None;
             let aid = self.runtime.engine.routed_account(&request);
@@ -532,8 +824,6 @@ impl Driver {
                 .as_ref()
                 .and_then(|id| self.runtime.engine.accounts.get(id))
                 .map(|a| a.generation);
-            let capacity =
-                self.jobs.active() + self.startup_jobs.active() + self.sound_jobs.active() < 2;
             let wall = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
@@ -796,54 +1086,598 @@ impl Driver {
         } else {
             return self.request(peer, request);
         };
-        let effects = self.dispatch(effects)?;
+        let mut effects = self.dispatch(effects)?;
+        self.pump_globals(application, home, &mut effects);
         self.start_pending_sounds(application);
         Ok(effects)
     }
-    fn start_pending_sounds(&mut self, application: &mut crate::application::Application) {
-        if self.runtime.stopping {
-            application.settings.sounds_pending.clear();
-            return;
-        }
-        for seed in std::mem::take(&mut application.settings.sounds_pending) {
-            let Some((home, _)) = &application.upload_context else {
-                continue;
+    /// One restoration attempt per stored account after startup parameters.
+    /// Failure never loops/retries a native mutation automatically.
+    pub fn restore_saved_bridge(&mut self, app: &crate::application::Application) {
+        self.bridge_restore = app
+            .bridge
+            .metadata
+            .as_object()
+            .into_iter()
+            .flat_map(|m| m.keys().cloned())
+            .take(10)
+            .collect();
+    }
+    fn bridge_action(
+        &self,
+        app: &crate::application::Application,
+        account: &str,
+        operation: crate::bridge::Operation,
+    ) -> crate::commands::Result<crate::commands::Action> {
+        use crate::{
+            bridge::{Answer, Operation},
+            commands::{Action, Answer as NativeAnswer},
+        };
+        let entry = app
+            .bridge
+            .metadata
+            .get(account)
+            .cloned()
+            .unwrap_or(Value::Null);
+        Ok(match operation {
+            Operation::Test => Action::Native {
+                query: json!({"@type":"pingProxy","proxy":app.bridge.running.as_ref().ok_or("could not start the bundled bridge")?.proxy()}),
+                answer: NativeAnswer::Seconds,
+            },
+            Operation::Enable => Action::Native {
+                query: json!({"@type":"getProxies"}),
+                answer: NativeAnswer::Bridge(Answer::EnableList {
+                    proxy: app
+                        .bridge
+                        .running
+                        .as_ref()
+                        .ok_or("could not start the bundled bridge")?
+                        .proxy(),
+                    entry,
+                }),
+            },
+            Operation::Disable if entry.is_object() => Action::Native {
+                query: json!({"@type":"getProxies"}),
+                answer: NativeAnswer::Bridge(Answer::DisableList { entry }),
+            },
+            Operation::Disable => Action::Reply(app.bridge.status(account)),
+        })
+    }
+    fn pump_bridge(
+        &mut self,
+        app: &mut crate::application::Application,
+        home: &crate::storage::Storage,
+        effects: &mut Effects,
+    ) -> io::Result<()> {
+        effects
+            .replies
+            .extend(self.runtime.expire(Instant::now()).replies);
+        app.bridge.poll();
+        for done in std::mem::take(&mut self.bridge_done) {
+            let current = Self::global_current(&self.runtime, done.token);
+            let result = match done.result {
+                Ok(crate::commands::Action::BridgeReady(running)) if current => {
+                    app.bridge.running = Some(running);
+                    let (account, operation) = &self.bridge_owners[&done.token];
+                    self.bridge_action(app, account, *operation)
+                }
+                Err(error) => Err(error),
+                _ => Err("the connection was closed".into()),
             };
-            let Some(context) = &application.clipboard_context else {
-                continue;
-            };
-            let Some(job) = crate::sound_playback::Job::prepare(
-                home.clone(),
-                seed,
-                &application.settings.value,
-                context.environment.clone(),
-            ) else {
-                continue;
-            };
-            if self.jobs.active() + self.startup_jobs.active() + self.sound_jobs.active() >= 2 {
-                continue;
-            }
-            let id = self.runtime.engine.active.clone();
-            let Some(account) = self
+            let next = self
                 .runtime
                 .engine
-                .accounts
-                .get(&id)
-                .filter(|a| a.client > 0)
+                .job_complete(done.token, result, Instant::now());
+            let next = self.dispatch(next)?;
+            effects.replies.extend(next.replies);
+        }
+        for (token, operation) in std::mem::take(&mut self.bridge_operations) {
+            let Some((account, _)) = self
+                .runtime
+                .engine
+                .job_owner(token)
+                .filter(|_| Self::global_current(&self.runtime, token))
             else {
                 continue;
             };
-            let Some(next) = self.startup_serial.checked_add(1) else {
+            let admitted = if app.bridge.busy.contains(&account)
+                || (app.bridge.running.is_none() && !app.bridge.busy.is_empty())
+            {
+                Err("a bridge operation is already running".into())
+            } else if !matches!(operation, crate::bridge::Operation::Disable)
+                && app.bridge.running.is_none()
+                && self.worker_count() >= 2
+            {
+                Err("wait for the current background operation".into())
+            } else {
+                Ok(())
+            };
+            if let Err(error) = admitted {
+                effects.replies.extend(
+                    self.runtime
+                        .engine
+                        .job_complete(token, Err(error), Instant::now())
+                        .replies,
+                );
+                continue;
+            }
+            app.bridge.busy.insert(account.clone());
+            self.bridge_owners
+                .insert(token, (account.clone(), operation));
+            app.bridge.idle_at = Some(Instant::now() + Duration::from_secs(180));
+            if !matches!(operation, crate::bridge::Operation::Disable)
+                && app.bridge.running.is_none()
+            {
+                let started = app
+                    .bridge
+                    .context
+                    .clone()
+                    .ok_or("the bundled bridge is not available".to_owned())
+                    .and_then(|context| {
+                        self.jobs
+                            .start(token, crate::jobs::Work::StartBridge(context))
+                    });
+                if let Err(error) = started {
+                    effects.replies.extend(
+                        self.runtime
+                            .engine
+                            .job_complete(token, Err(error), Instant::now())
+                            .replies,
+                    );
+                }
+            } else {
+                let action = self.bridge_action(app, &account, operation);
+                let next = self
+                    .runtime
+                    .engine
+                    .job_complete(token, action, Instant::now());
+                let next = self.dispatch(next)?;
+                effects.replies.extend(next.replies);
+            }
+        }
+        for (token, mutation) in std::mem::take(&mut self.bridge_mutations) {
+            let Some((account, _)) = self
+                .bridge_owners
+                .get(&token)
+                .filter(|_| Self::global_current(&self.runtime, token))
+            else {
                 continue;
             };
-            let token = crate::lifecycle::Token::startup(self.startup_serial);
-            self.startup_serial = next;
-            if self
-                .sound_jobs
-                .start(token, crate::jobs::Work::Sound(job))
-                .is_ok()
+            let mut metadata = app.bridge.metadata.clone();
+            let disabling = matches!(&mutation, crate::bridge::Mutation::Disable);
+            match mutation {
+                crate::bridge::Mutation::Enable(entry) => metadata[account] = entry,
+                crate::bridge::Mutation::Disable => {
+                    metadata
+                        .as_object_mut()
+                        .expect("metadata object")
+                        .remove(account);
+                }
+            }
+            let saved = home
+                .write(
+                    ".config/omagram/bridge.json",
+                    metadata.to_string().as_bytes(),
+                    0o600,
+                )
+                .map_err(|_| "could not save the bundled bridge".to_owned());
+            if saved.is_ok() {
+                app.bridge.metadata = metadata;
+                if disabling && app.bridge.metadata.as_object().is_none_or(|m| m.is_empty()) {
+                    app.bridge.running = None;
+                }
+            }
+            let result = saved.map(|_| crate::commands::Action::Reply(app.bridge.status(account)));
+            effects.replies.extend(
+                self.runtime
+                    .engine
+                    .job_complete(token, result, Instant::now())
+                    .replies,
+            );
+        }
+        let retired: Vec<_> = self
+            .bridge_owners
+            .keys()
+            .filter(|token| !Self::global_current(&self.runtime, **token))
+            .copied()
+            .collect();
+        for token in retired {
+            if let Some((account, _)) = self.bridge_owners.remove(&token) {
+                app.bridge.busy.remove(&account);
+            }
+        }
+        if let Some(account) = self.bridge_restore.front().cloned() {
+            if !self.runtime.engine.accounts.contains_key(&account)
+                || app.bridge.metadata.get(&account).is_none()
             {
-                self.sound_owners.insert(token, (id, account.generation));
+                self.bridge_restore.pop_front();
+            } else if self.worker_count() < 2
+                && app.bridge.busy.is_empty()
+                && self
+                    .runtime
+                    .metadata
+                    .get(&account)
+                    .is_some_and(|meta| meta.bridge_ready)
+            {
+                self.bridge_restore.pop_front();
+                let serial = self.bridge_restore_serial;
+                self.bridge_restore_serial = serial.saturating_add(1);
+                let request = Request::parse(json!({"id":serial,"cmd":"bridge.set","account":account,"args":{"enabled":true}}).to_string().as_bytes()).map_err(|_| io::Error::other("invalid internal bridge request"))?;
+                let next = self.runtime.engine.request_using(
+                    u64::MAX,
+                    request,
+                    Instant::now(),
+                    &mut |_, _, _| {
+                        Ok(crate::commands::Action::BridgeOperation(
+                            crate::bridge::Operation::Enable,
+                        ))
+                    },
+                );
+                let next = self.dispatch(next)?;
+                effects.replies.extend(next.replies);
+            }
+        }
+        effects.replies.retain(|(peer, _)| *peer != u64::MAX);
+        Ok(())
+    }
+    fn start_pending_sounds(&mut self, application: &mut crate::application::Application) {
+        let account = self.runtime.engine.active.clone();
+        for seed in std::mem::take(&mut application.settings.sounds_pending) {
+            self.start_sound(application, &account, seed);
+        }
+    }
+    fn start_sound(&mut self, application: &crate::application::Application, id: &str, seed: i128) {
+        if self.runtime.stopping {
+            return;
+        }
+        let Some((home, _)) = &application.upload_context else {
+            return;
+        };
+        let Some(context) = &application.clipboard_context else {
+            return;
+        };
+        let Some(job) = crate::sound_playback::Job::prepare(
+            home.clone(),
+            seed,
+            &application.settings.value,
+            context.environment.clone(),
+        ) else {
+            return;
+        };
+        if self.worker_count() >= 2 {
+            return;
+        }
+        let Some(account) = self
+            .runtime
+            .engine
+            .accounts
+            .get(id)
+            .filter(|a| a.client > 0)
+        else {
+            return;
+        };
+        let Some(next) = self.startup_serial.checked_add(1) else {
+            return;
+        };
+        let token = crate::lifecycle::Token::startup(self.startup_serial);
+        self.startup_serial = next;
+        if self
+            .sound_jobs
+            .start(token, crate::jobs::Work::Sound(job))
+            .is_ok()
+        {
+            self.sound_owners
+                .insert(token, (id.into(), account.generation));
+        }
+    }
+    /// Ordered native update observation, bounded until application polling.
+    pub fn observe_notification(&mut self, event: &Value) {
+        if event["@type"] == "updateNotificationGroup"
+            && self.notification_updates.len() < 128
+            && let Some(id) = self
+                .runtime
+                .engine
+                .accounts
+                .iter()
+                .find(|(_, a)| event["@client_id"].as_i64() == Some(i64::from(a.client)))
+                .map(|(id, _)| id.clone())
+        {
+            self.notification_updates.push((id, event.clone()));
+        }
+    }
+    pub fn pump_notifications(
+        &mut self,
+        app: &mut crate::application::Application,
+        home: &crate::storage::Storage,
+        effects: &mut Effects,
+    ) {
+        let Some(transport) = &self.notification_transport else {
+            self.notification_updates.clear();
+            return;
+        };
+        let stale: Vec<_> = app
+            .notification_policy
+            .shown_generations
+            .iter()
+            .filter(|(key, g)| {
+                !self
+                    .runtime
+                    .engine
+                    .accounts
+                    .get(&key.account)
+                    .is_some_and(|a| a.client > 0 && a.generation == **g)
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in stale {
+            app.notification_policy.shown_generations.remove(&key);
+            app.notification_policy.messages.remove(&key);
+            if let Some(id) = app.notifier.withdraw(&key) {
+                transport.close(id);
+            }
+        }
+        for id in std::mem::take(&mut app.notifications_to_close) {
+            transport.close(id);
+        }
+        for (account, event) in std::mem::take(&mut self.notification_updates) {
+            match app.notification_policy.group(
+                &self.runtime,
+                &app.notifier,
+                &app.settings.value,
+                &account,
+                &event,
+            ) {
+                crate::notification_policy::Decision::None => {}
+                crate::notification_policy::Decision::Close(key) => {
+                    app.notification_policy.pending.remove(&key);
+                    if let Some(id) = app.notifier.withdraw(&key) {
+                        transport.close(id);
+                    }
+                }
+                crate::notification_policy::Decision::Show(mut show) => {
+                    if let (Some((root, _)), Some(owner)) = (
+                        &app.upload_context,
+                        self.runtime.engine.accounts.get(&account),
+                    ) {
+                        let message = event["added_notifications"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .take(100)
+                            .filter(|n| {
+                                n["is_silent"] != true
+                                    && n["type"]["@type"] == "notificationTypeNewMessage"
+                            })
+                            .max_by_key(|n| crate::projection::integer(&n["id"], 0));
+                        let chat = owner.state.chats.get(&show.key.chat);
+                        let mut candidates = vec![];
+                        if let Some(notification) =
+                            message.filter(|n| n["type"]["show_preview"] == true)
+                        {
+                            let shown = owner.state.message(&notification["type"]["message"]);
+                            let media = &shown["content"]["media"];
+                            if matches!(
+                                shown["content"]["kind"].as_str(),
+                                Some("sticker" | "photo" | "gif" | "video" | "videoNote")
+                            ) {
+                                if matches!(
+                                    media["thumb"]["format"].as_str(),
+                                    Some("jpeg" | "png" | "webp")
+                                ) {
+                                    candidates.push(media["thumb"]["file"].clone());
+                                }
+                                if shown["content"]["kind"] == "photo"
+                                    || shown["content"]["kind"] == "sticker"
+                                        && media["format"] == "webp"
+                                {
+                                    candidates.push(media["file"].clone());
+                                }
+                                candidates.push(media["mini"].clone());
+                            }
+                        }
+                        if let Some(chat) = chat {
+                            candidates.extend([
+                                chat["photo"]["file"].clone(),
+                                chat["photo"]["mini"].clone(),
+                            ]);
+                        }
+                        if let Some(path) = crate::notification_policy::picture(
+                            home,
+                            root,
+                            &owner.state.roots,
+                            &candidates,
+                        ) {
+                            show.notification.image = path.to_string_lossy().into_owned();
+                        }
+                    }
+                    if app.notification_policy.pending.len() >= 512 {
+                        continue;
+                    }
+                    let Some(serial) = app.notification_policy.serial.checked_add(1) else {
+                        continue;
+                    };
+                    app.notification_policy.serial = serial;
+                    if transport.show(show.key.clone(), serial, show.notification) {
+                        app.notification_policy
+                            .pending
+                            .insert(show.key, (serial, show.generation, show.message, show.seed));
+                    }
+                }
+            }
+        }
+        let mut sounds = vec![];
+        let mut opens = vec![];
+        for event in transport.poll() {
+            match event {
+                crate::notification_bus::Event::Shown(key, serial, id) => {
+                    let pending = app.notification_policy.pending.get(&key).copied();
+                    if pending.is_some_and(|(s, _, _, _)| s != serial) {
+                        continue;
+                    }
+                    if !pending.is_some_and(|(s, g, _, _)| {
+                        s == serial
+                            && !self.runtime.stopping
+                            && self
+                                .runtime
+                                .engine
+                                .accounts
+                                .get(&key.account)
+                                .is_some_and(|a| a.client > 0 && a.generation == g)
+                    }) || app.notifier.focused.as_ref() == Some(&key)
+                        || app.settings.value["quiet"] == true
+                    {
+                        transport.close(id);
+                        continue;
+                    }
+                    let (_, generation, message, seed) =
+                        app.notification_policy.pending.remove(&key).unwrap();
+                    if app.notification_policy.shown_generations.len() >= 512 {
+                        app.notification_policy.shown_generations.clear();
+                    }
+                    app.notification_policy
+                        .shown_generations
+                        .insert(key.clone(), generation);
+                    if app.notifier.shown(key.clone(), id)
+                        && message != 0
+                        && app.notification_policy.sound(
+                            seed,
+                            &app.settings.value,
+                            Some(home),
+                            Instant::now(),
+                        )
+                    {
+                        sounds.push((key.account, seed));
+                    }
+                }
+                crate::notification_bus::Event::Closed(id) => app.notifier.closed(id),
+                crate::notification_bus::Event::Action(id, action) => {
+                    if let Some(key) = app.notifier.action(id, &action) {
+                        if !app
+                            .notification_policy
+                            .shown_generations
+                            .get(&key)
+                            .is_some_and(|g| {
+                                self.runtime
+                                    .engine
+                                    .accounts
+                                    .get(&key.account)
+                                    .is_some_and(|a| a.client > 0 && a.generation == *g)
+                            })
+                        {
+                            continue;
+                        }
+                        if let Some(query) =
+                            app.notification_policy.button(&key, &action, &self.runtime)
+                        {
+                            let next = self.runtime.notification_button(
+                                &key.account,
+                                query,
+                                Instant::now(),
+                            );
+                            effects.native.extend(next.native);
+                            if let Some(id) = app.notifier.withdraw(&key) {
+                                transport.close(id);
+                            }
+                        } else if matches!(action.as_str(), "default" | "reply")
+                            && self.runtime.engine.accounts.contains_key(&key.account)
+                        {
+                            let target = json!({"chatId":number(key.chat),"reply":action=="reply","account":key.account});
+                            if let (Some(_), Some(generation)) = (
+                                &app.desktop_context,
+                                app.notification_policy.shown_generations.get(&key),
+                            ) {
+                                opens.push((
+                                    key.account.clone(),
+                                    *generation,
+                                    target.clone(),
+                                    action == "reply",
+                                ));
+                            }
+                            if action == "reply" && app.desktop_context.is_some() {
+                                // The overlay gets first refusal. Only an owned
+                                // failed summon may fall back to the window.
+                            } else if app.windows.is_empty() {
+                                app.pending_open = Some((Instant::now(), target));
+                            } else {
+                                for peer in &app.windows {
+                                    let mut event = target.clone();
+                                    event["event"] = json!("open");
+                                    effects.replies.push((*peer, event));
+                                }
+                            }
+                        }
+                    }
+                }
+                crate::notification_bus::Event::Unavailable => {}
+            }
+        }
+        for (account, seed) in sounds {
+            self.start_sound(app, &account, seed);
+        }
+        if let Some(context) = &app.desktop_context {
+            for (account, generation, target, reply) in opens {
+                if self.desktop_helpers.len() < 8
+                    && let Ok(helper) =
+                        crate::desktop::start(context, account, generation, target, reply)
+                {
+                    self.desktop_helpers.push(helper);
+                }
+            }
+        }
+    }
+    fn poll_desktop(&mut self, app: &mut crate::application::Application, effects: &mut Effects) {
+        let mut fallback = Vec::new();
+        self.desktop_helpers.retain_mut(|owner| {
+            if self.runtime.stopping
+                || !self
+                    .runtime
+                    .engine
+                    .accounts
+                    .get(&owner.account)
+                    .is_some_and(|a| a.client > 0 && a.generation == owner.generation)
+            {
+                return false;
+            }
+            match owner.helper.poll() {
+                Ok(None) => true,
+                Ok(Some(output)) => {
+                    if !output.ok() && owner.fallback {
+                        fallback.push((
+                            owner.account.clone(),
+                            owner.generation,
+                            owner.target.clone(),
+                        ));
+                    }
+                    false
+                }
+                Err(_) => {
+                    if owner.fallback {
+                        fallback.push((
+                            owner.account.clone(),
+                            owner.generation,
+                            owner.target.clone(),
+                        ));
+                    }
+                    false
+                }
+            }
+        });
+        for (account, generation, target) in fallback {
+            if app.windows.is_empty() {
+                app.pending_open = Some((Instant::now(), target.clone()));
+            } else {
+                for peer in &app.windows {
+                    let mut event = target.clone();
+                    event["event"] = json!("open");
+                    effects.replies.push((*peer, event));
+                }
+            }
+            if let Some(context) = &app.desktop_context
+                && self.desktop_helpers.len() < 8
+                && let Ok(helper) =
+                    crate::desktop::start(context, account, generation, target, false)
+            {
+                self.desktop_helpers.push(helper);
             }
         }
     }
@@ -853,16 +1687,28 @@ impl Driver {
         home: &crate::storage::Storage,
         parameters: &mut dyn FnMut(&str) -> Result<Option<Value>, String>,
     ) -> io::Result<Effects> {
-        let effects = self.tick(parameters)?;
-        application.diagnostic_runtime["jobs"] =
-            json!(self.jobs.active() + self.startup_jobs.active() + self.sound_jobs.active());
-        application.diagnostic_runtime["task_queue"] = json!(self.startup_queue.len());
+        let mut effects = self.tick(parameters)?;
+        self.pump_globals(application, home, &mut effects);
+        self.pump_bridge(application, home, &mut effects)?;
+        self.pump_notifications(application, home, &mut effects);
+        self.poll_desktop(application, &mut effects);
+        let effects = self.dispatch(effects)?;
+        self.start_pending_sounds(application);
+        application.diagnostic_runtime["jobs"] = json!(self.worker_count());
+        application.diagnostic_runtime["task_queue"] =
+            json!(self.startup_queue.len() + self.global_queue.len());
         application.diagnostic_runtime["receiver_alive"] = json!(!self.runtime.stopping);
+        application.diagnostic_runtime["td_idle_ms"] = self
+            .last_receive
+            .map_or(Value::Null, |time| json!(time.elapsed().as_millis()));
+        application.diagnostic_runtime["counts"]["td_events"] = json!(self.received_events);
         application.diagnostic_runtime["playing"] = json!(self.player.is_some());
         application.diagnostic_runtime["recording"] = json!(self.capture.is_some());
         application.diagnostic_runtime["children"] = json!(
             usize::from(self.player.is_some())
                 + self.file_openers.len()
+                + self.desktop_helpers.len()
+                + usize::from(application.bridge.running.is_some())
                 + usize::from(self.capture.is_some())
                 + usize::from(self.sound.is_some())
                 + self
@@ -885,6 +1731,8 @@ impl Driver {
             let Some(event) = self.td.receive(Duration::ZERO)? else {
                 break;
             };
+            self.last_receive = Some(Instant::now());
+            self.received_events = self.received_events.saturating_add(1);
             self.runtime
                 .engine
                 .reserve_external(self.runtime.internal_pending());
@@ -906,6 +1754,7 @@ impl Driver {
                 }
                 continue;
             }
+            self.observe_notification(&event);
             let next = self
                 .runtime
                 .receive(event, Instant::now(), parameters, &mut |query| {
@@ -913,7 +1762,7 @@ impl Driver {
                 });
             let next = self.dispatch(next)?;
             effects.replies.extend(next.replies);
-            if !self.runtime.stopping {
+            if !self.runtime.stopping && self.td.0.is_some() {
                 let closed: Vec<_> = self
                     .runtime
                     .engine
@@ -939,6 +1788,10 @@ impl Driver {
             .jobs
             .poll(&|token| self.runtime.engine.job_current(token));
         for done in completed {
+            if self.bridge_owners.contains_key(&done.token) {
+                self.bridge_done.push(done);
+                continue;
+            }
             self.runtime
                 .engine
                 .reserve_external(self.runtime.internal_pending());
@@ -964,6 +1817,20 @@ impl Driver {
             }
             let next = self.dispatch(next)?;
             effects.replies.extend(next.replies);
+        }
+        let completed = self.global_jobs.poll(&|worker| {
+            !self.runtime.stopping
+                && self.global_owner.is_some_and(|(owned, request)| {
+                    worker == owned
+                        && request.is_none_or(|token| Self::global_current(&self.runtime, token))
+                })
+        });
+        for done in completed {
+            if let Some((worker, request)) = self.global_owner.take()
+                && worker == done.token
+            {
+                self.global_done.push((request, done.result));
+            }
         }
         let completed = self.startup_jobs.poll(&|token| {
             self.startup_owners.get(&token).is_some_and(|p| {
@@ -1163,11 +2030,23 @@ impl Driver {
         if let Some(capture) = self.capture.take() {
             capture.discard();
         }
+        self.notification_transport = None;
+        self.notification_updates.clear();
         self.file_openers.clear();
         self.sound_jobs = Default::default();
         self.sound_owners.clear();
         self.clipboard_owner = None;
         self.jobs = crate::jobs::Pool::default();
+        self.global_jobs = Default::default();
+        self.global_owner = None;
+        self.global_queue.clear();
+        self.global_done.clear();
+        self.bridge_owners.clear();
+        self.bridge_done.clear();
+        self.bridge_operations.clear();
+        self.bridge_mutations.clear();
+        self.bridge_restore.clear();
+        self.desktop_helpers.clear();
         self.startup_jobs = crate::jobs::Pool::default();
         self.startup_owners.clear();
         self.startup_queue.clear();
@@ -1204,6 +2083,164 @@ impl Driver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires an explicitly provided verified TDLib library"]
+    fn bridge_disable_persists_only_current_owner_and_releases_admission() {
+        let library = std::env::var_os("TELEBAR_TEST_TDLIB").expect("verified library");
+        let mut driver = Driver::open(Path::new(&library), "default".into(), "en".into()).unwrap();
+        driver
+            .runtime
+            .register(
+                "default".into(),
+                "Synthetic".into(),
+                41,
+                vec![],
+                Instant::now(),
+            )
+            .unwrap();
+        let root =
+            std::env::temp_dir().join(format!("telebar-bridge-owner-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let home = crate::storage::Storage::open(&root).unwrap();
+        let mut app = crate::application::Application::load(&home).unwrap();
+        let request = || {
+            Request::parse(b"{\"id\":1,\"cmd\":\"bridge.set\",\"args\":{\"enabled\":false}}")
+                .unwrap()
+        };
+        let admitted = |engine: &mut crate::engine::Engine, request| {
+            engine.request_using(7, request, Instant::now(), &mut |_, _, _| {
+                Ok(crate::commands::Action::BridgeOperation(
+                    crate::bridge::Operation::Disable,
+                ))
+            })
+        };
+        let mut effects = admitted(&mut driver.runtime.engine, request());
+        let token = effects.bridge_operations[0].0;
+        driver
+            .bridge_owners
+            .insert(token, ("default".into(), crate::bridge::Operation::Disable));
+        app.bridge.busy.insert("default".into());
+        app.bridge.metadata = json!({"default":{"proxy_id":3,"previous_id":4}});
+        driver.runtime.engine.retire_peer(7);
+        driver
+            .bridge_mutations
+            .push((token, crate::bridge::Mutation::Disable));
+        driver.pump_bridge(&mut app, &home, &mut effects).unwrap();
+        assert!(app.bridge.metadata.get("default").is_some());
+        assert!(app.bridge.busy.is_empty());
+        assert!(
+            home.read(".config/omagram/bridge.json", 8192)
+                .unwrap()
+                .is_none()
+        );
+        let mut effects = admitted(&mut driver.runtime.engine, request());
+        let token = effects.bridge_operations[0].0;
+        driver
+            .bridge_owners
+            .insert(token, ("default".into(), crate::bridge::Operation::Disable));
+        app.bridge.busy.insert("default".into());
+        driver
+            .bridge_mutations
+            .push((token, crate::bridge::Mutation::Disable));
+        effects.bridge_operations.clear();
+        driver.pump_bridge(&mut app, &home, &mut effects).unwrap();
+        assert_eq!(effects.replies.len(), 1);
+        assert_eq!(effects.replies[0].1["ok"], true);
+        assert!(app.bridge.busy.is_empty());
+        assert_eq!(
+            home.read(".config/omagram/bridge.json", 8192)
+                .unwrap()
+                .unwrap(),
+            b"{}"
+        );
+        driver.runtime.stopping = true;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[ignore = "requires an explicitly provided verified TDLib library"]
+    fn globals_retire_before_dispatch_and_cannot_ack_a_reused_request() {
+        let library = std::env::var_os("TELEBAR_TEST_TDLIB").expect("verified library");
+        let mut driver = Driver::open(Path::new(&library), "default".into(), "en".into()).unwrap();
+        driver
+            .runtime
+            .register(
+                "default".into(),
+                "Synthetic".into(),
+                41,
+                vec![],
+                Instant::now(),
+            )
+            .unwrap();
+        let root = std::env::temp_dir().join(format!("telebar-globals-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let home = crate::storage::Storage::open(&root).unwrap();
+        let mut app = crate::application::Application::load(&home).unwrap();
+        app.settings.global_context = Some(crate::global_shortcuts::Context {
+            plugin: root.clone(),
+            environment: Default::default(),
+        });
+        let req = |command: &str, args: Value| {
+            Request::parse(
+                json!({"id":1,"cmd":command,"args":args})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap()
+        };
+        // No tick: retirement removes the saved operation before any helper.
+        let mut effect = app.request(
+            &home,
+            &mut driver.runtime,
+            7,
+            req(
+                "settings.set",
+                json!({"settings":{"globalShortcuts":{"global.panel":"SUPER + P"}}}),
+            ),
+        );
+        driver.global_queue.extend(
+            effect
+                .work
+                .drain(..)
+                .map(|(token, work)| (Some(token), work)),
+        );
+        driver.runtime.engine.retire_peer(7);
+        driver.pump_globals(&mut app, &home, &mut effect);
+        assert!(driver.global_owner.is_none());
+        assert!(driver.global_queue.is_empty());
+        assert_eq!(app.settings.global_status["global.panel"], "failed");
+        assert!(!app.settings.globals_pending);
+        assert!(effect.replies.iter().all(|(peer, _)| *peer == 0));
+        // Capture the old token's outcome, then reuse its wire ID. Completion
+        // cannot terminal the new request; observers still get the final status.
+        let mut effect = app.request(
+            &home,
+            &mut driver.runtime,
+            7,
+            req("shortcuts.apply", json!({})),
+        );
+        let (old, _) = effect.work.pop().unwrap();
+        driver.runtime.engine.retire_peer(7);
+        let answer = json!({"settings":app.settings.value,"globalStatus":{"global.panel":"unavailable","global.quickReply":"off","global.openWindow":"off"}});
+        driver
+            .global_done
+            .push((Some(old), Ok(crate::commands::Action::Reply(answer))));
+        let mut next = app.request(
+            &home,
+            &mut driver.runtime,
+            7,
+            req("settings.quiet", json!({"quiet":true})),
+        );
+        driver
+            .global_queue
+            .extend(next.work.drain(..).map(|(token, work)| (Some(token), work)));
+        driver.pump_globals(&mut app, &home, &mut next);
+        let replies: Vec<_> = next.replies.iter().filter(|(peer, _)| *peer == 7).collect();
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].1["result"]["settings"]["quiet"], true);
+        assert_eq!(app.settings.global_status["global.panel"], "unavailable");
+        driver.runtime.stopping = true;
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     #[ignore = "requires an explicitly provided verified TDLib library"]
     fn startup_queue_and_completion_own_account_auth_serial_and_deadline() {

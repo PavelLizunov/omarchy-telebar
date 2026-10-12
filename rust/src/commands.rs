@@ -125,6 +125,9 @@ fn optional_text<'a>(args: &'a Value, name: &str, max: usize, error: &str) -> Re
 
 #[derive(Debug)]
 pub enum Action {
+    BridgeReady(crate::bridge::Running),
+    BridgeMutation(crate::bridge::Mutation),
+    BridgeOperation(crate::bridge::Operation),
     OpenFile(crate::file_open::Start),
     SoundReady(crate::sound_playback::Prepared),
     ClipboardOffer(crate::clipboard::Offer),
@@ -156,6 +159,8 @@ pub enum Action {
 }
 #[derive(Debug)]
 pub enum Answer {
+    Upload(crate::upload_lease::Lease, bool),
+    Bridge(crate::bridge::Answer),
     ProfilePhoto(crate::profile_photo::Lease),
     OpenFile(crate::file_open::Selection),
     Playback(crate::playback::Selection),
@@ -271,6 +276,20 @@ impl Answer {
         })
     }
     pub fn failed(&self, event: &Value) -> Result<Value> {
+        if let Self::Upload(lease, _) = self {
+            lease.rejected(integer(&event["code"], 0));
+        }
+        if let Self::Bridge(answer) = self {
+            return Err(if matches!(
+                answer,
+                crate::bridge::Answer::DisableList { .. } | crate::bridge::Answer::Disabled
+            ) {
+                "could not restore the previous connection"
+            } else {
+                "could not enable the bundled bridge"
+            }
+            .into());
+        }
         if let Self::ProfilePhoto(lease) = self {
             let code = integer(&event["code"], 0);
             if (400..500).contains(&code) && code != 408 {
@@ -306,6 +325,13 @@ impl Answer {
                 result: Value::Null,
                 followups: Vec::new(),
                 next: Some(Box::new(selection.complete(event, state)?)),
+            });
+        }
+        if let Self::Bridge(answer) = self {
+            return Ok(Completion {
+                result: Value::Null,
+                followups: vec![],
+                next: Some(Box::new(answer.complete(event)?)),
             });
         }
         if let Self::Cache(answer) = self {
@@ -346,11 +372,19 @@ impl Answer {
                 });
             }
             Self::ChatDetail(answer) => answer.complete(event, state)?,
+            Self::Bridge(_) => unreachable!("bridge completion handled above"),
             Self::LinkDetail(_) => unreachable!("link completion handled above"),
             Self::Export(_) => unreachable!("export completion handled above"),
             Self::Cache(_) => unreachable!("cache completion handled above"),
             Self::Playback(_) => unreachable!("playback completion handled above"),
             Self::OpenFile(_) => unreachable!("open completion handled above"),
+            Self::Upload(_, album) => {
+                if *album {
+                    json!({})
+                } else {
+                    state.message(event)
+                }
+            }
             Self::Recorded(_) => state.message(event),
             Self::ProfilePhoto(lease) => {
                 lease.settled();
@@ -1440,7 +1474,10 @@ pub fn project(value: &Value, roots: &[String]) -> Value {
     ) {
         Err(error) => json!({"error":error}),
         Ok(Action::Reply(result)) => json!({"result":result,"queries":[]}),
-        Ok(Action::OpenFile(_))
+        Ok(Action::BridgeOperation(_))
+        | Ok(Action::BridgeMutation(_))
+        | Ok(Action::BridgeReady(_))
+        | Ok(Action::OpenFile(_))
         | Ok(Action::SoundReady(_))
         | Ok(Action::ClipboardOffer(_))
         | Ok(Action::Playback(_))
@@ -1472,7 +1509,10 @@ pub fn project(value: &Value, roots: &[String]) -> Value {
                     Action::AccountNative { .. } => {
                         return json!({"error":"fixture requires registered account routing","queries":queries});
                     }
-                    Action::OpenFile(_)
+                    Action::BridgeOperation(_)
+                    | Action::BridgeMutation(_)
+                    | Action::BridgeReady(_)
+                    | Action::OpenFile(_)
                     | Action::SoundReady(_)
                     | Action::ClipboardOffer(_)
                     | Action::Playback(_)

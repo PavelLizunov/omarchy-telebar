@@ -54,6 +54,19 @@ pub struct Runtime {
     pub stopping: bool,
 }
 impl Runtime {
+    pub fn notification_button(&mut self, id: &str, query: Value, now: Instant) -> Effects {
+        let mut effects = Effects::default();
+        if !self.stopping
+            && self.engine.accounts.get(id).is_some_and(|a| a.ready)
+            && matches!(
+                query["@type"].as_str(),
+                Some("viewMessages" | "setChatNotificationSettings" | "addMessageReaction")
+            )
+        {
+            self.query(id, query, Internal::Ignore, now, &mut effects);
+        }
+        effects
+    }
     pub fn open_content(&mut self, id: &str, chat: i128, message: i128, now: Instant) -> Effects {
         let mut effects = Effects::default();
         if !self.stopping {

@@ -12,6 +12,7 @@ pub struct Settings {
     pub value: Value,
     pub global_status: Value,
     pub globals_pending: bool,
+    pub global_context: Option<crate::global_shortcuts::Context>,
     pub sounds_pending: Vec<i128>,
     pub events: Vec<Value>,
 }
@@ -29,9 +30,42 @@ impl Settings {
             value,
             global_status: json!({"global.quickReply":"off","global.panel":"off","global.openWindow":"off"}),
             globals_pending: false,
+            global_context: None,
             sounds_pending: Vec::new(),
             events: Vec::new(),
         })
+    }
+    pub fn globals_work(&mut self) -> Result<Action> {
+        let context = self
+            .global_context
+            .clone()
+            .ok_or("explicit shortcut context missing")?;
+        self.globals_pending = true;
+        Ok(Action::Work(crate::jobs::Work::GlobalShortcuts(
+            crate::global_shortcuts::Job {
+                context,
+                settings: self.value.clone(),
+            },
+        )))
+    }
+    pub fn fail_globals(&mut self) -> Value {
+        self.globals_pending = false;
+        self.global_status =
+            crate::global_shortcuts::statuses(&self.value["globalShortcuts"], "failed");
+        let mut event = self.view();
+        event["event"] = json!("settings");
+        event
+    }
+    /// Completion may update only the still-current persisted settings view.
+    pub fn complete_globals(&mut self, view: &Value) -> Option<Value> {
+        if view["settings"] != self.value || !view["globalStatus"].is_object() {
+            return None;
+        }
+        self.global_status = view["globalStatus"].clone();
+        self.globals_pending = false;
+        let mut event = self.view();
+        event["event"] = json!("settings");
+        Some(event)
     }
     pub fn view(&self) -> Value {
         json!({"settings":self.value,"globalStatus":self.global_status})
@@ -54,10 +88,22 @@ impl Settings {
                 | "settings.sounds"
                 | "settings.autoDownload"
                 | "sounds.another"
+                | "shortcuts.apply"
         ) {
             return None;
         }
         Some((|| {
+            // Python serializes these commands on its main loop. Keep later
+            // mutations behind the pending compositor operation, before save.
+            if self.globals_pending && self.global_context.is_some() {
+                return Ok(Action::Work(crate::jobs::Work::DeferredSettings {
+                    command: command.into(),
+                    args: args.clone(),
+                }));
+            }
+            if command == "shortcuts.apply" {
+                return self.globals_work();
+            }
             let change = preferences_commands::prepare(command, args, &self.value, state.me_id)?;
             home.write(
                 ".config/omagram/settings.json",
@@ -66,7 +112,6 @@ impl Settings {
             )
             .map_err(|_| "the settings could not be saved")?;
             self.value = change.settings;
-            self.globals_pending |= change.apply_globals;
             if let Some(seed) = change.play {
                 if self.sounds_pending.len() >= 2 {
                     self.sounds_pending.remove(0);
@@ -74,6 +119,9 @@ impl Settings {
                 self.sounds_pending.push(seed);
             }
             let result = self.view();
+            if change.apply_globals && self.global_context.is_some() {
+                return self.globals_work();
+            }
             let mut event = result.clone();
             event["event"] = json!("settings");
             self.events.push(event);

@@ -34,6 +34,7 @@ pub struct Capture {
     relative: String,
     preview_relative: Option<String>,
     keep_input: bool,
+    ended: bool,
 }
 impl std::fmt::Debug for Capture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -194,6 +195,7 @@ impl Capture {
             relative,
             preview_relative,
             keep_input: false,
+            ended: false,
         })
     }
     pub fn finish(&mut self, cancel: &AtomicBool) -> Result<()> {
@@ -289,7 +291,10 @@ impl Capture {
         self.helper.pid()
     }
     pub fn poll(&mut self) -> bool {
-        self.helper.poll().map_or(true, |out| out.is_some())
+        if !self.ended {
+            self.ended = self.helper.poll().map_or(true, |out| out.is_some());
+        }
+        self.ended
     }
     pub fn discard(mut self) {
         let _ = self.helper.cancel();
