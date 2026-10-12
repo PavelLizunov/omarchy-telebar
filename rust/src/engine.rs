@@ -71,14 +71,14 @@ impl Engine {
         self.requests.metrics(now)
     }
     /// Mark input lifetime at the actual dispatch boundary, not when planning.
-    pub fn native_dispatched(&self, query: &Value) {
+    pub fn native_dispatched(&self, query: &Value) -> std::io::Result<()> {
         if let Some(callback) = query["@extra"]
             .as_u64()
             .and_then(|extra| self.callbacks.get(&extra))
         {
             match &callback.answer {
-                Answer::ProfilePhoto(lease) => lease.submitted(),
-                Answer::Upload(lease, _) => lease.submitted(),
+                Answer::ProfilePhoto(lease) => lease.submitted()?,
+                Answer::Upload(lease, _) => lease.submitted()?,
                 Answer::Recorded(token) => {
                     if let Some(input) = self
                         .accounts
@@ -87,12 +87,13 @@ impl Engine {
                         .filter(|r| r.token == *token)
                         .and_then(|r| r.input.as_ref())
                     {
-                        input.submitted();
+                        input.submitted()?;
                     }
                 }
                 _ => {}
             }
         }
+        Ok(())
     }
     pub fn native_pending(&self) -> usize {
         self.callbacks.len()

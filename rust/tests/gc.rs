@@ -21,8 +21,9 @@ fn stale_raw_only_and_protected_inputs_survive() {
     let protected = vec![directory.join("note-pending").to_str().unwrap().into()];
     assert_eq!(
         telebar_runtime::gc::raw(&root, &protected, SystemTime::now()).unwrap(),
-        2
+        1
     );
+    assert!(directory.join("note-old").exists()); // May be crash-retained/uncertain.
     assert!(directory.join("voice-old").exists());
     assert!(directory.join("note-pending").exists());
     assert!(directory.join("note-link").is_symlink());

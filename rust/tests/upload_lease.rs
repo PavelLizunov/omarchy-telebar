@@ -16,10 +16,10 @@ fn stale_input_is_removed_but_submitted_or_uncertain_input_survives() {
         let directory = root.join(name);
         fs::create_dir(&directory).unwrap();
         fs::write(directory.join("input"), b"synthetic").unwrap();
-        let mut lease = Lease::new(root.clone());
-        lease.add(format!("{name}/input"));
+        let mut lease = Lease::new(root.clone()).unwrap();
+        lease.add(format!("{name}/input")).unwrap();
         if submitted {
-            lease.submitted();
+            lease.submitted().unwrap();
         }
         if code != 0 {
             lease.rejected(code);
@@ -38,8 +38,8 @@ fn stale_input_is_removed_but_submitted_or_uncertain_input_survives() {
         let directory = root.join(name);
         fs::create_dir(&directory).unwrap();
         fs::write(directory.join("input"), b"synthetic").unwrap();
-        let mut lease = Lease::new(root.clone());
-        lease.add(format!("{name}/input"));
+        let mut lease = Lease::new(root.clone()).unwrap();
+        lease.add(format!("{name}/input")).unwrap();
         let mut engine = telebar_runtime::engine::Engine::new("default".into());
         engine.accounts.insert(
             "default".into(),
@@ -63,7 +63,7 @@ fn stale_input_is_removed_but_submitted_or_uncertain_input_survives() {
                 })
             });
         if dispatched {
-            engine.native_dispatched(&effects.native[0].query);
+            engine.native_dispatched(&effects.native[0].query).unwrap();
         }
         engine.retire_peer(7);
         assert_eq!(directory.join("input").exists(), dispatched);
@@ -79,8 +79,8 @@ fn stale_input_is_removed_but_submitted_or_uncertain_input_survives() {
         let directory = root.join(name);
         fs::create_dir(&directory).unwrap();
         fs::write(directory.join("input"), b"synthetic").unwrap();
-        let mut input = Lease::new(root.clone());
-        input.add(format!("{name}/input"));
+        let mut input = Lease::new(root.clone()).unwrap();
+        input.add(format!("{name}/input")).unwrap();
         let mut engine = telebar_runtime::engine::Engine::new("default".into());
         let mut state = telebar_runtime::state::State::default();
         state
@@ -125,7 +125,7 @@ fn stale_input_is_removed_but_submitted_or_uncertain_input_survives() {
             assert!(effects.native.is_empty());
             assert!(!directory.join("input").exists());
         } else {
-            engine.native_dispatched(&effects.native[0].query);
+            engine.native_dispatched(&effects.native[0].query).unwrap();
             engine.retire_peer(7);
             drop(engine);
             assert!(directory.join("input").exists());

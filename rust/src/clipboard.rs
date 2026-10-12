@@ -214,6 +214,14 @@ pub fn read(context: Context, files: bool, cancel: &AtomicBool) -> Result<Action
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
         let relative = format!("omagram/rec/paste-{token}.{suffix}");
+        let _reservation = crate::upload_lease::reserve(
+            &home,
+            "omagram/rec",
+            data.len() as u64,
+            cancel,
+            std::time::Instant::now() + Duration::from_secs(2),
+        )
+        .map_err(|_| "generated clipboard input budget exceeded; existing inputs were kept")?;
         home.write(&relative, &data, 0o600)
             .map_err(|_| "the clipboard could not be read")?;
         let path = context.runtime.join(relative);

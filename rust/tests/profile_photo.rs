@@ -97,7 +97,7 @@ fn profile_photo_conversion_is_private_and_unknown_native_outcome_keeps_input() 
         assert_eq!(admitted.native.len(), 1);
         let query = &admitted.native[0].query;
         if dispatch {
-            engine.native_dispatched(query);
+            engine.native_dispatched(query).unwrap();
         }
         if let Some(mut e) = event {
             e["@extra"] = query["@extra"].clone();

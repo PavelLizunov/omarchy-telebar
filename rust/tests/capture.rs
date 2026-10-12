@@ -118,5 +118,43 @@ fn synthetic_owned_capture_stops_and_prepares_retained_inputs_without_sends() {
     assert!(!path.exists());
     assert!(!preview.exists());
     assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    let capture = Capture::start_with(
+        &context,
+        "default".into(),
+        1,
+        "voice",
+        42,
+        Some(input("voice")),
+    )
+    .unwrap();
+    let path = capture.path.clone();
+    fs::rename(&path, root.join("original-output")).unwrap();
+    fs::write(&path, b"unrelated replacement").unwrap();
+    capture.discard();
+    assert_eq!(fs::read(&path).unwrap(), b"unrelated replacement");
+    // A regular replaced root must not turn Drop into foreign cleanup.
+    let capture = Capture::start_with(
+        &context,
+        "default".into(),
+        1,
+        "voice",
+        42,
+        Some(input("voice")),
+    )
+    .unwrap();
+    let relative = capture.path.strip_prefix(&root).unwrap().to_owned();
+    let moved = root.with_extension("moved");
+    fs::rename(&root, &moved).unwrap();
+    fs::create_dir(&root).unwrap();
+    let replacement = telebar_runtime::storage::Storage::open(&root).unwrap();
+    replacement
+        .write(relative.to_str().unwrap(), b"foreign root input", 0o600)
+        .unwrap();
+    drop(capture);
+    assert_eq!(
+        fs::read(root.join(relative)).unwrap(),
+        b"foreign root input"
+    );
+    fs::remove_dir_all(&moved).unwrap();
     fs::remove_dir_all(root).unwrap();
 }

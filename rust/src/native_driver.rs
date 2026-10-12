@@ -624,7 +624,20 @@ impl Driver {
             }
         }
         for native in std::mem::take(&mut effects.native) {
-            self.runtime.engine.native_dispatched(&native.query);
+            if self
+                .runtime
+                .engine
+                .native_dispatched(&native.query)
+                .is_err()
+            {
+                // No native request has been dispatched. A failed durable input
+                // journal must not submit a file or terminate unrelated accounts.
+                let refused = json!({"@type":"error","@client_id":native.client,"@extra":native.query["@extra"],"code":400,"message":"the generated input could not be retained; no message was submitted"});
+                effects
+                    .replies
+                    .extend(self.runtime.engine.receive(refused).replies);
+                continue;
+            }
             self.td.send(native.client, &native.query)?;
         }
         Ok(effects)

@@ -92,8 +92,17 @@ fn real_ffmpeg_prepares_synthetic_voice_and_round_video() {
         .unwrap();
     assert_eq!(
         entries.len(),
-        1,
-        "owned source/partial containers must be removed"
+        2,
+        "only completed WebP and persistent admission lock remain"
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| e.file_name() == ".telebar-input.lock")
+    );
+    assert!(
+        entries.iter().all(|e| e.file_type().unwrap().is_file()),
+        "owned source/partial containers and journals must be removed"
     );
     assert!(
         job()

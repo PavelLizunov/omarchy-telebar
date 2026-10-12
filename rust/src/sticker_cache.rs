@@ -153,6 +153,7 @@ fn entries(home: &Storage) -> Vec<(String, std::fs::Metadata)> {
         .collect()
 }
 pub fn startup_trim(home: &Storage, cancel: &AtomicBool) {
+    let _ = crate::upload_lease::recover_unsent(home, ".cache/omagram/notes");
     trim(home, cancel);
     trim_notes(home, cancel);
 }
@@ -389,12 +390,18 @@ fn note_animation(
         deadline,
     )?;
     let relative = format!("{}/making.webp", copy.rsplit_once('/').ok_or_else(error)?.0);
-    let output_path = home.join(&relative);
-    let source_path = home.join(&copy);
-    let mut args = crate::media::note_animation_argv(
-        source_path.to_str().ok_or_else(error)?,
-        output_path.to_str().ok_or_else(error)?,
-    );
+    let mut lease = crate::upload_lease::Lease::new(home.to_owned())?;
+    lease.add(copy.clone())?;
+    let _reservation =
+        crate::upload_lease::reserve(&store, directory, OUTPUT as u64, cancel, deadline)?;
+    let output = store.create_file(&relative)?;
+    lease.add(relative.clone())?;
+    use std::os::fd::AsRawFd;
+    let output_path = format!("/proc/{}/fd/{}", std::process::id(), output.as_raw_fd());
+    let input = store.open_read(&copy)?;
+    let source_path = format!("/proc/{}/fd/{}", std::process::id(), input.as_raw_fd());
+    let mut args = crate::media::note_animation_argv(&source_path, &output_path);
+    args.insert(4, "-y".into());
     // Disk output receives an explicit cap as well as a postcondition check.
     let output_index = args.len() - 1;
     args.splice(
@@ -433,11 +440,7 @@ fn note_animation(
         store.write(&target, &bytes, 0o600)?;
         Ok(())
     })();
-    let _ = store.remove_file(&copy);
-    let _ = store.remove_file(&relative);
-    if let Some((container, _)) = copy.rsplit_once('/') {
-        let _ = store.remove_empty_directory(container);
-    }
+    drop(lease); // Exact unsent source/partial/journal cleanup on every outcome.
     converted?;
     trim_notes(&store, cancel);
     Ok(home.join(target))

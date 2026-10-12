@@ -177,6 +177,94 @@ impl Storage {
         owned(&file, false)?;
         Ok(file)
     }
+    pub fn same_root(&self, other: &Self) -> io::Result<bool> {
+        let a = self.root.metadata()?;
+        let b = other.root.metadata()?;
+        Ok(a.dev() == b.dev() && a.ino() == b.ino())
+    }
+    /// Atomically hold an entry before checking its inode. Linux has no unlink
+    /// by file descriptor: check-then-unlink would race with pathname replacement.
+    /// A mismatch is restored without overwriting; on a concurrent collision it
+    /// remains quarantined, never deleted. All moves stay under a pinned parent.
+    pub fn remove_owned(&self, path: &str, dev: u64, ino: u64) -> io::Result<bool> {
+        self.remove_owned_with(path, dev, ino, &mut || {})
+    }
+    fn remove_owned_with(
+        &self,
+        path: &str,
+        dev: u64,
+        ino: u64,
+        before_hold: &mut dyn FnMut(),
+    ) -> io::Result<bool> {
+        let parts = self.parts(path)?;
+        let parent = match self.directory(&parts[..parts.len() - 1], false) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            result => result?,
+        };
+        let name = cstring(parts[parts.len() - 1])?;
+        let held = cstring(&format!(
+            ".telebar-retired-{}-{}",
+            std::process::id(),
+            SERIAL.fetch_add(1, Ordering::Relaxed)
+        ))?;
+        before_hold();
+        // SAFETY: two validated components and retained owned parent; atomic
+        // no-replace rename holds the entry without following it.
+        if unsafe {
+            libc::renameat2(
+                parent.as_raw_fd(),
+                name.as_ptr(),
+                parent.as_raw_fd(),
+                held.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            )
+        } != 0
+        {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::NotFound {
+                return Ok(false);
+            }
+            return Err(error);
+        }
+        let held_name = held
+            .to_str()
+            .map_err(|_| io::Error::other("invalid held input"))?;
+        let exact = open_at(&parent, held_name, libc::O_RDONLY | libc::O_NONBLOCK, 0)
+            .and_then(|f| f.metadata())
+            .is_ok_and(|m| {
+                m.is_file()
+                    && m.uid() == unsafe { libc::getuid() }
+                    && m.dev() == dev
+                    && m.ino() == ino
+                    && m.nlink() == 1
+            });
+        if !exact {
+            // SAFETY: restore the held entry only if the original name remains
+            // vacant. On collision preserve both entries; never unlink either.
+            if unsafe {
+                libc::renameat2(
+                    parent.as_raw_fd(),
+                    held.as_ptr(),
+                    parent.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            } != 0
+            {
+                return Err(io::Error::other(
+                    "input replacement preserved in quarantine",
+                ));
+            }
+            parent.sync_all()?;
+            return Ok(false);
+        }
+        // SAFETY: exact admitted inode now has the exclusively held name.
+        if unsafe { libc::unlinkat(parent.as_raw_fd(), held.as_ptr(), 0) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        parent.sync_all()?;
+        Ok(true)
+    }
     /// Unlink one owned regular entry under a descriptor-pinned private root.
     /// Missing entries are already removed; symlinks and special files fail.
     pub fn remove_file(&self, path: &str) -> io::Result<()> {
@@ -313,6 +401,94 @@ impl Storage {
         }
         result
     }
+    /// Owned exclusive lock. Nonblocking retries are cancellation/deadline
+    /// bounded; dropping the returned fd releases only this open-file owner.
+    pub fn lock(
+        &self,
+        path: &str,
+        cancel: &std::sync::atomic::AtomicBool,
+        deadline: std::time::Instant,
+    ) -> io::Result<File> {
+        let parts = self.parts(path)?;
+        let parent = self.directory(&parts[..parts.len() - 1], true)?;
+        let file = open_at(
+            &parent,
+            parts[parts.len() - 1],
+            libc::O_RDWR | libc::O_CREAT | libc::O_NONBLOCK,
+            0o600,
+        )?;
+        owned(&file, false)?;
+        let m = file.metadata()?;
+        if m.nlink() != 1 || m.mode() & 0o777 != 0o600 {
+            return Err(io::Error::other("unsafe input lock"));
+        }
+        loop {
+            if cancel.load(Ordering::Relaxed) || std::time::Instant::now() >= deadline {
+                return Err(io::Error::other("input lock deadline exceeded"));
+            }
+            // SAFETY: retained regular owned fd; nonblocking advisory lock.
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                return Ok(file);
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::WouldBlock {
+                return Err(error);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+    /// Finite descriptor-relative inventory. Links/special files are not
+    /// followed or omitted: they make admission/cleanup fail closed.
+    pub fn entries(
+        &self,
+        path: &str,
+        limit: usize,
+    ) -> io::Result<Vec<(String, std::fs::Metadata)>> {
+        let dir = match self.directory(&self.parts(path)?, false) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
+            result => result?,
+        };
+        let mut entries = vec![];
+        for (index, entry) in
+            std::fs::read_dir(format!("/proc/self/fd/{}", dir.as_raw_fd()))?.enumerate()
+        {
+            if index >= limit {
+                return Err(io::Error::other("storage inventory exceeds limit"));
+            }
+            let entry = entry?;
+            let name = entry
+                .file_name()
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| io::Error::other("invalid storage entry name"))?;
+            let kind = entry.file_type()?;
+            if !kind.is_file() && !kind.is_dir() {
+                return Err(io::Error::other("unsupported storage entry"));
+            }
+            let file = open_at(
+                &dir,
+                &name,
+                libc::O_RDONLY
+                    | libc::O_NONBLOCK
+                    | if kind.is_dir() { libc::O_DIRECTORY } else { 0 },
+                0,
+            )?;
+            owned(&file, kind.is_dir())?;
+            entries.push((name, file.metadata()?));
+        }
+        Ok(entries)
+    }
+    pub fn available_bytes(&self, path: &str) -> io::Result<u64> {
+        let dir = self.directory(&self.parts(path)?, false)?;
+        let mut info = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+        // SAFETY: valid retained directory fd and writable output structure;
+        // initialization is consumed only after fstatvfs succeeds.
+        if unsafe { libc::fstatvfs(dir.as_raw_fd(), info.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let info = unsafe { info.assume_init() };
+        Ok(info.f_bavail.saturating_mul(info.f_frsize))
+    }
     /// Copy explicitly selected bytes into a private stable TDLib input. The
     /// caller retains successful snapshots across uncertain native outcomes.
     pub fn snapshot_upload(
@@ -328,10 +504,11 @@ impl Storage {
         if !before.is_file() || before.len() != size || size > 2 * 1024 * 1024 * 1024 {
             return Err(io::Error::other("invalid upload snapshot"));
         }
+        let _reservation = crate::upload_lease::reserve(self, relative, size, cancel, deadline)?;
         let dir = self.directory(&self.parts(relative)?, true)?;
         if original_name.is_empty()
             || original_name.contains(['/', '\0'])
-            || matches!(original_name, "." | "..")
+            || matches!(original_name, "." | ".." | crate::upload_lease::JOURNAL)
         {
             return Err(io::Error::other("invalid upload name"));
         }
@@ -343,6 +520,7 @@ impl Storage {
             return Err(io::Error::last_os_error());
         }
         let parent = dir;
+        parent.sync_all()?; // Persist container reachability before its journal.
         let dir = open_at(&parent, &container, libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
         let name = original_name;
         let mut output = open_at(
@@ -352,6 +530,12 @@ impl Storage {
             0o600,
         )?;
         let result = (|| {
+            crate::upload_lease::journal_copy(
+                self,
+                &format!("{relative}/{container}"),
+                name,
+                &output,
+            )?;
             let mut left = size;
             let mut bytes = vec![0; 1024 * 1024];
             while left > 0 {
@@ -378,11 +562,20 @@ impl Storage {
             dir.sync_all()
         })(); // Only our exclusively created failed copy is removed.
         if let Err(error) = result {
-            let name = cstring(name)?;
-            unsafe {
-                libc::unlinkat(dir.as_raw_fd(), name.as_ptr(), 0);
-                libc::unlinkat(parent.as_raw_fd(), component.as_ptr(), libc::AT_REMOVEDIR);
+            let m = output.metadata()?;
+            let base = format!("{relative}/{container}");
+            let _ = self.remove_owned(&format!("{base}/{name}"), m.dev(), m.ino());
+            if let Ok(journal) = self
+                .open_read(&format!("{base}/{}", crate::upload_lease::JOURNAL))
+                .and_then(|f| f.metadata())
+            {
+                let _ = self.remove_owned(
+                    &format!("{base}/{}", crate::upload_lease::JOURNAL),
+                    journal.dev(),
+                    journal.ino(),
+                );
             }
+            let _ = self.remove_empty_directory(&base);
             return Err(error);
         }
         Ok(format!("{relative}/{container}/{name}"))
@@ -446,6 +639,28 @@ mod tests {
             fs::{PermissionsExt, symlink},
         },
     };
+    #[test]
+    fn cleanup_holds_then_checks_a_replaced_inode_without_deleting_it() {
+        let root = std::env::temp_dir().join(format!("telebar-held-delete-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let store = Storage::open(&root).unwrap();
+        store.write("entry", b"original", 0o600).unwrap();
+        let m = store.open_read("entry").unwrap().metadata().unwrap();
+        let mut replace = || {
+            fs::rename(root.join("entry"), root.join("old")).unwrap();
+            fs::write(root.join("entry"), b"replacement").unwrap();
+        };
+        assert!(
+            !store
+                .remove_owned_with("entry", m.dev(), m.ino(), &mut replace)
+                .unwrap()
+        );
+        assert_eq!(fs::read(root.join("entry")).unwrap(), b"replacement");
+        assert_eq!(fs::read(root.join("old")).unwrap(), b"original");
+        assert!(store.remove_owned("old", m.dev(), m.ino()).unwrap());
+        assert_eq!(fs::read(root.join("entry")).unwrap(), b"replacement");
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn atomic_storage_rejects_symlinks_and_bounds_reads() {
         let path = std::env::temp_dir().join(format!("telebar-storage-{}", std::process::id()));

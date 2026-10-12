@@ -10,7 +10,10 @@ pub fn raw(runtime: &Path, protected: &[String], now: SystemTime) -> io::Result<
     let store = Storage::open(runtime)?;
     let mut removed = 0;
     for (name, meta) in store.files("omagram/rec", 4096)? {
-        if !name.starts_with("note-") && !name.starts_with("paste-") {
+        // Raw notes can belong to a retained or uncertain send after a crash.
+        // Only clipboard scratch has an age policy; recordings/profile photos
+        // without a durable unsent journal remain counted, never age-deleted.
+        if !name.starts_with("paste-") {
             continue;
         }
         let relative = format!("omagram/rec/{name}");

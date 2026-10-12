@@ -47,6 +47,43 @@ isolated Wayland lib-test build has a `cfg(test)`-only immutable hash admission
 for helpers whose root UID is unmapped by Bubblewrap. Its wrapper verifies host
 ownership and hashes before mounting the manifest. There is no release override.
 
+## Generated input lifetime and finite storage
+
+The owner journals exclusively created upload/recording copies before writing
+bytes and durably marks them submitted before the actual native dispatch. A
+startup after an abrupt exit reclaims only valid unsent journals with matching
+owned inodes. Missing/malformed journals, replacement files, legacy media and
+submitted/uncertain outcomes remain untouched. Album group transfer is not native
+submission. Failure to retain an input refuses that request, not the service.
+Dispatch validates the consumer-visible absolute root/path against the retained
+inode; converter/probe I/O uses admitted fd paths. Cleanup atomically holds an
+entry before checking its inode and never deletes a substituted file. A restore
+collision preserves the replacement in a private quarantine rather than erasing
+it. This is Linux-specific bounded ownership, not isolation from malicious code
+already running with the same user's access.
+
+Each account's sent directory and the runtime media directory admit at most
+4096 top-level entries and 32 GiB, including existing legacy/uncertain inputs,
+with 512 MiB free-space headroom, including 16 KiB reserved for durable/atomic
+journal writes. A descriptor-owned lock covers reservation
+through copy/capture/conversion completion. Oversize inventory, links and special
+files refuse new work rather than evict existing media. Video conversion has a
+512 MiB output cap and an exclusive output fd. These are finite admission limits,
+not evidence of physical peak storage measurement or safe sent-file deletion.
+
+Telegram may reference local inputs for subsequent playback. Accepted messages
+and timeout/disconnect do not authorize age-based deletion. Raw recordings and
+unknown profile-photo inputs are preserved across restart; only stale clipboard
+scratch has an age policy. Explicit confirmed recording discard still owns its
+narrow validated files. Crash recovery does not yet reconstruct retained-recording
+UI/retry metadata; that user-facing recovery remains an acceptance gate.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked --offline --test input_recovery
+TELEBAR_TEST_INERT_ABI=/absolute/fixture/lib/libtdjson.so \
+  cargo test --manifest-path rust/Cargo.toml --locked --offline --test input_driver -- --ignored
+```
+
 ## Implemented helper entry points
 
 The candidate implements `--launch`, `--host-window`, `--daemon`, `--menu`,

@@ -390,8 +390,23 @@ preserving the retained original. Generated recording leases now move through
 the actual worker result into the retained owner and are marked submitted only
 at Driver dispatch. Stale/drop/capacity failures clean generated snapshots;
 unknown dispatched inputs survive owner retirement. Synthetic capture and
-real Engine completion/retirement tests cover this boundary. Cumulative/crash-left
-resource policy and post-send file update cleanup remain unfinished.
+real Engine completion/retirement tests cover this boundary. Exclusive copies
+now have a durable inode journal before byte copying; submission is durable before
+TDLib dispatch. Startup reclaims only proven-unsent journaled inodes. Missing,
+malformed, substituted and uncertain entries remain. Per-account sent/runtime
+input admission is capped at 4096 entries/32 GiB with 512 MiB free headroom;
+lock ownership spans copy/capture/conversion, including legacy/uncertain inventory.
+No accepted/uncertain sent input is evicted just because a success update arrives:
+TDLib and native playback may still reference it. Exact recovery, cap, lock,
+parent/input replacement and Driver journal-refusal regressions pass in isolation.
+A bounded same-family reviewer found consumer-visible path substitution, capture
+replacement cleanup and omitted journal budget. Corrections validate the actual
+absolute root/path before dispatch, use fd-only converter/probe paths, hold then
+check cleanup entries without overwrite, and reserve 16 KiB journal headroom.
+Exact capture/root/controlled-unlink and near-cap/Driver controls pass; newly
+created upload-container reachability is fsynced before journal copying. This is
+coordinator-verified closure of cited findings, not cross-family acceptance or a
+power-loss proof. Retained UI/crash metadata and real media use remain open.
 
 Fixed system helpers now require root-owned non-writable /usr executables and
 safe ancestors; application helpers require owned non-writable files. The
@@ -415,8 +430,8 @@ still uses account generation without requiring a native client. Actual isolated
 socket and product QML-client checks pass, including asynchronous settings,
 response-before-event, rejected queries, account switch and clean shutdown.
 Native production identity/language and receive/request counters are explicit.
-Finite legacy raw note/paste startup cleanup protects named retained inputs and
-never traverses symlinks or age-deletes sent inputs/databases. Submitted-input
+Finite stale clipboard-paste startup cleanup protects named retained inputs and
+never traverses symlinks or age-deletes recordings/sent inputs/databases. Submitted-input
 cumulative/crash-left cleanup remains a separate unfinished policy. The
 sent-video P1 remains independently unresolved.
 

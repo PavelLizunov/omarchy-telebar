@@ -31,10 +31,18 @@ pub struct Capture {
     file: File,
     preview_file: Option<File>,
     root: PathBuf,
+    storage: Storage,
     relative: String,
     preview_relative: Option<String>,
     keep_input: bool,
     ended: bool,
+    reservation: Option<File>,
+}
+fn remove(storage: &Storage, path: &str, file: &File) {
+    use std::os::unix::fs::MetadataExt;
+    if let Ok(m) = file.metadata() {
+        let _ = storage.remove_owned(path, m.dev(), m.ino());
+    }
 }
 impl std::fmt::Debug for Capture {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -90,6 +98,18 @@ impl Capture {
             )
         };
         let storage = Storage::open(&root).map_err(|_| "cannot start the recorder")?;
+        let directory = relative
+            .rsplit_once('/')
+            .ok_or("cannot start the recorder")?
+            .0;
+        let reservation = crate::upload_lease::reserve(
+            &storage,
+            directory,
+            520 * 1024 * 1024,
+            &AtomicBool::new(false),
+            std::time::Instant::now() + Duration::from_secs(2),
+        )
+        .map_err(|_| "saved recording input budget exceeded; existing inputs were kept")?;
         let file = storage
             .create_file(&relative)
             .map_err(|_| "cannot start the recorder")?;
@@ -102,7 +122,7 @@ impl Capture {
             Some(name) => match storage.create_file(name) {
                 Ok(f) => Some(f),
                 Err(_) => {
-                    let _ = storage.remove_file(&relative);
+                    remove(&storage, &relative, &file);
                     return Err("cannot start the recorder".into());
                 }
             },
@@ -170,9 +190,9 @@ impl Capture {
         ) {
             Ok(helper) => helper,
             Err(_) => {
-                let _ = storage.remove_file(&relative);
-                if let Some(name) = &preview_relative {
-                    let _ = storage.remove_file(name);
+                remove(&storage, &relative, &file);
+                if let (Some(name), Some(file)) = (&preview_relative, &preview_file) {
+                    remove(&storage, name, file);
                 }
                 return Err("cannot start the recorder".into());
             }
@@ -192,10 +212,12 @@ impl Capture {
             file,
             preview_file,
             root,
+            storage,
             relative,
             preview_relative,
             keep_input: false,
             ended: false,
+            reservation: Some(reservation),
         })
     }
     pub fn finish(&mut self, cancel: &AtomicBool) -> Result<()> {
@@ -206,8 +228,8 @@ impl Capture {
             }
             std::thread::sleep(Duration::from_millis(2));
         }
-        if let Some(name) = &self.preview_relative {
-            let _ = Storage::open(&self.root).and_then(|s| s.remove_file(name));
+        if let (Some(name), Some(file)) = (&self.preview_relative, &self.preview_file) {
+            remove(&self.storage, name, file);
         }
         self.preview_file = None;
         let size = self
@@ -279,8 +301,16 @@ impl Capture {
         let expected = file
             .metadata()
             .map_err(|_| "the retained recording is not available")?;
-        let current = Storage::open(&self.root)
-            .and_then(|s| s.open_read(&self.relative))
+        let visible =
+            Storage::open(&self.root).map_err(|_| "the retained recording is not available")?;
+        if !visible
+            .same_root(&self.storage)
+            .map_err(|_| "the retained recording is not available")?
+        {
+            return Err("the retained recording is not available".into());
+        }
+        let current = visible
+            .open_read(&self.relative)
             .and_then(|f| f.metadata())
             .map_err(|_| "the retained recording is not available")?;
         if expected.dev() != current.dev() || expected.ino() != current.ino() {
@@ -294,6 +324,9 @@ impl Capture {
     pub fn poll(&mut self) -> bool {
         if !self.ended {
             self.ended = self.helper.poll().map_or(true, |out| out.is_some());
+            if self.ended {
+                self.reservation = None;
+            }
         }
         self.ended
     }
@@ -302,11 +335,9 @@ impl Capture {
         self.remove();
     }
     fn remove(&self) {
-        if let Ok(storage) = Storage::open(&self.root) {
-            let _ = storage.remove_file(&self.relative);
-            if let Some(name) = &self.preview_relative {
-                let _ = storage.remove_file(name);
-            }
+        remove(&self.storage, &self.relative, &self.file);
+        if let (Some(name), Some(file)) = (&self.preview_relative, &self.preview_file) {
+            remove(&self.storage, name, file);
         }
     }
     pub fn stop(mut self, args: Value, home: PathBuf, options: Value) -> Result<Action> {
@@ -324,13 +355,11 @@ impl Capture {
 impl Drop for Capture {
     fn drop(&mut self) {
         let _ = self.helper.cancel();
-        if let Ok(storage) = Storage::open(&self.root) {
-            if !self.keep_input {
-                let _ = storage.remove_file(&self.relative);
-            }
-            if let Some(preview) = &self.preview_relative {
-                let _ = storage.remove_file(preview);
-            }
+        if !self.keep_input {
+            remove(&self.storage, &self.relative, &self.file);
+        }
+        if let (Some(name), Some(file)) = (&self.preview_relative, &self.preview_file) {
+            remove(&self.storage, name, file);
         }
     }
 }
@@ -348,8 +377,10 @@ impl Stop {
             }
             std::thread::sleep(Duration::from_millis(2));
         }
-        if let Some(name) = &self.capture.preview_relative {
-            let _ = Storage::open(&self.capture.root).and_then(|s| s.remove_file(name));
+        if let (Some(name), Some(file)) =
+            (&self.capture.preview_relative, &self.capture.preview_file)
+        {
+            remove(&self.capture.storage, name, file);
         }
         self.capture.preview_file = None;
         self.capture.remove();

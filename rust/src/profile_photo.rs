@@ -19,19 +19,36 @@ pub struct Job {
     pub source: Upload,
     pub runtime: PathBuf,
 }
-#[derive(Debug)]
 struct Owned {
     runtime: PathBuf,
+    storage: Storage,
     path: String,
+    dev: u64,
+    ino: u64,
     submitted: AtomicBool,
+}
+impl std::fmt::Debug for Owned {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ProfileInputOwner")
+    }
 }
 /// Unsubmitted/certainly settled images clean up. Submitted images survive an
 /// unknown native outcome: local timeout is not native cancellation.
 #[derive(Clone, Debug)]
 pub struct Lease(Arc<Owned>);
 impl Lease {
-    pub fn submitted(&self) {
+    pub fn submitted(&self) -> std::io::Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let visible = Storage::open(&self.0.runtime)?;
+        if !visible.same_root(&self.0.storage)? {
+            return Err(std::io::Error::other("profile input root changed"));
+        }
+        let m = visible.open_read(&self.0.path)?.metadata()?;
+        if m.dev() != self.0.dev || m.ino() != self.0.ino || m.nlink() != 1 {
+            return Err(std::io::Error::other("profile input inode changed"));
+        }
         self.0.submitted.store(true, Ordering::Relaxed);
+        Ok(())
     }
     pub fn settled(&self) {
         self.0.submitted.store(false, Ordering::Relaxed);
@@ -42,10 +59,8 @@ impl Lease {
 }
 impl Drop for Owned {
     fn drop(&mut self) {
-        if !self.submitted.load(Ordering::Relaxed)
-            && let Ok(storage) = Storage::open(&self.runtime)
-        {
-            let _ = storage.remove_file(&self.path);
+        if !self.submitted.load(Ordering::Relaxed) {
+            let _ = self.storage.remove_owned(&self.path, self.dev, self.ino);
         }
     }
 }
@@ -123,11 +138,26 @@ impl Job {
                 .collect::<String>()
         );
         let storage = Storage::open(&self.runtime).map_err(|_| "that picture could not be read")?;
+        let _reservation = crate::upload_lease::reserve(
+            &storage,
+            "omagram/rec",
+            out.stdout.len() as u64,
+            cancel,
+            std::time::Instant::now() + Duration::from_secs(2),
+        )
+        .map_err(|_| "generated media input budget exceeded; existing inputs were kept")?;
         storage
             .write(&name, &out.stdout, 0o600)
             .map_err(|_| "that picture could not be read")?;
+        let m = storage
+            .open_read(&name)
+            .and_then(|f| f.metadata())
+            .map_err(|_| "that picture could not be read")?;
         let lease = Lease(Arc::new(Owned {
             runtime: self.runtime,
+            dev: m.dev(),
+            ino: m.ino(),
+            storage,
             path: name,
             submitted: AtomicBool::new(false),
         }));

@@ -293,13 +293,45 @@ pub fn prepare_video_note_cancel(
         std::time::Instant::now() + Duration::from_secs(200),
     )
 }
+/// Generated output is an already exclusive descriptor under the input owner.
+/// The -fs bound is admitted before conversion; pathname replacement cannot
+/// redirect ffmpeg's output to an unrelated user file.
+pub fn prepare_video_note_fd_until(
+    source: &str,
+    output: &std::fs::File,
+    cancel: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+) -> io::Result<f64> {
+    use std::os::fd::AsRawFd;
+    let target = format!("/proc/{}/fd/{}", std::process::id(), output.as_raw_fd());
+    let mut args = video_note_argv(source, &target);
+    args.splice(4..4, ["-y".into()]);
+    let index = args.len() - 1;
+    args.splice(
+        index..index,
+        [
+            "-fs".into(),
+            (512u64 * 1024 * 1024).to_string(),
+            "-f".into(),
+            "mp4".into(),
+        ],
+    );
+    convert_video_until(&args, &target, cancel, deadline)
+}
 pub fn prepare_video_note_until(
     source: &str,
     target: &str,
     cancel: &std::sync::atomic::AtomicBool,
     deadline: std::time::Instant,
 ) -> io::Result<f64> {
-    let args = video_note_argv(source, target);
+    convert_video_until(&video_note_argv(source, target), target, cancel, deadline)
+}
+fn convert_video_until(
+    args: &[String],
+    target: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+    deadline: std::time::Instant,
+) -> io::Result<f64> {
     let budget = deadline
         .saturating_duration_since(std::time::Instant::now())
         .min(Duration::from_secs(180));

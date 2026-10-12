@@ -169,7 +169,8 @@ impl Work {
                 } else {
                     args.get("asPhoto").unwrap_or(&Value::Bool(true)) == &Value::Bool(true)
                 };
-                let mut lease = crate::upload_lease::Lease::new(home.clone());
+                let mut lease = crate::upload_lease::Lease::new(home.clone())
+                    .map_err(|_| "that file is not readable")?;
                 let mut kinds = Vec::new();
                 let mut contents = Vec::new();
                 let started = Instant::now();
@@ -194,11 +195,20 @@ impl Work {
                             deadline,
                         )
                         .map_err(|_| "that file is not readable")?;
-                    lease.add(relative.clone());
+                    lease
+                        .add(relative.clone())
+                        .map_err(|_| "that file is not readable")?;
                     let snapshot = home.join(relative);
                     let snapshot = snapshot.to_str().ok_or("that file is not readable")?;
                     let probed = if matches!(kind, "video" | "audio") {
-                        crate::media::probe_cancel(snapshot, cancel)
+                        use std::os::fd::AsRawFd;
+                        let file = storage
+                            .open_read(lease.path(i))
+                            .map_err(|_| "that file is not readable")?;
+                        crate::media::probe_cancel(
+                            &format!("/proc/{}/fd/{}", std::process::id(), file.as_raw_fd()),
+                            cancel,
+                        )
                     } else {
                         [0; 3]
                     };
@@ -227,13 +237,13 @@ impl Work {
                 let queries=groups.into_iter().enumerate().map(|(i,group)|{
                     // Each group owns only its own inputs: another group's
                     // rejection cannot delete already-dispatched album files.
-                    let mut group_lease = crate::upload_lease::Lease::new(home.clone());
-                    for index in &group { group_lease.add(lease.path(*index).to_owned()); }
+                    let mut group_lease = crate::upload_lease::Lease::new(home.clone()).map_err(|_| "that file is not readable")?;
+                    for index in &group { group_lease.add(lease.path(*index).to_owned()).map_err(|_| "that file is not readable")?; }
                     let mut q=json!({"chat_id":chat,"topic_id":topic,"options":options,"reply_to":if i==0{reply.clone()}else{Value::Null}});
                     if group.len()==1{q["@type"]=json!("sendMessage");q["reply_markup"]=Value::Null;q["input_message_content"]=contents[group[0]].clone();}else{q["@type"]=json!("sendMessageAlbum");q["input_message_contents"]=json!(group.into_iter().map(|n|contents[n].clone()).collect::<Vec<_>>());}
-                    (i.to_string(),q,Answer::Upload(group_lease, true))
-                }).collect();
-                lease.submitted(); // ownership transferred to independent groups
+                    Ok((i.to_string(),q,Answer::Upload(group_lease, true)))
+                }).collect::<Result<Vec<_>>>()?;
+                lease.transferred(); // independent groups retain pre-dispatch ownership
                 Ok(Action::Batch(Batch {
                     queries,
                     aggregate: Aggregate::Uploads { groups: count },

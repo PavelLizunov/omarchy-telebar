@@ -288,14 +288,22 @@ impl Preparation {
             .ok_or("the retained recording is not available")?;
         let copied = home.snapshot_upload(&relative, &mut self.source.file, self.source.size, name, cancel, deadline)
             .map_err(|_| "The recording could not be prepared; it was kept for explicit retry or discard")?;
-        let mut lease = crate::upload_lease::Lease::new(self.home.clone());
-        lease.add(copied.clone());
-        let source = self.home.join(&copied);
-        let source = source
+        let mut lease = crate::upload_lease::Lease::new(self.home.clone())
+            .map_err(|_| "the recording input could not be retained")?;
+        lease
+            .add(copied.clone())
+            .map_err(|_| "the recording input could not be retained")?;
+        let source_path = self.home.join(&copied);
+        let input = home
+            .open_read(&copied)
+            .map_err(|_| "the retained recording is not available")?;
+        use std::os::fd::AsRawFd;
+        let descriptor = format!("/proc/{}/fd/{}", std::process::id(), input.as_raw_fd());
+        let source = source_path
             .to_str()
             .ok_or("the retained recording is not available")?;
         let content = if self.kind == "voice" {
-            let(seconds,waveform)=crate::media::prepare_voice_cancel(source,cancel).map_err(|_|"The recording could not be prepared; it was kept for explicit retry or discard")?;
+            let(seconds,waveform)=crate::media::prepare_voice_cancel(&descriptor,cancel).map_err(|_|"The recording could not be prepared; it was kept for explicit retry or discard")?;
             if seconds < 1 {
                 return Err("The recording could not be prepared; it was kept for explicit retry or discard".into());
             }
@@ -303,7 +311,7 @@ impl Preparation {
         } else {
             // Exclusive input directory holds the converted output and retained
             // source. Neither path is deleted after uncertain native delivery.
-            let source_path = self.home.join(copied);
+            let source_path = self.home.join(&copied);
             let name = format!("converted-{}.mp4", self.token);
             let name = if source_path.file_name().is_some_and(|n| n == name.as_str()) {
                 format!("converted-output-{}.mp4", self.token)
@@ -316,25 +324,41 @@ impl Preparation {
                 .ok()
                 .and_then(|p| p.to_str())
                 .ok_or("invalid recording output")?;
-            lease.add(relative.to_owned());
+            // Reserve the bounded converter output while holding the shared
+            // input-directory lock. Both fds/journal exist before ffmpeg writes.
+            let _reservation = crate::upload_lease::reserve(
+                &home,
+                relative
+                    .rsplit_once('/')
+                    .and_then(|(p, _)| p.rsplit_once('/'))
+                    .map(|(p, _)| p)
+                    .ok_or("invalid recording output")?,
+                512 * 1024 * 1024,
+                cancel,
+                deadline,
+            )
+            .map_err(
+                |_| "the saved recording input budget is exhausted; existing inputs were kept",
+            )?;
+            let output = home
+                .create_file(relative)
+                .map_err(|_| "the recording output could not be created")?;
+            lease
+                .add(relative.to_owned())
+                .map_err(|_| "the recording output could not be retained")?;
             let target = target
                 .to_str()
                 .ok_or("the retained recording is not available")?;
-            let seconds = crate::media::prepare_video_note_until(source, target, cancel, deadline)
+            let seconds = crate::media::prepare_video_note_fd_until(&descriptor, &output, cancel, deadline)
                 .map_err(|_| "The recording could not be prepared; it was kept for explicit retry or discard")?;
             if seconds < 1.0 {
                 return Err("The recording could not be prepared; it was kept for explicit retry or discard".into());
             }
             // Conversion consumed this generated scratch copy. The admitted
             // raw original remains for retry; TDLib receives only the output.
-            home.remove_file(
-                source_path
-                    .strip_prefix(&self.home)
-                    .ok()
-                    .and_then(|p| p.to_str())
-                    .ok_or("invalid recording input")?,
-            )
-            .map_err(|_| "the recording scratch input could not be removed")?;
+            lease
+                .consumed(&copied)
+                .map_err(|_| "the recording scratch input could not be removed")?;
             json!({"@type":"inputMessageVideoNote","video_note":{"@type":"inputVideoNote","video_note":{"@type":"inputFileLocal","path":target},"thumbnail":null,"duration":(seconds as u64).clamp(1,60),"length":480},"self_destruct_type":null})
         };
         if cancel.load(Ordering::Relaxed) || Instant::now() >= deadline {

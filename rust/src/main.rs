@@ -505,8 +505,19 @@ fn serve_mode(
                 telebar_runtime::launcher::language(&launch.environment),
             )?;
             context.configure_application(&mut app)?;
-            // Best-effort compatible startup cleanup only; submitted/sent
-            // inputs and database content are never age-deleted here.
+            // Reclaim only journal-proven unsent generated copies after the
+            // exclusive owner lock, before workers/startup can submit inputs.
+            // Sent/uncertain/legacy files count toward admission, never age GC.
+            for row in telebar_runtime::accounts::catalog_rows(&app.catalog) {
+                if let Some(id) = row["id"].as_str() {
+                    let directory = if id == "default" {
+                        ".local/share/omagram/sent".into()
+                    } else {
+                        format!(".local/share/omagram/accounts/{id}/sent")
+                    };
+                    let _ = telebar_runtime::upload_lease::recover_unsent(&home, &directory);
+                }
+            }
             let _ = telebar_runtime::gc::raw(&context.runtime, &[], std::time::SystemTime::now());
             telebar_runtime::sticker_cache::startup_trim(&home, &STOP);
             app.desktop_context = Some(launch.clone());
