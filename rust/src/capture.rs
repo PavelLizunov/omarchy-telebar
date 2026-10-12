@@ -261,6 +261,7 @@ impl Capture {
                 args: Value::Object(picked),
                 content: None,
                 status: crate::recorded_send::Status::Preparing,
+                input: None,
             }),
             preparation: Box::new(crate::recording_jobs::Preparation {
                 source,

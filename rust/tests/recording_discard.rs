@@ -34,6 +34,7 @@ fn raw_discard_is_narrow_and_retained_sources_require_tokens() {
             args: json!({}),
             content: None,
             status: Status::Preparing,
+            input: None,
         })
         .unwrap();
     assert!(

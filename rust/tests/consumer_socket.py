@@ -14,12 +14,14 @@ import tempfile
 
 assert os.environ.get("TELEBAR_ISOLATED_CONSUMER") == "1"
 binary, library = sys.argv[1:]
+no_library = library == "--no-library"
 with tempfile.TemporaryDirectory(prefix="telebar-consumer-") as name:
     root = pathlib.Path(name)
     catalog = root / ".local/share/omagram/accounts.json"
     catalog.parent.mkdir(parents=True, mode=0o700)
     catalog.write_text(json.dumps({"active": "other", "accounts": [{"id": "other", "name": "First", "phone": "fixture", "meId": 7}, {"id": "default", "name": "Second"}]}))
-    process = subprocess.Popen([binary, "--inert-consumer", name, library], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    argv = [binary, "--inert-no-library", name] if no_library else [binary, "--inert-consumer", name, library]
+    process = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         assert json.loads(process.stdout.readline())["production_profiles"] is False
         with socket.socket(socket.AF_UNIX) as sock:
@@ -44,6 +46,11 @@ with tempfile.TemporaryDirectory(prefix="telebar-consumer-") as name:
             assert "allChats" not in view and "stories" not in view
             required = {"version", "auth", "meId", "chats", "open", "folders", "mainPosition", "settings", "globalStatus", "calls", "connection", "accounts", "activeAccount", "accountRevision", "recordedSend"}
             assert set(view) == required
+            if no_library:
+                assert view["auth"]["state"] == "noLibrary"
+                for rid, cmd, args in [(20, "auth.phone", {"phone":"+12025550123"}), (21, "proxies.list", {}), (22,"account.logout",{})]:
+                    assert request(rid, cmd, args)["error"] == "Telegram is not available"
+                assert request(23,"hello")["result"]["auth"]["state"] == "noLibrary"
             window = request(2, "hello", {"window": True})["result"]
             assert set(window) == required | {"allChats", "stories"}
             assert window["allChats"] == [] and window["stories"] == []
@@ -85,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix="telebar-consumer-") as name:
         assert not (root / "migration.sock").exists()
         assert not list(root.glob(".local/share/omagram/**/database"))
         assert not list(root.glob(".local/share/omagram/**/db.sqlite"))
-        print(json.dumps({"compatible_hello": True, "window_shape": True, "catalog_order": True, "switch": True, "shutdown": True, "parameters_sent": False, "profile_opened": False, "frames": len(captured)}))
+        print(json.dumps({"compatible_hello": True, "window_shape": True, "catalog_order": True, "switch": True, "shutdown": True, "parameters_sent": False, "profile_opened": False, "no_library": no_library, "frames": len(captured)}))
     finally:
         if process.poll() is None:
             process.terminate()

@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -I
 """omagramd -- Telebar's background service: one Telegram session, shared by every Telebar
 surface (the app window, the bar panel, the overlay) over a private local socket.
 

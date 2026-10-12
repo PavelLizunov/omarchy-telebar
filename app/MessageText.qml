@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import "Model.js" as Model
 
 // Native fragment selection and clipboard copying, without an editable message.
@@ -10,7 +11,7 @@ TextEdit {
   persistentSelection: true
   textFormat: TextEdit.RichText
   wrapMode: TextEdit.Wrap
-  property color surfaceColor: Color.menu.background
+  property color surfaceColor: Commons.Color.menu.background
   selectionColor: { var c = Model.mixColors(surfaceColor, color, 0.22); return Qt.rgba(c.r, c.g, c.b, 1) }
   selectedTextColor: { var c = Model.readableColor(color, selectionColor, color, 4.5); return Qt.rgba(c.r, c.g, c.b, 1) }
   property bool contextEnabled: false

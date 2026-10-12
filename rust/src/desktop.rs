@@ -32,14 +32,14 @@ pub fn start(
             4096,
         )?
     } else {
-        let argv = context.managed_argv(
-            &format!("telebar-window-notify-{}", std::process::id()),
-            "--host-window",
-            &[],
-        );
+        // Reuse the native launcher's bounded D-Bus handoff instead of keeping
+        // a second systemd-run contract that fails inside a recovery namespace.
         Managed::start(
-            "/usr/bin/systemd-run",
-            &argv.iter().map(String::as_str).collect::<Vec<_>>(),
+            context
+                .binary
+                .to_str()
+                .ok_or_else(|| io::Error::other("invalid launcher path"))?,
+            &["--launch"],
             &context.environment,
             &[],
             Duration::from_secs(5),

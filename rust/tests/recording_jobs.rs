@@ -134,6 +134,7 @@ fn selected_recording_preparation_and_explicit_retry_are_admitted() {
     assert_eq!(effects.native.len(), 1);
     let query = &effects.native[0].query;
     assert_eq!(query["options"]["disable_notification"], true);
+    engine.native_dispatched(query); // Actual TDLib boundary retains uncertain input.
     let output = query["input_message_content"]["video_note"]["video_note"]["path"]
         .as_str()
         .unwrap();
@@ -242,6 +243,7 @@ fn selected_recording_preparation_and_explicit_retry_are_admitted() {
         args: json!({}),
         content: None,
         status: Status::PrepareFailed,
+        input: None,
     });
     let refused = engine.request_using(
         9,

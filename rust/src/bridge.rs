@@ -127,6 +127,7 @@ pub struct Bridge {
     pub metadata: Value,
     pub busy: std::collections::HashSet<String>,
     pub idle_at: Option<Instant>,
+    pub restart_after: Option<Instant>,
 }
 #[derive(Debug, Clone, Copy)]
 pub enum Operation {
@@ -241,10 +242,22 @@ impl Bridge {
             metadata,
             busy: Default::default(),
             idle_at: None,
+            restart_after: None,
         }
     }
     pub fn status(&self, account: &str) -> Value {
         json!({"running":self.running.is_some(),"enabled":self.metadata.get(account).is_some(),"port":self.running.as_ref().map_or(0,|r|r.port),"metrics":self.running.as_ref().map_or_else(||json!({}),|r|r.metrics.clone()),"pid":self.running.as_ref().map_or(0,|r|r.helper.pid())})
+    }
+    pub fn restore_after_loss(&mut self, now: Instant) -> bool {
+        if self.running.is_none()
+            && self.busy.is_empty()
+            && self.restart_after.is_some_and(|deadline| now >= deadline)
+        {
+            self.restart_after = None;
+            self.metadata.as_object().is_some_and(|m| !m.is_empty())
+        } else {
+            false
+        }
     }
     pub fn save(&self, home: &Storage) -> Result<()> {
         home.write(
@@ -257,6 +270,14 @@ impl Bridge {
     pub fn poll(&mut self) {
         if self.running.as_mut().is_some_and(|r| !r.poll()) {
             self.running = None;
+            if self.metadata.as_object().is_some_and(|m| !m.is_empty()) {
+                // One recovery after a confirmed child loss, not a retry of an
+                // uncertain native mutation or a hidden restart loop.
+                self.restart_after = Some(Instant::now() + Duration::from_secs(30));
+            }
+        }
+        if self.metadata.as_object().is_none_or(|m| m.is_empty()) {
+            self.restart_after = None;
         }
         if self.metadata.as_object().is_none_or(|o| o.is_empty())
             && self.busy.is_empty()

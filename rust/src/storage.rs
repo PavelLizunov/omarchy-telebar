@@ -116,10 +116,35 @@ impl Storage {
         }
         Ok(dir)
     }
+    /// Read-only descriptor for an existing owned directory. Callers inventory
+    /// through this inode, not through a source path that can be replaced.
+    pub fn open_directory(&self, path: &str) -> io::Result<File> {
+        self.directory(&self.parts(path)?, false)
+    }
     pub fn ensure_dir(&self, path: &str) -> io::Result<()> {
         let parts = self.parts(path)?;
         self.directory(&parts, true)?;
         Ok(())
+    }
+    /// Exclusively create one private child under this pinned parent. The
+    /// returned root remains descriptor-owned even if the parent path moves.
+    pub fn create_new_child(&self, name: &str) -> io::Result<Self> {
+        if self.parts(name)?.len() != 1 {
+            return Err(io::Error::other("one output directory component required"));
+        }
+        let component = cstring(name)?;
+        // SAFETY: one validated component and a retained owned parent. EEXIST
+        // is a hard refusal; a symlink or another candidate is never reused.
+        if unsafe { libc::mkdirat(self.root.as_raw_fd(), component.as_ptr(), 0o700) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let directory = open_at(&self.root, name, libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
+        owned(&directory, true)?;
+        if directory.metadata()?.mode() & 0o777 != 0o700 {
+            return Err(io::Error::other("output directory must be private"));
+        }
+        self.root.sync_all()?;
+        Ok(Self { root: directory })
     }
     pub fn create_directory(&self, path: &str, mode: u32) -> io::Result<File> {
         let parts = self.parts(path)?;

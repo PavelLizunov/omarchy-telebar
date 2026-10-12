@@ -116,6 +116,9 @@ impl Driver {
             language,
         ))
     }
+    pub fn without_native(active: String, language: String) -> Self {
+        Self::with_native(None, active, language)
+    }
     pub fn open_optional(library: &Path, active: String, language: String) -> Self {
         Self::with_native(Td::open(library).ok(), active, language)
     }
@@ -173,8 +176,18 @@ impl Driver {
                         .engine
                         .accounts
                         .get(&id)
-                        .is_some_and(|a| a.client > 0 && a.generation == generation)
+                        .is_some_and(|a| a.generation == generation)
                 })
+    }
+    fn native_current(runtime: &Runtime, token: crate::lifecycle::Token) -> bool {
+        Self::global_current(runtime, token)
+            && runtime.engine.job_owner(token).is_some_and(|(id, _)| {
+                runtime
+                    .engine
+                    .accounts
+                    .get(&id)
+                    .is_some_and(|a| a.client > 0)
+            })
     }
     /// Startup reapplication has no IPC peer, but uses the same single owner.
     pub fn apply_initial_globals(
@@ -407,6 +420,11 @@ impl Driver {
         roots: Vec<String>,
     ) -> io::Result<Effects> {
         if self.td.0.is_none() {
+            if !crate::paths::valid_account_id(&id)
+                || self.runtime.engine.accounts.contains_key(&id)
+            {
+                return Err(io::Error::other("invalid account client registration"));
+            }
             self.runtime.engine.accounts.insert(
                 id.clone(),
                 crate::engine::Account {
@@ -1153,8 +1171,11 @@ impl Driver {
             .replies
             .extend(self.runtime.expire(Instant::now()).replies);
         app.bridge.poll();
+        if app.bridge.restore_after_loss(Instant::now()) {
+            self.restore_saved_bridge(app);
+        }
         for done in std::mem::take(&mut self.bridge_done) {
-            let current = Self::global_current(&self.runtime, done.token);
+            let current = Self::native_current(&self.runtime, done.token);
             let result = match done.result {
                 Ok(crate::commands::Action::BridgeReady(running)) if current => {
                     app.bridge.running = Some(running);
@@ -1176,8 +1197,18 @@ impl Driver {
                 .runtime
                 .engine
                 .job_owner(token)
-                .filter(|_| Self::global_current(&self.runtime, token))
+                .filter(|_| Self::native_current(&self.runtime, token))
             else {
+                effects.replies.extend(
+                    self.runtime
+                        .engine
+                        .job_complete(
+                            token,
+                            Err("Telegram is not available".into()),
+                            Instant::now(),
+                        )
+                        .replies,
+                );
                 continue;
             };
             let admitted = if app.bridge.busy.contains(&account)
@@ -1239,7 +1270,7 @@ impl Driver {
             let Some((account, _)) = self
                 .bridge_owners
                 .get(&token)
-                .filter(|_| Self::global_current(&self.runtime, token))
+                .filter(|_| Self::native_current(&self.runtime, token))
             else {
                 continue;
             };
@@ -1278,13 +1309,28 @@ impl Driver {
         let retired: Vec<_> = self
             .bridge_owners
             .keys()
-            .filter(|token| !Self::global_current(&self.runtime, **token))
+            .filter(|token| !Self::native_current(&self.runtime, **token))
             .copied()
             .collect();
         for token in retired {
             if let Some((account, _)) = self.bridge_owners.remove(&token) {
                 app.bridge.busy.remove(&account);
             }
+        }
+        // An unready first account must not starve a ready later profile.
+        self.bridge_restore.retain(|id| {
+            self.runtime.engine.accounts.contains_key(id) && app.bridge.metadata.get(id).is_some()
+        });
+        if self.worker_count() < 2
+            && app.bridge.busy.is_empty()
+            && let Some(index) = self.bridge_restore.iter().position(|id| {
+                self.runtime
+                    .metadata
+                    .get(id)
+                    .is_some_and(|meta| meta.bridge_ready)
+            })
+        {
+            self.bridge_restore.rotate_left(index);
         }
         if let Some(account) = self.bridge_restore.front().cloned() {
             if !self.runtime.engine.accounts.contains_key(&account)

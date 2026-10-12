@@ -30,6 +30,7 @@ pub struct Recording {
     pub args: Value,
     pub content: Option<Value>,
     pub status: Status,
+    pub input: Option<crate::upload_lease::Lease>,
 }
 #[derive(Default, Debug)]
 pub struct Retained {
@@ -151,6 +152,7 @@ mod tests {
             args: json!({}),
             content: Some(json!({"@type":"inputMessageVoiceNote"})),
             status: Status::Preparing,
+            input: None,
         }
     }
     #[test]

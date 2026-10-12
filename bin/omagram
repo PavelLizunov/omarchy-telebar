@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -I
 """Open Telebar's window, or focus it if it is already open.
 
   omagram                  open or focus the window (starting the service if needed)

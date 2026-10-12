@@ -13,7 +13,8 @@ Item {
   // Where the service listens. Without XDG_RUNTIME_DIR there is no telling whose runtime
   // directory it is, so nothing is guessed and no connection is made.
   readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || ""
-  readonly property string socketPath: client.runtimeDir.charAt(0) === "/" ? client.runtimeDir + "/omagram/omagram.sock" : ""
+  // Explicit inert socket injection; production keeps its existing default.
+  property string socketPath: client.runtimeDir.charAt(0) === "/" ? client.runtimeDir + "/omagram/omagram.sock" : ""
   readonly property bool connected: !!client.sock && client.sock.connected
 
   // Omagram's own window: notification clicks that open a chat are handed to it.
@@ -209,7 +210,7 @@ Item {
     var now = Date.now()
     if (!client.autoStart || now - client.lastStartAttempt < 10000 || !client.binDir) return
     client.lastStartAttempt = now
-    Quickshell.execDetached(["/usr/bin/python3", client.binDir + "omagram", "--service"])
+    Quickshell.execDetached([client.binDir + "omagram", "--service"])
   }
 
   // A fresh Socket for every attempt. One whose connection was refused does not try again

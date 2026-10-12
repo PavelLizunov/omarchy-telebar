@@ -142,11 +142,23 @@ fn home() -> io::Result<PathBuf> {
 impl Context {
     pub fn discover() -> io::Result<Self> {
         let binary = std::env::current_exe()?;
+        // The already-running ELF is not a helper admission override. Ensure
+        // its leaf is ours before a namespaced launch delegates to the host.
+        let metadata = fs::symlink_metadata(&binary)?;
+        if !metadata.is_file()
+            || metadata.uid() != unsafe { libc::getuid() }
+            || metadata.mode() & 0o022 != 0
+        {
+            return Err(io::Error::other("installed native image is not owned"));
+        }
         let plugin = binary
             .parent()
             .and_then(Path::parent)
             .ok_or_else(|| io::Error::other("installed runtime path unavailable"))?
             .to_owned();
+        if fs::metadata("/usr")?.uid() == 0 {
+            crate::executable::checked(&binary)?;
+        }
         let home = home()?;
         let uid = unsafe { libc::getuid() };
         let runtime = PathBuf::from(
@@ -202,57 +214,22 @@ impl Context {
             ) == 0
         }
     }
-    pub fn managed_argv(&self, unit: &str, mode: &str, args: &[String]) -> Vec<String> {
-        let mut out: Vec<String> = [
-            "--user",
-            "--quiet",
-            "--collect",
-            "--service-type=exec",
-            "--property=TimeoutStopSec=8s",
-            "--property=KillMode=control-group",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-        out.push(format!("--unit={unit}"));
-        out.extend(
-            [
-                "/usr/bin/env",
-                "-u",
-                "LD_PRELOAD",
-                "-u",
-                "LD_LIBRARY_PATH",
-                "-u",
-                "PYTHONPATH",
-                "-u",
-                "PYTHONHOME",
-                "PATH=/usr/bin",
-            ]
-            .into_iter()
-            .map(str::to_owned),
-        );
-        out.push(self.binary.to_string_lossy().into_owned());
-        out.push(mode.into());
-        out.extend_from_slice(args);
-        out
-    }
     pub fn managed_start(&self, unit: &str, mode: &str, args: &[String]) -> io::Result<bool> {
-        let argv = self.managed_argv(unit, mode, args);
-        Ok(process::run(
-            "/usr/bin/systemd-run",
-            &argv.iter().map(String::as_str).collect::<Vec<_>>(),
-            &self.environment,
-            &[],
-            Duration::from_secs(5),
-            4096,
-        )?
-        .ok())
+        let address = self
+            .environment
+            .get("DBUS_SESSION_BUS_ADDRESS")
+            .ok_or_else(|| io::Error::other("user manager bus unavailable"))?;
+        crate::host_service::start(address, unit, &self.binary, mode, args, None)
     }
     pub fn start_service(&self) -> io::Result<bool> {
         if self.service_running() {
             return Ok(true);
         }
-        let started = self.managed_start("telebar-backend", "--daemon", &[])?;
+        // A timed-out manager call may still have started the owner. Socket
+        // readiness is authoritative; do not resubmit or restart an uncertain job.
+        let started = self
+            .managed_start("telebar-backend", "--daemon", &[])
+            .unwrap_or(false);
         let deadline = Instant::now() + Duration::from_secs(if started { 10 } else { 2 });
         while Instant::now() < deadline {
             if self.service_running() {
@@ -435,6 +412,17 @@ impl Context {
             };
         }
         if target == Target::DesktopEntry {
+            if !host && fs::metadata("/usr")?.uid() != 0 {
+                return if self.managed_start(
+                    &format!("telebar-desktop-entry-{}", std::process::id()),
+                    "--host-window",
+                    args,
+                )? {
+                    Ok(())
+                } else {
+                    Err(io::Error::other("host desktop-entry owner unavailable"))
+                };
+            }
             eprintln!("omagram: launcher entry {}", self.install_desktop_entry()?);
             return Ok(());
         }

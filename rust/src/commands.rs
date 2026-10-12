@@ -138,6 +138,7 @@ pub enum Action {
         token: String,
         content: Value,
         options: Value,
+        input: Option<crate::upload_lease::Lease>,
     },
     CredentialsSaved,
     StartupPrepared(crate::startup::Prepared),

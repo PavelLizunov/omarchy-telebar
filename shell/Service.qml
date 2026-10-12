@@ -16,7 +16,6 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property string python: "/usr/bin/python3"
   readonly property string binDir: decodeURIComponent(String(Qt.resolvedUrl("../bin/")).replace("file://", ""))
 
   property var auth: ({ state: "connecting" })
@@ -80,17 +79,11 @@ Item {
 
   // With --with-parent it ends with the shell. If a copy started by the window already holds
   // the lock this one exits at once, and trying again later takes over when that copy ends.
-  // A child process starts with whatever the shell was started with, and the shell is
-  // long-lived, so LD_PRELOAD, PYTHONPATH and PYTHONHOME would all reach an interpreter
-  // this plugin then trusts. Both helpers are handed an explicit environment instead, and
-  // python runs isolated on top of it (-I, which is -E, -P and -s together — both scripts
-  // put their own directory on sys.path themselves, so nothing depends on -P's default).
-  //
-  // What is passed is what they actually use: the runtime directory holds the socket, the
-  // display and bus variables are what xdg-open needs to open a link somebody sent you,
-  // and PYTHONIOENCODING is not optional when the messages are in any alphabet at all.
+  // Helpers receive an explicit session allowlist, never the long-lived shell's
+  // loader or interpreter settings. The same executable entry points are retained
+  // by the native package; process ownership stays with the daemon/user manager.
   function envWith(names, extra) {
-    const env = { "PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8" }
+    const env = { "PATH": "/usr/bin:/bin" }
     for (const name of names) {
       const value = Quickshell.env(name)
       if (value) env[name] = value
@@ -109,7 +102,7 @@ Item {
     id: daemon
     clearEnvironment: true
     environment: service.daemonEnv
-    command: [service.python, "-I", service.binDir + "omagramd", "--with-parent"]
+    command: [service.binDir + "omagramd", "--with-parent"]
     running: !service.stopped
     onExited: if (!service.stopped && !service.quitting) restart.restart()
   }
@@ -125,7 +118,7 @@ Item {
   Process {
     clearEnvironment: true
     environment: service.daemonEnv
-    command: [service.python, "-I", service.binDir + "omagram", "--desktop-entry"]
+    command: [service.binDir + "omagram", "--desktop-entry"]
     running: true
   }
 
@@ -312,12 +305,12 @@ Item {
   function openWindow() {
     service.quitting = false
     service.stopped = false
-    Quickshell.execDetached([service.python, service.binDir + "omagram"])
+    Quickshell.execDetached([service.binDir + "omagram"])
   }
 
   function openChat(chatId) {
     var id = Number(chatId)
     if (!Number.isSafeInteger(id) || id === 0) return service.openWindow()
-    Quickshell.execDetached([service.python, service.binDir + "omagram", "--chat", String(id)])
+    Quickshell.execDetached([service.binDir + "omagram", "--chat", String(id)])
   }
 }

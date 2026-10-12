@@ -345,8 +345,9 @@ membership. Working notification server, sound devices and profiles untouched.
 
 The session owner, native launcher, global shortcut worker, bundled proxy/bridge,
 menu and TDLib-build entry points now exist in source. `CUTOVER_READY` remains
-false, so daemon/window entry points refuse working-profile access. No Python
-runtime requirement is removed and no Rust application is deployed.
+false, so daemon/window entry points refuse working-profile access. The isolated
+native package now contains no Python runtime/helper/fallback. The working
+installed application is unchanged Python; no Rust cutover has occurred.
 
 Global shortcut work is single-flight across accounts and shares the aggregate
 two-worker limit. Later settings mutations wait before persistence; current
@@ -371,11 +372,12 @@ separate child process. Original Telegram hosts/DC fallback and Flowseal MIT
 attribution remain. Finite config/handshake/write deadlines and owner EOF/signal
 shutdown are tested. Native bridge enable/disable continuations preserve previous
 proxy identity, persist only current metadata and release stale admission.
-One saved-account restoration attempt is queued after bridge-ready parameters;
-no automatic retries of uncertain mutations. This differs from the Python
-30-second retry loop and needs explicit recovery acceptance. Real Telegram TLS/
-relay connectivity, account proxy restoration and full-duplex pressure/ping
-behavior remain unverified. A finite 295-input helper corpus has zero differences
+Saved-account restoration is queued after bridge-ready parameters. A confirmed
+owned proxy-child loss queues one recovery after 30 seconds; an unready first
+account cannot starve later ready profiles. Native mutation uncertainty is never
+automatically retried. Synthetic owner/deadline checks pass; real recovery and
+Telegram TLS/relay connectivity, account proxy restoration and full-duplex
+pressure/ping behavior remain unverified. A finite 295-input helper corpus has zero differences
 for AES, obfuscation, packet splitting and managed menu text. It is not network
 acceptance. The real proxy process survives 32 inert loopback connections and
 exits on its private owner pipe closing in a host-network-free namespace.
@@ -384,8 +386,12 @@ Generated upload inputs now carry leases: failure/cancellation before native
 dispatch removes exact snapshots; submitted/408/5xx inputs survive unknown use.
 Album groups own separate leases so one rejection cannot remove other groups'
 submitted inputs. Recording preparation errors clean generated copies while
-preserving the retained original. Cumulative/crash-left resource policy and
-post-send file update cleanup remain unfinished.
+preserving the retained original. Generated recording leases now move through
+the actual worker result into the retained owner and are marked submitted only
+at Driver dispatch. Stale/drop/capacity failures clean generated snapshots;
+unknown dispatched inputs survive owner retirement. Synthetic capture and
+real Engine completion/retirement tests cover this boundary. Cumulative/crash-left
+resource policy and post-send file update cleanup remain unfinished.
 
 Fixed system helpers now require root-owned non-writable /usr executables and
 safe ancestors; application helpers require owned non-writable files. The
@@ -400,15 +406,74 @@ viewed diagnostic PNG does not prove Main layout, hardware or compositor use.
 Remaining work: exact completed-command/helper acceptance, safe native package/
 launcher/QML cutover, production account/catalog/notification/bridge behavior,
 resource retention/GC/disk policy, startup and absent-library degradation,
-original cache memoization/animation semantics, device/media/clipboard/opener
-acceptance, trust/advisory review and actual loaded application identity.
+complete cache/animation acceptance, device/media/clipboard/opener
+acceptance, critical-path review and actual loaded application identity.
 Missing/unloadable TDLib now retains local hello/settings and reports noLibrary
-instead of ending the IPC owner; a disposable no-library consumer test passes.
+instead of ending the IPC owner. Native queries for client zero return the normal
+Telegram-is-not-available error, not peer loss. Global/local worker completion
+still uses account generation without requiring a native client. Actual isolated
+socket and product QML-client checks pass, including asynchronous settings,
+response-before-event, rejected queries, account switch and clean shutdown.
 Native production identity/language and receive/request counters are explicit.
 Finite legacy raw note/paste startup cleanup protects named retained inputs and
 never traverses symlinks or age-deletes sent inputs/databases. Submitted-input
 cumulative/crash-left cleanup remains a separate unfinished policy. The
 sent-video P1 remains independently unresolved.
+
+Native candidate assembly copies only the admitted QML/JS/assets/licenses and
+one ELF plus five fixed Bash entry shims. It refuses unsafe or existing output
+and records exact input hashes; it never enables or installs a plugin. A
+separate-context same-family reviewer found file-type admission and pathname
+output-creation gaps. Per-root file allowlists, JS consumer validation and pinned
+exclusive output creation now close those owning mechanisms; planted Python/JS
+and deterministic parent-replacement regressions pass. This is direct corrected
+verification, not cross-family independence or review of all application owners.
+The actual packaged proxy shim/owner pipe and BASH_ENV refusal pass in a home/bus/
+network/device-free namespace. Direct QML/menu executable calls remove the
+interpreter dependency without changing the compatible entry names.
+
+Host-managed starts now use native zbus on the existing local session bus rather
+than execute systemd-run inside the recovery namespace. Exact StartTransientUnit
+properties keep Type=exec, fail-on-existing, no automatic restart, loader/interpreter
+sanitization and control-group cleanup. The exact JobRemoved result establishes
+exec/start acceptance. A finite no-native owner was launched from a mapped user
+namespace and inspected from the host: native image and host namespace matched,
+duplicate start was refused without changing PID, shutdown removed its socket.
+The working Python backend stayed PID 188718. Native trust checks remain strict.
+
+The bounded failed-sticker FIFO memo and every-32-success cache trimming now
+match the original policy, with startup trimming on the final owner. Legacy
+making-WebP cleanup is separated from completed-note LRU accounting; fresh
+partials and symlinks are preserved by the executable regression. Animated
+note cache paths/frames still pass synthetic ffmpeg checks. Resource/concurrency
+and crash-left cumulative cleanup acceptance remains incomplete.
+
+Mechanical corpus inventory: 123 commands in the command projection corpus plus
+nine local preference commands: 132 of 170 registry commands. The remaining 38
+are lifecycle/helper routes and need separate behavioral evidence, not guessed
+coverage from matching names. An explicit 170-route empty-argument reachability
+check now rejects missing handlers and peer loss with no native/device dispatch;
+validation reachability is not complete command behavior. This is not full
+migration acceptance.
+
+The complete actual Main now accepts explicit socket/autoStart/unshown-surface
+context with unchanged production defaults. Its exact native content subtree was
+rendered against an inert Rust owner for noLibrary and needCredentials at radius
+0 and 8. Images were inspected; native palette/density and existing status/setup
+copy were retained. A fixed synthetic four-symbol C ABI fixture additionally
+feeds one chat and three history messages through the real Rust socket/FFI,
+projection, actual Main/ChatList/ChatView at radius 0 and 8; both PNGs were
+inspected. This fixture is explicitly not official TDLib and refuses parameters
+and native mutations; it contains no credentials/files/device/network operations.
+The only recorded warning was the deliberately unavailable Hyprland connection;
+report-policy acceptance does not establish compositor placement/focus. Real
+ready accounts/media and physical interactions remain unverified.
+
+Dependency advisory check: cargo-audit 0.22.2 from the signature-verified Arch
+package inspected the locked graph against RustSec database commit
+3d2bd193db927dd715d34f92fe7b9242a18299dc: zero listed vulnerabilities or warnings.
+Yanked-crate checks were explicitly disabled; this is advisory evidence, not a
+proof of dependency safety or a complete license audit. No OS package was installed.
 
 ## Acceptance and remaining scope
 

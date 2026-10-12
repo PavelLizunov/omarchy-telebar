@@ -61,13 +61,13 @@ fn native_launcher_keeps_identity_entries_and_existing_owner() {
         language(&BTreeMap::from([("LANG".into(), "C.UTF-8".into())])),
         "en"
     );
-    let argv = context.managed_argv("telebar-backend", "--daemon", &[]);
-    assert_eq!(
-        &argv[argv.len() - 2..],
-        [context.binary.to_str().unwrap(), "--daemon"]
+    let properties =
+        telebar_runtime::host_service::properties(&context.binary, "--daemon", &[], None).unwrap();
+    assert!(
+        properties
+            .iter()
+            .any(|(k, v)| k == "KillMode" && <&str>::try_from(v).unwrap() == "control-group")
     );
-    assert!(argv.contains(&"--property=KillMode=control-group".into()));
-    assert!(!argv.iter().any(|v| v == "/usr/bin/python3"));
     assert_eq!(context.install_desktop_entry().unwrap(), "written");
     let path = root.join(".local/share/applications/omagram.desktop");
     let entry = fs::read_to_string(&path).unwrap();

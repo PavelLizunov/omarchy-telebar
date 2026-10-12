@@ -22,6 +22,7 @@ fn engine() -> Engine {
             args: json!({}),
             content: None,
             status: Status::Preparing,
+            input: None,
         })
         .unwrap();
     e.accounts.insert(
@@ -46,6 +47,7 @@ fn action() -> Action {
         token: "a".repeat(32),
         content: json!({"@type":"inputMessageVoiceNote"}),
         options: Value::Null,
+        input: None,
     }
 }
 #[test]

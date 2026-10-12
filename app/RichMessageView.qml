@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import "Model.js" as Model
 
 // Shared reading-order consumer. QuickView supplies still images and inert playback routing;
@@ -11,10 +12,10 @@ Column {
   property var app
   property bool compact: false
   property bool animationsEnabled: false
-  property color surfaceColor: Color.menu.background
-  property color foreground: Color.foreground
-  property color muted: Color.foreground
-  property color accent: Color.accent
+  property color surfaceColor: Commons.Color.menu.background
+  property color foreground: Commons.Color.foreground
+  property color muted: Commons.Color.foreground
+  property color accent: Commons.Color.accent
   property string fontFamily: Style.font.family
   property string linkHex: Model.hexOf(accent)
   property string codeBackground: "transparent"

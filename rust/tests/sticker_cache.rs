@@ -123,6 +123,16 @@ fn cache_jobs_bound_inflation_and_only_clear_owned_stickers() {
         .unwrap(),
     );
     assert_eq!(bad, json!({"path":""}));
+    let again = result(
+        Job::Lottie {
+            home: root.clone(),
+            path: root.join("files/bad.tgs").to_str().unwrap().into(),
+            roots: roots.clone(),
+        }
+        .run(&cancel)
+        .unwrap(),
+    );
+    assert_eq!(again, bad);
     store
         .write(
             "files/array.tgs",
@@ -222,5 +232,34 @@ fn cache_jobs_bound_inflation_and_only_clear_owned_stickers() {
     else {
         panic!("worker")
     };
+    // Legacy unfinished WebP is age-cleaned separately from the LRU of
+    // completed notes. Fresh partials and symlinks never count as cache files.
+    use std::time::SystemTime;
+    store
+        .write(".cache/omagram/notes/making-old.webp", b"old", 0o600)
+        .unwrap();
+    store
+        .write(
+            ".cache/omagram/notes/making-current.webp",
+            b"current",
+            0o600,
+        )
+        .unwrap();
+    fs::File::open(root.join(".cache/omagram/notes/making-old.webp"))
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(3601))
+        .unwrap();
+    symlink(
+        root.join("foreign"),
+        root.join(".cache/omagram/notes/foreign.webp"),
+    )
+    .unwrap();
+    sticker_cache::startup_trim(&store, &cancel);
+    assert!(!root.join(".cache/omagram/notes/making-old.webp").exists());
+    assert!(
+        root.join(".cache/omagram/notes/making-current.webp")
+            .exists()
+    );
+    assert!(root.join(".cache/omagram/notes/foreign.webp").is_symlink());
     fs::remove_dir_all(root).unwrap();
 }

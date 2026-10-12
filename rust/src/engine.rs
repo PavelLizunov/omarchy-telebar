@@ -79,6 +79,17 @@ impl Engine {
             match &callback.answer {
                 Answer::ProfilePhoto(lease) => lease.submitted(),
                 Answer::Upload(lease, _) => lease.submitted(),
+                Answer::Recorded(token) => {
+                    if let Some(input) = self
+                        .accounts
+                        .get(&callback.account)
+                        .and_then(|a| a.state.retained.record.as_ref())
+                        .filter(|r| r.token == *token)
+                        .and_then(|r| r.input.as_ref())
+                    {
+                        input.submitted();
+                    }
+                }
                 _ => {}
             }
         }
@@ -202,6 +213,17 @@ impl Engine {
             }
             other => other,
         };
+        // Missing or closed native clients keep local IPC usable. Never publish
+        // a query for client zero and turn a normal error into peer loss.
+        let result = if self.accounts[&account].client == 0
+            && matches!(
+                &result,
+                Ok(Action::Native { .. } | Action::Batch(_) | Action::Recorded { .. })
+            ) {
+            Err("Telegram is not available".into())
+        } else {
+            result
+        };
         let result = match result {
             Ok(Action::CredentialsSaved) => {
                 effects
@@ -220,7 +242,15 @@ impl Engine {
                 token: record,
                 content,
                 options,
-            }) => self.recorded_action(token, &account, record, content, options, &mut effects),
+                input,
+            }) => self.recorded_action(
+                token,
+                &account,
+                record,
+                (content, input),
+                options,
+                &mut effects,
+            ),
             other => other,
         };
         let session = self
@@ -762,10 +792,11 @@ impl Engine {
         token: Token,
         account: &str,
         record: String,
-        content: Value,
+        prepared: (Value, Option<crate::upload_lease::Lease>),
         options: Value,
         effects: &mut Effects,
     ) -> crate::commands::Result<Action> {
+        let (content, input) = prepared;
         // Native capacity is checked before changing a retained input to
         // Sending. A local refusal is not an uncertain Telegram delivery.
         if self.next_extra.checked_add(1).is_none() || !self.requests.can_track(token, 1) {
@@ -801,6 +832,9 @@ impl Engine {
             retained.path = path.into();
         }
         retained.content = Some(content.clone());
+        if let Some(input) = input {
+            retained.input = Some(input);
+        }
         state.retained.sending(&record)?;
         self.recordings
             .insert(token, (account.into(), record.clone()));
@@ -836,11 +870,20 @@ impl Engine {
         let Some(session) = self
             .accounts
             .get(&account)
-            .filter(|a| a.generation == generation && a.client > 0)
+            .filter(|a| a.generation == generation)
         else {
             return effects;
         };
         let client = session.client;
+        let result = if client == 0
+            && matches!(
+                &result,
+                Ok(Action::Native { .. } | Action::Batch(_) | Action::Recorded { .. })
+            ) {
+            Err("Telegram is not available".into())
+        } else {
+            result
+        };
         let result = match result {
             Ok(Action::CredentialsSaved) => {
                 effects
@@ -859,7 +902,15 @@ impl Engine {
                 token: record,
                 content,
                 options,
-            }) => self.recorded_action(token, &account, record, content, options, &mut effects),
+                input,
+            }) => self.recorded_action(
+                token,
+                &account,
+                record,
+                (content, input),
+                options,
+                &mut effects,
+            ),
             other => other,
         };
         match result {

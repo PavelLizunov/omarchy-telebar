@@ -62,3 +62,53 @@ Tungstenite. Only Telegram WebSocket hosts and the original DC2/DC4 IP fallback
 are allowed. Proxy configuration is passed through a private stdin ownership
 pipe, not argv. Socket bounds, finite handshake/write budgets and owned teardown
 are checked independently of live Telegram connectivity.
+
+## Native package and host handoff
+
+`--package <absolute-source> <new-absolute-output>` assembles an inert candidate
+outside the checkout. It refuses existing output, unsafe source links, unowned
+or writable inputs, missing entry points and Python QML/JavaScript/menu invocations.
+Per-root file types are allowlisted; Python files/bytecode are rejected before
+output creation. Output creation and writes use the same pinned parent/child
+storage descriptors, so a renamed/replaced pathname cannot redirect the package. It
+copies only QML/JavaScript, assets, licenses, manifest/menu, one ELF runtime and
+five privileged-mode Bash shims. No Python application file or fallback is
+included. Source hashes and the compile-time cutover state are recorded in
+`runtime-candidate.json`. This command never installs/enables the plugin.
+
+```sh
+cargo build --manifest-path rust/Cargo.toml --release --locked --offline
+"$CARGO_TARGET_DIR/release/telebar-runtime" --package "$PWD" /absolute/new/native-candidate
+bash rust/tests/run-package-process.sh /absolute/new/native-candidate
+omarchy plugin validate /absolute/new/native-candidate
+bash rust/tests/run-consumer-socket.sh "$CARGO_TARGET_DIR/debug/telebar-runtime" --no-library
+```
+
+QML and the menu invoke the compatible executable entry points directly. The
+native launcher uses the existing local session bus and `StartTransientUnit`,
+with `Type=exec`, fail-on-existing ownership, no restart policy, eight-second
+stop grace, control-group cleanup and loader/interpreter environment removal.
+It waits for the exact start job result instead of equating job submission with
+execution. Root-tool validation is not weakened for recovery user namespaces:
+the user manager owns the host process. A finite no-native fixture verifies
+this real handoff, duplicate refusal and cleanup without account/keyring work.
+The live check is explicit and ignored in the default suite.
+
+`--inert-no-library <private-directory>` exposes local hello/settings and native
+query rejection on the disposable socket without loading TDLib or enabling
+startup. `tests/NoLibraryConsumer.qml` verifies the actual product client stays
+connected. `tests/MainConsumer.qml` also loads the complete actual Main with
+`autoStart: false`, an explicit socket and `surfaceVisible: false`, and reparents
+its real content subtree for offscreen inspection. Tested noLibrary and
+needCredentials do not establish ready chats, compositor or live authorization
+acceptance. Use the reviewed native Commons tokens with inert local Process/
+FileView imports, never replace the actual native Socket with a mock.
+
+`tests/inert_td.c` is a fixed synthetic four-symbol JSON-ABI consumer fixture,
+not official TDLib. Build it in a new private `lib/` directory with
+`gcc -std=gnu11 -Wall -Wextra -Werror -shared -fPIC rust/tests/inert_td.c -ljson-c -o /absolute/fixture/lib/libtdjson.so`
+and pass that explicit library to `--inert-consumer`. It returns one chat/three
+synthetic messages, refuses parameters/mutations and has no network/files/device
+access. `MainConsumer.qml` with `expectedAuth: ready` checks actual list/history
+rendering. This does not authorize profile access or replace official native
+acceptance; json-c and a C compiler are development-only fixture dependencies.

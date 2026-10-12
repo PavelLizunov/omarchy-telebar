@@ -28,7 +28,8 @@ https://github.com/Flowseal/tg-ws-proxy, revision
 `caa949bee0873d2b95dfb4fbeb1b7868b0ee3843`. MIT, copyright (c) 2026 Flowseal.
 The license is preserved in `bin/vendor/flowseal/LICENSE`; local changes are described
 in that directory's README. The Rust candidate's `rust/src/proxy_crypto.rs` adapts
-the same handshake/packet algorithms and retains this attribution. No Flowseal
+the same handshake/packet algorithms and retains this attribution. Native
+packages also preserve the MIT license as `LICENSES/Flowseal-MIT.txt`. No Flowseal
 tray UI, updater or server list is bundled.
 
 Rust candidate dependencies are pinned in `rust/Cargo.lock`. OpenSSL bindings use

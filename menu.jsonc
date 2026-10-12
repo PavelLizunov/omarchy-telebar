@@ -7,7 +7,7 @@
     "icon": "󰏌",
     "label": "Open Telebar",
     "aliases": ["open messages", "open chat"],
-    "action": "/usr/bin/python3 @PLUGIN_BIN@/omagram"
+    "action": "@PLUGIN_BIN@/omagram"
   },
   "trigger.omagram.reply": {
     "icon": "󰑚",

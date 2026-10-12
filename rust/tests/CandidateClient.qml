@@ -219,7 +219,7 @@ Item {
     var now = Date.now()
     if (!client.autoStart || now - client.lastStartAttempt < 10000 || !client.binDir) return
     client.lastStartAttempt = now
-    Quickshell.execDetached(["/usr/bin/python3", client.binDir + "omagram", "--service"])
+    Quickshell.execDetached([client.binDir + "omagram", "--service"])
   }
 
   // A fresh Socket for every attempt. One whose connection was refused does not try again

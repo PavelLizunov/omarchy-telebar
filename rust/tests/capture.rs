@@ -55,7 +55,8 @@ fn synthetic_owned_capture_stops_and_prepares_retained_inputs_without_sends() {
         };
         assert_eq!(record.kind, kind);
         assert_eq!(record.chat, 42);
-        let Action::Recorded { content, .. } = preparation.run(&AtomicBool::new(false)).unwrap()
+        let Action::Recorded { content, input, .. } =
+            preparation.run(&AtomicBool::new(false)).unwrap()
         else {
             panic!("prepared content")
         };
@@ -71,6 +72,11 @@ fn synthetic_owned_capture_stops_and_prepares_retained_inputs_without_sends() {
         if let Some(preview) = preview {
             assert!(!preview.exists());
         }
+        // A worker result never dispatched to TDLib owns cleanup, not a
+        // submitted flag set prematurely inside the preparation worker.
+        let owned = path.to_owned();
+        drop(input);
+        assert!(!std::path::Path::new(&owned).exists());
     }
     let capture = Capture::start_with(
         &context,

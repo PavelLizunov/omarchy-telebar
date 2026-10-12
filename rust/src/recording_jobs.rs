@@ -127,6 +127,9 @@ pub fn plan(
                 }
                 files.push((storage, relative.to_owned()));
             }
+            if let Some(input) = &record.input {
+                input.rejected(400);
+            }
             for (storage, relative) in files {
                 storage
                     .remove_file(&relative)
@@ -172,6 +175,7 @@ pub fn plan(
                     .clone()
                     .ok_or("recording content is not prepared")?,
                 options,
+                input: None,
             })
         } else {
             Ok(Action::PrepareRecorded {
@@ -232,6 +236,7 @@ pub fn plan(
             args: Value::Object(picked),
             content: None,
             status: Status::Preparing,
+            input: None,
         }),
         preparation: Box::new(Preparation {
             source,
@@ -320,16 +325,28 @@ impl Preparation {
             if seconds < 1.0 {
                 return Err("The recording could not be prepared; it was kept for explicit retry or discard".into());
             }
+            // Conversion consumed this generated scratch copy. The admitted
+            // raw original remains for retry; TDLib receives only the output.
+            home.remove_file(
+                source_path
+                    .strip_prefix(&self.home)
+                    .ok()
+                    .and_then(|p| p.to_str())
+                    .ok_or("invalid recording input")?,
+            )
+            .map_err(|_| "the recording scratch input could not be removed")?;
             json!({"@type":"inputMessageVideoNote","video_note":{"@type":"inputVideoNote","video_note":{"@type":"inputFileLocal","path":target},"thumbnail":null,"duration":(seconds as u64).clamp(1,60),"length":480},"self_destruct_type":null})
         };
         if cancel.load(Ordering::Relaxed) || Instant::now() >= deadline {
             return Err("the connection was closed".into());
         }
-        lease.submitted(); // retained owner now holds generated input paths
+        // Move cleanup ownership through the actual completion. A dropped or
+        // stale worker result must not leak inputs before native admission.
         Ok(Action::Recorded {
             token: self.token,
             content,
             options: self.options,
+            input: Some(lease),
         })
     }
 }

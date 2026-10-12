@@ -48,4 +48,18 @@ fn proxy_enable_disable_preserves_prior_proxy_and_unrelated_choice() {
             .complete(&json!({"id":0}))
             .is_err()
     );
+    let root = std::env::temp_dir().join(format!("telebar-bridge-recovery-{}", std::process::id()));
+    std::fs::create_dir(&root).unwrap();
+    let home = telebar_runtime::storage::Storage::open(&root).unwrap();
+    let mut bridge = telebar_runtime::bridge::Bridge::load(&home);
+    bridge.metadata = json!({"default":{"proxy_id":7,"previous_id":4}});
+    let now = std::time::Instant::now();
+    bridge.restart_after = Some(now + std::time::Duration::from_secs(30));
+    assert!(!bridge.restore_after_loss(now));
+    bridge.busy.insert("default".into());
+    assert!(!bridge.restore_after_loss(now + std::time::Duration::from_secs(31)));
+    bridge.busy.clear();
+    assert!(bridge.restore_after_loss(now + std::time::Duration::from_secs(31)));
+    assert!(!bridge.restore_after_loss(now + std::time::Duration::from_secs(60))); // Single attempt, never retries uncertain mutations.
+    std::fs::remove_dir_all(root).unwrap();
 }

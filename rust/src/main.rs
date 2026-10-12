@@ -22,8 +22,19 @@ extern "C" fn stop(_: libc::c_int) {
 }
 
 fn main() {
-    if run().is_err() {
-        eprintln!("telebar-runtime: operation failed; see local diagnostics");
+    if let Err(error) = run() {
+        // Startup gates/argument refusals must be actionable without leaking
+        // native, keyring or caller-controlled error strings to stderr.
+        let reason = match error.to_string().as_str() {
+            "migration acceptance incomplete; launcher cutover disabled" => {
+                "migration acceptance incomplete; launcher cutover disabled"
+            }
+            "migration acceptance incomplete; working profiles are not opened" => {
+                "migration acceptance incomplete; working profiles are not opened"
+            }
+            _ => "operation failed; see local diagnostics",
+        };
+        eprintln!("telebar-runtime: {reason}");
         std::process::exit(1);
     }
 }
@@ -53,6 +64,11 @@ fn run() -> io::Result<()> {
             }
             Ok(())
         }
+        [mode, source, destination] if mode == "--package" => telebar_runtime::package::assemble(
+            Path::new(source),
+            Path::new(destination),
+            &std::env::current_exe()?,
+        ),
         [mode] if mode == "--proxy" => {
             unsafe {
                 libc::signal(libc::SIGTERM, stop as *const () as libc::sighandler_t);
@@ -188,6 +204,10 @@ fn run() -> io::Result<()> {
         }
         [mode, directory, library] if mode == "--inert-consumer" => {
             serve_consumer(Path::new(directory), Path::new(library))
+        }
+        [mode, directory] if mode == "--inert-no-library" => {
+            // Explicit disposable home, no startup/keyring/native parameters.
+            serve_mode(Path::new(directory), false, None, true, true, None, true)
         }
         _ => {
             eprintln!(
@@ -333,10 +353,11 @@ fn serve(
         with_application,
         false,
         None,
+        false,
     )
 }
 fn serve_consumer(directory: &Path, library: &Path) -> io::Result<()> {
-    serve_mode(directory, false, Some(library), true, true, None)
+    serve_mode(directory, false, Some(library), true, true, None, false)
 }
 fn serve_daemon(with_parent: bool) -> io::Result<()> {
     // The full session owner is implemented below, but a migration checkpoint
@@ -349,7 +370,7 @@ fn serve_daemon(with_parent: bool) -> io::Result<()> {
     let context = telebar_runtime::launcher::Context::discover()?;
     // Recovery user namespaces may hide root-owned helpers. Never weaken trust
     // or contact credentials there; the user manager launches the host owner.
-    if fs::metadata("/usr/bin/systemd-run")?.uid() != 0 {
+    if fs::metadata("/usr")?.uid() != 0 {
         return if context.start_service()? {
             Ok(())
         } else {
@@ -370,7 +391,15 @@ fn serve_daemon(with_parent: bool) -> io::Result<()> {
     runtime.create_directory("omagram", 0o700)?;
     let directory = context.runtime.join("omagram");
     let library = context.home.join(".local/share/omagram/lib/libtdjson.so");
-    serve_mode(&directory, false, Some(&library), true, true, Some(context))
+    serve_mode(
+        &directory,
+        false,
+        Some(&library),
+        true,
+        true,
+        Some(context),
+        false,
+    )
 }
 fn serve_mode(
     directory: &Path,
@@ -379,6 +408,7 @@ fn serve_mode(
     with_application: bool,
     consumer: bool,
     production: Option<telebar_runtime::launcher::Context>,
+    no_library: bool,
 ) -> io::Result<()> {
     // Inert modes use only an explicit private fixture root. Production context
     // reaches this shared consumer only after the compile-time cutover gate.
@@ -437,6 +467,11 @@ fn serve_mode(
             driver.register("default".into(), "Inert native socket".into(), vec![])?;
         }
         Some(driver)
+    } else if no_library {
+        Some(telebar_runtime::native_driver::Driver::without_native(
+            "default".into(),
+            language,
+        ))
     } else {
         None
     };
@@ -473,6 +508,7 @@ fn serve_mode(
             // Best-effort compatible startup cleanup only; submitted/sent
             // inputs and database content are never age-deleted here.
             let _ = telebar_runtime::gc::raw(&context.runtime, &[], std::time::SystemTime::now());
+            telebar_runtime::sticker_cache::startup_trim(&home, &STOP);
             app.desktop_context = Some(launch.clone());
             context.configure_desktop(&mut app, launch.plugin.clone());
             context.configure_driver(&mut app, owner);

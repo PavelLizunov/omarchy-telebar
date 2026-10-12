@@ -14,6 +14,16 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
+#[derive(Default)]
+struct Memo {
+    failed: indexmap::IndexSet<String>,
+    writes: usize,
+}
+// Shared only by the two admitted cache workers; no user data or paths persist.
+static MEMO: std::sync::OnceLock<std::sync::Mutex<Memo>> = std::sync::OnceLock::new();
+fn memo() -> &'static std::sync::Mutex<Memo> {
+    MEMO.get_or_init(Default::default)
+}
 const DIRECTORY: &str = ".cache/omagram/lottie";
 const INPUT: usize = 1024 * 1024;
 const OUTPUT: usize = 16 * 1024 * 1024;
@@ -142,6 +152,52 @@ fn entries(home: &Storage) -> Vec<(String, std::fs::Metadata)> {
         .filter(|(name, _)| name.ends_with(".json"))
         .collect()
 }
+pub fn startup_trim(home: &Storage, cancel: &AtomicBool) {
+    trim(home, cancel);
+    trim_notes(home, cancel);
+}
+fn trim_notes(store: &Storage, cancel: &AtomicBool) {
+    let directory = ".cache/omagram/notes";
+    let Ok(entries) = store.files(directory, 2048) else {
+        return;
+    };
+    let mut kept = Vec::new();
+    for (name, metadata) in entries {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        if !name.ends_with(".webp") {
+            continue;
+        }
+        if name.starts_with("making-") {
+            let stale = metadata
+                .modified()
+                .ok()
+                .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
+                .is_some_and(|age| age > Duration::from_secs(3600));
+            if stale {
+                let _ = store.remove_file(&format!("{directory}/{name}"));
+            }
+        } else {
+            kept.push((name, metadata));
+        }
+    }
+    kept.sort_by_key(|(_, m)| m.modified().ok());
+    let mut total = kept.iter().map(|(_, m)| m.len()).sum::<u64>();
+    let mut count = kept.len();
+    for (name, metadata) in kept {
+        if cancel.load(Ordering::Relaxed) {
+            break;
+        }
+        if total <= 128 * 1024 * 1024 && count <= 512 {
+            break;
+        }
+        if store.remove_file(&format!("{directory}/{name}")).is_ok() {
+            total = total.saturating_sub(metadata.len());
+            count -= 1;
+        }
+    }
+}
 fn trim(home: &Storage, cancel: &AtomicBool) {
     let mut files = entries(home);
     let mut total: u64 = files.iter().map(|(_, m)| m.len()).sum();
@@ -195,6 +251,14 @@ fn inflate(
     {
         return Ok(Some(home.join(target)));
     }
+    if memo()
+        .lock()
+        .map_err(|_| std::io::Error::other("cache memo unavailable"))?
+        .failed
+        .contains(&hash)
+    {
+        return Ok(None);
+    }
     let output = process::run_cancel(
         "/usr/bin/gzip",
         &["-d", "-c"],
@@ -209,13 +273,31 @@ fn inflate(
             .is_ok_and(|v| v.is_object())
         || cancel.load(Ordering::Relaxed)
     {
+        if !cancel.load(Ordering::Relaxed) {
+            let mut memo = memo()
+                .lock()
+                .map_err(|_| std::io::Error::other("cache memo unavailable"))?;
+            memo.failed.insert(hash);
+            if memo.failed.len() > 512 {
+                memo.failed.shift_remove_index(0);
+            }
+        }
         return Ok(None);
     }
     // Refuse new writes if a pre-existing overfull directory cannot be
     // inventoried within the finite ceiling; never turn that error into zero.
     home_store.files(DIRECTORY, COUNT * 2)?;
     home_store.write(&target, &output.stdout, 0o600)?;
-    trim(&home_store, cancel);
+    let trim_due = {
+        let mut memo = memo()
+            .lock()
+            .map_err(|_| std::io::Error::other("cache memo unavailable"))?;
+        memo.writes = memo.writes.wrapping_add(1);
+        memo.writes % 32 == 0
+    };
+    if trim_due {
+        trim(&home_store, cancel);
+    }
     Ok(Some(home.join(target)))
 }
 impl Job {
@@ -357,29 +439,26 @@ fn note_animation(
         let _ = store.remove_empty_directory(container);
     }
     converted?;
-    let mut kept = store
-        .files(directory, 2048)?
-        .into_iter()
-        .filter(|(n, _)| n.ends_with(".webp"))
-        .collect::<Vec<_>>();
-    kept.sort_by_key(|(_, m)| m.modified().ok());
-    let mut total: u64 = kept.iter().map(|(_, m)| m.len()).sum();
-    let mut count = kept.len();
-    for (name, m) in kept {
-        if cancel.load(Ordering::Relaxed) {
-            break;
-        }
-        let stale = m
-            .modified()
-            .ok()
-            .and_then(|t| SystemTime::now().duration_since(t).ok())
-            .is_some_and(|d| d > Duration::from_secs(3600));
-        if ((name.starts_with("making-") && stale) || total > 128 * 1024 * 1024 || count > 512)
-            && store.remove_file(&format!("{directory}/{name}")).is_ok()
-        {
-            total = total.saturating_sub(m.len());
-            count -= 1;
-        }
-    }
+    trim_notes(&store, cancel);
     Ok(home.join(target))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn failed_inflation_memo_is_bounded_fifo_and_does_not_touch_user_paths() {
+        let mut memo = Memo::default();
+        for id in 0..513 {
+            memo.failed.insert(id.to_string());
+            if memo.failed.len() > 512 {
+                memo.failed.shift_remove_index(0);
+            }
+        }
+        assert_eq!(memo.failed.len(), 512);
+        assert!(!memo.failed.contains("0"));
+        assert!(memo.failed.contains("512"));
+        memo.failed.insert("512".into());
+        assert_eq!(memo.failed.len(), 512);
+    }
 }
