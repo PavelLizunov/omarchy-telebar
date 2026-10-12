@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import "../../shell" as Shell
 import "Readiness.js" as Readiness
 
@@ -40,7 +41,7 @@ Rectangle {
     Style.cornerRadius = themeRadius
     Style.fontBaseSize = fontSize
     // The second text candidate is the host palette, not an unrelated dark fixture.
-    Color.foreground = model.foreground
+    Commons.Color.foreground = model.foreground
     if (preview.peerStatus) model.chats = model.chats.map(function (chat) { return chat.id === 101 ? Object.assign({}, chat, { status: preview.peerStatus }) : chat })
     quick.reset(101, 0)
     if (state === "attachments") quick.addAttachments([model.imagePath], true)

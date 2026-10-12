@@ -192,6 +192,12 @@ incoming call is shown so you can decline it or answer in another Telegram app.
 
 Omarchy with Hyprland 0.56 or newer, and these packages (most are already on a stock install):
 
+A running systemd user manager is required for window launches and backend starts.
+The launcher uses transient `telebar-window-<pid>` and `telebar-backend` services
+to keep host tool/keyring access intact when the shell uses a recovery namespace.
+An existing backend socket owner is reused, not restarted. No user service is enabled
+at boot. Palette imports are explicitly qualified for Qt 6.12 compatibility.
+
 ```bash
 sudo pacman -S --needed qt6-multimedia qt6-multimedia-ffmpeg qt6-lottie libsecret python-gobject qrencode
 ```

@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // Actual popup content; window placement and focus remain owned by PopupCard.
 Column {
@@ -17,7 +18,7 @@ Column {
       width: menu.width
       height: Style.space(30)
       radius: Style.cornerRadius
-      color: entryHover.hovered || activeFocus ? Style.hoverFillFor(Color.popups.text, Color.accent) : "transparent"
+      color: entryHover.hovered || activeFocus ? Style.hoverFillFor(Commons.Color.popups.text, Commons.Color.accent) : "transparent"
       activeFocusOnTab: true
       Accessible.role: Accessible.Button
       Accessible.name: modelData.label
@@ -33,7 +34,7 @@ Column {
         textFormat: Text.PlainText
         text: entry.modelData.label
         elide: Text.ElideRight
-        color: entry.modelData.action === "quit" ? Color.urgent : Color.popups.text
+        color: entry.modelData.action === "quit" ? Commons.Color.urgent : Commons.Color.popups.text
         font.family: menu.fontFamily
         font.pixelSize: Style.font.body
       }

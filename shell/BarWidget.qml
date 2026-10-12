@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "../app" as App
 
@@ -128,7 +129,7 @@ BarWidget {
     bar: root.bar
     // Omagram's own mark, the Ring (app/RingMark.qml), in the bar's text colour like every status glyph --
     // not Telegram's paper plane, which the API terms keep for Telegram itself.
-    foreground: root.bar ? root.bar.barForeground : Color.foreground
+    foreground: root.bar ? root.bar.barForeground : Commons.Color.foreground
     iconComponent: Component {
       Item {
         App.RingMark {
@@ -156,7 +157,7 @@ BarWidget {
       width: Style.space(6)
       height: width
       radius: width / 2
-      color: Color.accent
+      color: Commons.Color.accent
       anchors.right: parent.right
       anchors.top: parent.top
       anchors.rightMargin: Style.space(3)

@@ -1,12 +1,13 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import "../../shell" as Shell
 
 Rectangle {
   id: preview
   width: 300
   height: 250
-  color: Color.popups.background
+  color: Commons.Color.popups.background
   property int themeRadius: 0
   property int fontSize: 15
   property bool ready: false

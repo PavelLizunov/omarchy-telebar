@@ -82,24 +82,29 @@ def child_env(extra=None):
     return env
 
 
+def managed_start(unit, script, args=()):
+    """The user manager creates a host process, even from a namespaced shell.
+
+    Fixed argv and manager-owned session environment; never weaken tool checks
+    or inherit the shell's loader/interpreter variables. No detached double fork.
+    """
+    return safe.run(["/usr/bin/systemd-run", "--user", "--quiet", "--collect",
+                     "--service-type=exec", "--unit=" + unit,
+                     "--property=TimeoutStopSec=8s", "--property=KillMode=control-group",
+                     "/usr/bin/env", "-u", "LD_PRELOAD", "-u", "LD_LIBRARY_PATH",
+                     "-u", "PYTHONPATH", "-u", "PYTHONHOME", "PATH=/usr/bin",
+                     "/usr/bin/python3", "-I", str(script), *args],
+                    timeout=5, max_output=4096)
+
+
 def start_service():
-    """Start omagramd fully detached: its own session, no terminal, not our child."""
+    """Ensure one managed backend; its existing socket/lock remain authoritative."""
     if service_running():
         return True
-    pid = os.fork()
-    if pid == 0:
-        try:
-            os.setsid()
-            if os.fork() > 0:
-                os._exit(0)
-            devnull = os.open(os.devnull, os.O_RDWR)
-            for fd in (0, 1, 2):
-                os.dup2(devnull, fd)
-            os.execve("/usr/bin/python3", ["/usr/bin/python3", str(BIN / "omagramd")], child_env())
-        finally:
-            os._exit(127)
-    os.waitpid(pid, 0)
-    deadline = time.monotonic() + SERVICE_WAIT
+    started = managed_start("telebar-backend", BIN / "omagramd")
+    # A concurrent launcher may have registered the same exact unit. The socket
+    # is the readiness check; never replace or restart an existing owner here.
+    deadline = time.monotonic() + (SERVICE_WAIT if started.ok else 2)
     while time.monotonic() < deadline:
         if service_running():
             return True
@@ -274,6 +279,9 @@ def request_open(chat_id=None, url=None):
 
 
 def main(argv):
+    host_window = len(argv) > 1 and argv[1] == "--host-window"
+    if host_window:
+        argv = [argv[0], *argv[2:]]
     if argv[1:] == ["--service"]:
         return 0 if start_service() else 1
     if argv[1:] == ["--desktop-entry"]:
@@ -289,6 +297,12 @@ def main(argv):
     elif argv[1:]:
         print(__doc__.strip(), file=sys.stderr)
         return 2
+    if not host_window:
+        # The application must see real root-owned Omarchy imports and helpers.
+        # A transient managed service escapes the shell's user/mount namespace.
+        started = managed_start(f"telebar-window-{os.getpid()}", BIN / "omagram",
+                                ["--host-window", *argv[1:]])
+        return 0 if started.ok else 1
     start_service()   # the window shows the service's state, including "not running"
     if chat_id is not None or url:
         request_open(chat_id, url)

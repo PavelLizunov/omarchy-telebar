@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import qs.Commons
+import qs.Commons as Commons
 import "../app" as App
 import "../app/Model.js" as Model
 import "../app/Keymap.js" as Keymap
@@ -265,11 +266,11 @@ FocusScope {
     id: menuTheme
     readonly property var shortcuts: viewer.keys
     readonly property string fontFamily: viewer.fontFamily
-    readonly property color background: viewer.host ? viewer.host.background : Color.menu.background
-    readonly property color foreground: viewer.host ? viewer.host.foreground : Color.menu.text
-    readonly property color selected: viewer.host ? viewer.host.selected : Color.menu.selectedBackground
-    readonly property color accent: viewer.host ? viewer.host.accent : Color.accent
-    readonly property color urgent: viewer.host ? viewer.host.urgent : Color.urgent
+    readonly property color background: viewer.host ? viewer.host.background : Commons.Color.menu.background
+    readonly property color foreground: viewer.host ? viewer.host.foreground : Commons.Color.menu.text
+    readonly property color selected: viewer.host ? viewer.host.selected : Commons.Color.menu.selectedBackground
+    readonly property color accent: viewer.host ? viewer.host.accent : Commons.Color.accent
+    readonly property color urgent: viewer.host ? viewer.host.urgent : Commons.Color.urgent
   }
   App.PhotoActions {
     id: actions

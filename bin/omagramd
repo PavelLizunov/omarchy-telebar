@@ -42,6 +42,11 @@ import zlib
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+if __name__ == "__main__" and os.stat("/usr/bin/python3").st_uid != 0:
+    # A namespaced shell must not open accounts with unmapped system tool owners.
+    # Delegate to the host user manager; keep executable/keyring checks intact.
+    launcher = str(pathlib.Path(__file__).resolve().with_name("omagram"))
+    os.execv("/usr/bin/python3", ["/usr/bin/python3", "-I", launcher, "--service"])
 import plugin_safety as safe  # noqa: E402
 import omagram_state as model  # noqa: E402
 import omagram_td as td  # noqa: E402
