@@ -123,6 +123,12 @@ no host bus/key directories are accessible. Both helpers are reaped.
 Root/helper trust is not relaxed
 for a user namespace, and no production route is added for these tests.
 
+The private Wayland consumer also exercises normal `clipboard.image` and
+`clipboard.files` Driver requests against the exact owned PNG offer and an
+explicit foreground URI-list owner. It verifies private generated image bytes,
+selected-path deduplication, missing-file/database refusal and unchanged originals.
+This is separate from offer acknowledgement and does not touch the host clipboard.
+
 ```sh
 cargo test --manifest-path rust/Cargo.toml --locked --offline --test native_parameters --no-run
 bash rust/tests/run-native-parameters.sh /absolute/exact/native_parameters-test /absolute/verified/lib/libtdjson.so

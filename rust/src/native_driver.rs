@@ -2746,7 +2746,7 @@ mod tests {
             Ok("1")
         );
         let library = std::env::var_os("TELEBAR_TEST_TDLIB").expect("verified library");
-        let runtime = std::env::var_os("XDG_RUNTIME_DIR").expect("isolated runtime");
+        let runtime = std::env::var("XDG_RUNTIME_DIR").expect("isolated runtime");
         assert_eq!(Path::new(&runtime).parent(), Some(Path::new("/tmp")));
         assert!(
             Path::new(&runtime)
@@ -2757,7 +2757,7 @@ mod tests {
                 .starts_with("telebar-wayland-")
         );
         let environment: std::collections::BTreeMap<String, String> = [
-            ("XDG_RUNTIME_DIR".into(), runtime.into_string().unwrap()),
+            ("XDG_RUNTIME_DIR".into(), runtime.clone()),
             (
                 "WAYLAND_DISPLAY".into(),
                 std::env::var("WAYLAND_DISPLAY").unwrap(),
@@ -2822,6 +2822,132 @@ mod tests {
         .unwrap();
         assert!(pasted.ok());
         assert_eq!(pasted.stdout, data);
+        // Actual clipboard.image/files request owners read only this private
+        // selection, not merely the offer-verification helper.
+        let private_home = crate::storage::Storage::open(Path::new(&runtime)).unwrap();
+        let mut app = crate::application::Application::load(&private_home).unwrap();
+        app.upload_context = Some((Path::new(&runtime).to_owned(), vec![]));
+        app.clipboard_context = Some(crate::clipboard::Context {
+            runtime: Path::new(&runtime).to_owned(),
+            databases: vec![],
+            environment: environment.clone(),
+        });
+        for (rid, command) in [(31, "clipboard.image"), (32, "clipboard.files")] {
+            let request = Request::parse(
+                json!({"id":rid,"cmd":command,"args":{}})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            let mut effects = driver
+                .request_application(&mut app, &private_home, 11, request)
+                .unwrap();
+            let until = Instant::now() + Duration::from_secs(8);
+            let answer = loop {
+                if let Some((_, answer)) = effects.replies.into_iter().find(|(_, v)| v["id"] == rid)
+                {
+                    break answer;
+                }
+                assert!(Instant::now() < until, "privateclipboard reply");
+                effects = driver
+                    .tick_application(&mut app, &private_home, &mut |_| panic!("no startup"))
+                    .unwrap();
+                std::thread::sleep(Duration::from_millis(2));
+            };
+            assert_eq!(answer["ok"], true, "{command}: {answer}");
+            let saved = if command == "clipboard.image" {
+                answer["result"]["path"].as_str().unwrap()
+            } else {
+                assert_eq!(answer["result"]["skipped"], 0);
+                answer["result"]["paths"][0].as_str().unwrap()
+            };
+            assert!(Path::new(saved).starts_with(Path::new(&runtime).join("omagram/rec")));
+            assert_eq!(std::fs::read(saved).unwrap(), data);
+        }
+        // Replace the exact offer with a foreground URI-list owner, then verify
+        // whole-list admission excludes the private synthetic database and a
+        // missing selection while preserving and deduplicating chosen paths.
+        driver.clipboard_owner = None;
+        assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        private_home
+            .write("chosen.txt", b"chosen original", 0o600)
+            .unwrap();
+        private_home
+            .write("database/private", b"synthetic database", 0o600)
+            .unwrap();
+        app.clipboard_context.as_mut().unwrap().databases =
+            vec![Path::new(&runtime).join("database")];
+        let uri = format!(
+            "file://{runtime}/chosen.txt\nfile://{runtime}/database/private\nfile://{runtime}/missing\nfile://{runtime}/chosen.txt\n"
+        );
+        let mut owner = crate::process::Managed::start_owned(
+            "/usr/bin/wl-copy",
+            &["--foreground", "--type", "text/uri-list"],
+            &environment,
+            uri.as_bytes(),
+            4096,
+        )
+        .unwrap();
+        let uri_pid = owner.pid();
+        let until = Instant::now() + Duration::from_secs(2);
+        while !owner.input_sent() {
+            assert!(Instant::now() < until);
+            assert!(owner.poll().unwrap().is_none());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        // Confirm native selection bytes before the admitted request; no retry
+        // of application work or unrelated session clipboard discovery.
+        let registered = Instant::now() + Duration::from_millis(120);
+        while Instant::now() < registered {
+            assert!(owner.poll().unwrap().is_none());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let verified = crate::process::run(
+            "/usr/bin/wl-paste",
+            &["--no-newline", "--type", "text/uri-list"],
+            &environment,
+            &[],
+            Duration::from_secs(3),
+            16384,
+        )
+        .unwrap();
+        assert!(
+            verified.ok(),
+            "private URI registration: {}",
+            String::from_utf8_lossy(&verified.stderr)
+        );
+        assert_eq!(verified.stdout, uri.as_bytes());
+        let request = Request::parse(br#"{"id":33,"cmd":"clipboard.files","args":{}}"#).unwrap();
+        let mut effects = driver
+            .request_application(&mut app, &private_home, 11, request)
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(8);
+        let answer = loop {
+            if let Some((_, v)) = effects.replies.into_iter().find(|(_, v)| v["id"] == 33) {
+                break v;
+            }
+            assert!(Instant::now() < until);
+            effects = driver
+                .tick_application(&mut app, &private_home, &mut |_| panic!("no startup"))
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        assert_eq!(answer["ok"], true);
+        assert_eq!(
+            answer["result"]["paths"],
+            json!([format!("{runtime}/chosen.txt")])
+        );
+        assert_eq!(answer["result"]["skipped"], 2);
+        assert_eq!(
+            std::fs::read(Path::new(&runtime).join("chosen.txt")).unwrap(),
+            b"chosen original"
+        );
+        assert_eq!(
+            std::fs::read(Path::new(&runtime).join("database/private")).unwrap(),
+            b"synthetic database"
+        );
+        drop(owner);
+        assert!(!Path::new(&format!("/proc/{uri_pid}")).exists());
         let request = Request::parse(
             json!({"id":4,"cmd":"file.copyImage","args":{}})
                 .to_string()

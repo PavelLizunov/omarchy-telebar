@@ -63,6 +63,8 @@ with tempfile.TemporaryDirectory(prefix="telebar-wayland-") as temporary:
             )
             print(json.dumps({"isolated_wayland": True, "actual_driver_offer": True,
                               "read_after_ack_and_disconnect": True,
+                              "actual_image_and_files_requests": True,
+                              "uri_database_missing_and_duplicate_admission": True,
                               "mismatched_selection_rejected": True,
                               "owned_shutdown": True, "real_session_access": False}))
         finally:
