@@ -130,6 +130,20 @@ no host bus/key directories are accessible. Both helpers are reaped.
 Root/helper trust is not relaxed
 for a user namespace, and no production route is added for these tests.
 
+`tests/host_keyring_readonly.rs` is a separate explicit ignored host-acceptance
+check. Given only the current catalog account IDs and existing session bus, the
+production Rust Keyring performs bounded lookups for API metadata and each existing
+account key. It validates representation without emitting values or value hashes.
+It never stores/creates a key, constructs a TDLib client or sends parameters. Host
+lookup acceptance does not authorize working-profile startup or prove cutover.
+Do not run it as part of inert/default tests or search unrelated keyring entries.
+
+```sh
+TELEBAR_HOST_KEYRING_READONLY=1 TELEBAR_HOST_ACCOUNT_IDS='["default","explicit-other-id"]' \
+  cargo test --manifest-path rust/Cargo.toml --locked --offline --test host_keyring_readonly \
+  -- --ignored --exact existing_host_keyring_identity_is_readable_without_creating_keys_or_clients
+```
+
 The private Wayland consumer also exercises normal `clipboard.image` and
 `clipboard.files` Driver requests against the exact owned PNG offer and an
 explicit foreground URI-list owner. It verifies private generated image bytes,
