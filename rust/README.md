@@ -347,6 +347,25 @@ the user manager owns the host process. A finite no-native fixture verifies
 this real handoff, duplicate refusal and cleanup without account/keyring work.
 The live check is explicit and ignored in the default suite.
 
+`tests/socket_owner.rs` also runs a finite development-only Python flock oracle
+using the legacy owner's exact `omagram.lock` name and open/flock flags. A held
+legacy lock makes Rust refuse before unlinking the existing socket; after release,
+Rust holds the same lock inode and the Python competitor refuses. Both owned
+helpers are reaped. No daemon, credentials or TDLib database is constructed.
+This proves cross-language lock compatibility, not a working-profile cutover.
+Python is a test dependency only, never an application fallback.
+
+The final compatible snapshot's default suite, warnings-denied Clippy and frozen
+21,136-plus-18-input replay were rerun. Private clipboard, notification reply/read
+owner and normal bridge synthetic-ping consumers passed on exact exported code.
+An actual finite user-manager no-library handoff verified the native image,
+duplicate refusal and socket cleanup without restarting the installed backend.
+One bounded separate-context same-family critical-source review found no supported
+finding in its supplied main/session/startup/manager/socket/Driver scope. Imported
+storage, keyring, worker, retained-input and launcher dependencies, physical host
+consumers and working-profile transition remain separate verification limits;
+no whole-source independent certification or cutover approval follows.
+
 `--inert-no-library <private-directory>` exposes local hello/settings and native
 query rejection on the disposable socket without loading TDLib or enabling
 startup. `tests/NoLibraryConsumer.qml` verifies the actual product client stays
