@@ -125,16 +125,18 @@ BarWidget {
 
   BarIconButton {
     id: button
+    objectName: "telebar-icon-button"
     anchors.fill: parent
     bar: root.bar
-    // Omagram's own mark, the Ring (app/RingMark.qml), in the bar's text colour like every status glyph --
-    // not Telegram's paper plane, which the API terms keep for Telegram itself.
+    // The native optical canvas owns visible size; WidgetButton owns the hit area.
+    // Preserve Telebar's ring/speech identity rather than Telegram's paper plane.
     foreground: root.bar ? root.bar.barForeground : Commons.Color.foreground
     iconComponent: Component {
       Item {
         App.RingMark {
+          objectName: "telebar-ring-mark"
           anchors.centerIn: parent
-          size: Style.space(16)   // measured: the same ink as the message glyph it replaced, 13 px across in a 27 px slot
+          size: button.opticalSize
           color: button.foreground
         }
       }
@@ -153,6 +155,7 @@ BarWidget {
 
     // A dot, like the bell's unread mark, drawn over the button so the glyph stays centred.
     Rectangle {
+      objectName: "telebar-unread-dot"
       visible: root.ready && root.unread > 0
       width: Style.space(6)
       height: width

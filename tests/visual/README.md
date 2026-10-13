@@ -1,5 +1,34 @@
 # Consumer visual review
 
+## Native Telebar mark
+
+`prepare_icon_fixture.py` creates a new private fixture with the actual RingMark,
+BarWidget and BarMenu plus current installed native BarIconButton/WidgetButton
+geometry. Commons I/O is explicitly bound to a unique inert module. Only the
+owning Panel and PopupCard window boundaries are replaced with inert items;
+there is no service, production socket, process, camera or compositor startup.
+The native host color references are explicitly qualified for Qt 6.12; source
+and transformation hashes are saved in `fixture-inputs.json`.
+
+```sh
+python3 -B tests/icon_contract_test.py
+python3 -B tests/visual/prepare_icon_fixture.py /absolute/new/icon-fixture
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input /absolute/new/icon-fixture/tests/visual/tst_ring_mark.qml -import /absolute/new/icon-fixture/imports -import /absolute/new/icon-fixture/inert
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input /absolute/new/icon-fixture/tests/visual/tst_bar_icon.qml -import /absolute/new/icon-fixture/imports -import /absolute/new/icon-fixture/inert
+```
+
+For MCP, use the fixture's `imports/qs` root only, not its dynamic QtTest inert
+Quickshell module. `RingMarkConsumer.qml` shows native-size and enlarged actual
+vectors plus the desktop file SVG. `BarIconConsumer.qml` loads the real bar and
+checks ready/unavailable/unread, horizontal/vertical geometry, theme color and
+native optical-canvas bindings. Render at DPR 1/2 and radii 0/8 with explicit
+inputs, dependencies and `readyProperty: ready`; readiness fails closed on a
+stored assertion. The source contracts require a shared stepped contour and
+nontext contrast on the named light/dark palettes, not universal theme contrast.
+These checks exercise left/right pointer routing on inert panel/menu owners.
+They do not prove popup positioning, screen-reader or physical desktop behavior.
+
+
 Telebar rename checks use `tst_rename.qml` with the inert import adapter below.
 Create `/tmp/telebar-rename-evidence/` before running it. It loads the actual setup,
 login, quick-view and bar-menu components, checks their displayed names, and writes

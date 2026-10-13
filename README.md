@@ -371,7 +371,11 @@ attachments and the profile-photo image filter retain their existing behavior.
 
 Service controls use the original 24-unit SVG drawings in `app/Icons.js`, rendered through
 `Icon.qml`. Existing action glyph codes are aliases, not a font dependency for drawing.
-The inherited Omagram Ring mark and user-provided emoji/sticker artwork retain their identity.
+Telebar's ring and speech tail use a filled, stepped contour inspired by the
+Omarchy wordmark. The bar mark follows the native optical canvas and theme text
+color; its unread dot and click target retain their separate roles. The desktop
+SVG shares that silhouette without a fixed background tile. User-provided
+emoji/sticker artwork is unchanged.
 Icons pulse briefly on a state change; loading spinners run only while visible. SVGs are
 rasterized by Qt at a stable small size and shared by its image cache.
 The simplified drawings use 2.4-unit rounded strokes. Play/pause and the sidebar arrow
