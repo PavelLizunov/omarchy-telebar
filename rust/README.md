@@ -138,6 +138,19 @@ It never stores/creates a key, constructs a TDLib client or sends parameters. Ho
 lookup acceptance does not authorize working-profile startup or prove cutover.
 Do not run it as part of inert/default tests or search unrelated keyring entries.
 
+`tests/launcher_host_imports.rs` is a separate explicit host metadata check.
+It calls the normal root-owned Commons/Ui admission and creates only a disposable
+runtime import root. No Python, window, manager job, keyring, backend or working
+socket is executed. `HostImportsConsumer.qml` checks the current native Main and
+host palette/font/spacing/radius identities through the static offscreen consumer,
+with explicit inert host I/O. The normal admission check and the unchanged,
+unversioned host token consumer pass with Qt 6.12. There is no demonstrated reason
+to add an application-level Qt version rewrite. This is not production
+Quickshell/compositor startup acceptance and does not replace or bypass the
+separately installed Qt recovery. Waiting for the inert native owner after its
+quit acknowledgement verifies natural unit collection and socket removal without
+immediately stopping its Bubblewrap parent.
+
 ```sh
 TELEBAR_HOST_KEYRING_READONLY=1 TELEBAR_HOST_ACCOUNT_IDS='["default","explicit-other-id"]' \
   cargo test --manifest-path rust/Cargo.toml --locked --offline --test host_keyring_readonly \
