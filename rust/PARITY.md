@@ -389,9 +389,9 @@ recording checkpoint owner before native client creation/catalog persistence.
 Saved-account restoration is queued after bridge-ready parameters. A confirmed
 owned proxy-child loss queues one recovery after 30 seconds; an unready first
 account cannot starve later ready profiles. Native mutation uncertainty is never
-automatically retried. Synthetic owner/deadline checks pass; real recovery and
-Telegram TLS/relay connectivity, account proxy restoration and full-duplex
-behavior remain unverified. The actual duplex pump now has finite fragmented
+automatically retried. Synthetic owner/deadline checks pass; working-account recovery and
+account proxy restoration remain unverified. Public preauthorization relay and
+local full-duplex checks are documented separately below, not account acceptance. The actual duplex pump now has finite fragmented
 cipher-pressure and idle ping/pong checks; the same native TLS/upgrade helper
 passes local trust/hostname negative controls and binary transport. No remote
 TLS/relay or working-account success is inferred. A finite 295-input helper corpus has zero differences
@@ -519,6 +519,38 @@ package inspected the locked graph against RustSec database commit
 3d2bd193db927dd715d34f92fe7b9242a18299dc: zero listed vulnerabilities or warnings.
 Yanked-crate checks were explicitly disabled; this is advisory evidence, not a
 proof of dependency safety or a complete license audit. No OS package was installed.
+
+## Additional helper and transport acceptance
+
+Mixed album workers/Engine outcomes preserve accepted/uncertain sibling leases,
+clean only confirmed rejected or unsent copies and leave selected originals
+unchanged. The explicit confined send-ABI oracle exercises actual Driver workers,
+native dispatch and projected replies/events for text, mixed albums, ordinary
+video, round video and profile conversion. It also verifies dispatch counts,
+durable recording resolution and retained generated playback inputs after close
+and unsent cleanup. No real Telegram message is sent; the ordinary inert C ABI
+still refuses mutations and parameters. Synthetic updates do not resolve the
+separately reported real sent-video P1.
+
+The actual owned proxy child is stopped/reaped, one owner clock crosses the
+30-second restart deadline, and saved/prior proxy identities are checked through
+Engine continuations. An unready first profile cannot starve a later ready one;
+a settled recovery is not repeated. Native replies here are synthetic, not
+working-account TDLib proxy acceptance. Actual private notification, PipeWire
+null-sink, Wayland clipboard and generation/cancellation owner checks also pass;
+physical devices, host notification service and compositor interaction are not
+inferred from those private consumers.
+
+One explicit public DC2 preauthorization query passed through the Rust proxy's
+normal TLS/WebSocket/MTProto path and returned a bounded matching `resPQ`. The
+namespace exposes public networking and system trust only, not home/accounts,
+keys, session bus or physical devices. One client/query and zero retries; the
+native fixed-target fallback remains bounded. Initial missing Arch extracted CA
+symlink targets produced certificate-verification failures; the fixture was
+corrected to mount the existing system trust destination without altering roots
+or disabling verification. This proves one public preauthorization relay, not
+working-account authorization, all DC/failure scenarios or recovery under a real
+Telegram session. No release gate or installed owner changed.
 
 ## Acceptance and remaining scope
 

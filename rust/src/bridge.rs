@@ -33,6 +33,11 @@ impl Running {
     pub fn proxy(&self) -> Value {
         json!({"@type":"proxy","server":"127.0.0.1","port":self.port,"type":{"@type":"proxyTypeMtproto","secret":format!("dd{}",self.secret)}})
     }
+    #[cfg(test)]
+    pub(crate) fn terminate_owned(&mut self) -> std::io::Result<()> {
+        self.helper
+            .signal_stop(libc::SIGTERM, Duration::from_secs(1))
+    }
     pub fn poll(&mut self) -> bool {
         if !self.helper.poll().is_ok_and(|output| output.is_none()) {
             return false;
@@ -268,12 +273,15 @@ impl Bridge {
         .map_err(|_| "could not save the bundled bridge".into())
     }
     pub fn poll(&mut self) {
+        self.poll_at(Instant::now());
+    }
+    pub(crate) fn poll_at(&mut self, now: Instant) {
         if self.running.as_mut().is_some_and(|r| !r.poll()) {
             self.running = None;
             if self.metadata.as_object().is_some_and(|m| !m.is_empty()) {
                 // One recovery after a confirmed child loss, not a retry of an
                 // uncertain native mutation or a hidden restart loop.
-                self.restart_after = Some(Instant::now() + Duration::from_secs(30));
+                self.restart_after = Some(now + Duration::from_secs(30));
             }
         }
         if self.metadata.as_object().is_none_or(|m| m.is_empty()) {
@@ -281,7 +289,7 @@ impl Bridge {
         }
         if self.metadata.as_object().is_none_or(|o| o.is_empty())
             && self.busy.is_empty()
-            && self.idle_at.is_some_and(|t| Instant::now() >= t)
+            && self.idle_at.is_some_and(|t| now >= t)
         {
             self.running = None;
             self.idle_at = None;

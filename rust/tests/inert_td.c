@@ -1,6 +1,8 @@
 /* Synthetic JSON-ABI fixture for exact Rust/QML consumer tests, not TDLib.
  * No credentials, files, devices or network. Parameters and mutations are
- * rejected and counted. Fixed two-chat history exercises the real projection.
+ * rejected. Fixed synthetic history exercises the real projection. An explicit
+ * development-only TELEBAR_SEND_FIXTURE build adds the local send oracle below;
+ * the default fixture continues to refuse every native mutation.
  */
 #include <json-c/json.h>
 #include <stdio.h>
@@ -26,6 +28,9 @@ static void publish(int client,const char *body,json_object *extra) {
     if(!queue[(first+count)%MAX_EVENTS])abort();
     count++;json_object_put(value);
 }
+#ifdef TELEBAR_SEND_FIXTURE
+#include "send_td.inc"
+#endif
 int td_create_client_id(void) {
     if(++clients>10)abort();
     publish(clients,"{\"@type\":\"updateAuthorizationState\",\"authorization_state\":{\"@type\":\"authorizationStateReady\"}}",NULL);
@@ -39,11 +44,17 @@ void td_send(int client,const char *text) {
     const char *type=json_object_get_string(get(query,"@type"));json_object *extra=get(query,"@extra");
     if(!type)abort();
     if(strcmp(type,"close")==0){publish(client,"{\"@type\":\"updateAuthorizationState\",\"authorization_state\":{\"@type\":\"authorizationStateClosed\"}}",NULL);}
+#ifdef TELEBAR_SEND_FIXTURE
+    else if(strcmp(type,"getOption")==0 && get(query,"name") && strcmp(json_object_get_string(get(query,"name")),"telebarFixtureStats")==0){fixture_stats(client,extra);}
+#endif
     else if(strcmp(type,"getOption")==0){publish(client,"{\"@type\":\"optionValueString\",\"value\":\"inert-abi\"}",extra);}
     else if(strcmp(type,"getMe")==0){publish(client,"{\"@type\":\"user\",\"id\":900,\"first_name\":\"Fixture\",\"last_name\":\"Owner\",\"phone_number\":\"\",\"type\":{\"@type\":\"userTypeRegular\"}}",extra);}
     else if(strcmp(type,"loadChats")==0||strcmp(type,"loadActiveStories")==0||strcmp(type,"setOption")==0||strcmp(type,"openChat")==0||strcmp(type,"closeChat")==0){publish(client,"{\"@type\":\"ok\"}",extra);}
     else if(strcmp(type,"getScopeNotificationSettings")==0){publish(client,"{\"@type\":\"scopeNotificationSettings\",\"mute_for\":0,\"show_preview\":true}",extra);}
     else if(strcmp(type,"getChatHistory")==0){publish(client,"{\"@type\":\"messages\",\"total_count\":3,\"messages\":[{\"@type\":\"message\",\"id\":1,\"chat_id\":101,\"date\":1791816000,\"sender_id\":{\"@type\":\"messageSenderUser\",\"user_id\":101},\"content\":{\"@type\":\"messageText\",\"text\":{\"@type\":\"formattedText\",\"text\":\"The native client is connected to an isolated Rust owner.\",\"entities\":[]}}},{\"@type\":\"message\",\"id\":2,\"chat_id\":101,\"date\":1791816060,\"is_outgoing\":true,\"sender_id\":{\"@type\":\"messageSenderUser\",\"user_id\":900},\"content\":{\"@type\":\"messageText\",\"text\":{\"@type\":\"formattedText\",\"text\":\"Synthetic history. No Telegram messages were sent.\",\"entities\":[]}}},{\"@type\":\"message\",\"id\":3,\"chat_id\":101,\"date\":1791816120,\"sender_id\":{\"@type\":\"messageSenderUser\",\"user_id\":101},\"content\":{\"@type\":\"messageText\",\"text\":{\"@type\":\"formattedText\",\"text\":\"Rust feeds the native Main.\",\"entities\":[]}}}]}",extra);}
+#ifdef TELEBAR_SEND_FIXTURE
+    else if(fixture_send(client,type,query,extra)) {}
+#endif
     else {publish(client,"{\"@type\":\"error\",\"code\":400,\"message\":\"inert native operation refused\"}",extra);}
     json_object_put(query);
 }

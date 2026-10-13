@@ -135,6 +135,57 @@ production connections still use only admitted Telegram destinations and system
 roots. Local transport verification does not establish remote Telegram reachability
 or working-account bundled-bridge recovery.
 
+## Send owners and public preauthorization transport
+
+`tests/upload_groups.rs` runs real upload workers and Engine outcomes on mixed
+photo/document groups. Accepted and uncertain siblings keep their own generated
+inputs; a confirmed rejection cleans only its group, and unsent cancellation
+keeps selected originals unchanged. `tests/send_driver.rs` adds actual Driver,
+worker, synthetic JSON ABI and projected acknowledgement/update acceptance for
+text, mixed albums, ordinary video, round video and profile-photo conversion.
+An explicit `TELEBAR_SEND_FIXTURE` C build is the only fixture accepting these
+local mutations; the default `inert_td.c` still refuses them. The fixture never
+reads input paths, contacts Telegram or loads official TDLib. The send wrapper
+reuses the root-identity-preserving Landlock/AF_UNIX confinement above. Final
+media remains playable after native-owner close and unsent cleanup. These checks
+do not establish real Telegram sends or physical recording/playback acceptance.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked --offline --test upload_groups
+cargo test --manifest-path rust/Cargo.toml --locked --offline --test send_driver --no-run
+gcc -std=gnu11 -Wall -Wextra -Werror -O2 -DTELEBAR_SEND_FIXTURE -shared -fPIC \
+  rust/tests/inert_td.c $(pkg-config --cflags --libs json-c) -o /absolute/task-owned/libsendfixture.so
+bash rust/tests/run-send-driver.sh /absolute/exact/send_driver-test \
+  /absolute/task-owned/libsendfixture.so /absolute/task-owned/keyring-sandbox
+```
+
+`tests/run-proxy-remote.sh` is a separate explicit public transport check, not part
+of inert/default tests. It permits host networking only inside a private namespace
+and sends one unauthenticated MTProto `req_pq_multi` through the actual Rust proxy,
+normal system trust and fixed DC2 targets. A matching `resPQ` nonce, response bounds
+and owner shutdown establish public preauthorization relay acceptance. No account,
+authorization key, credential, database, read-state or Telegram message is used.
+One client/query, zero retries; the native four fixed target attempts retain their
+64-second overall limit. Mount both `/etc/ssl` and its existing Arch extracted CA
+symlink destination; do not disable certificate verification for an incomplete
+fixture trust store. Working-account bridge recovery remains a separate check.
+
+```sh
+bash rust/tests/run-proxy-remote.sh /absolute/exact/telebar-runtime
+```
+
+An explicit ignored lib-test observes actual owned proxy-child exit, advances one
+owner clock across the 30-second recovery deadline, and checks saved proxy/prior
+identity and non-starvation through Engine continuations. It uses loopback child
+readiness plus synthetic replies, never a native proxy mutation or Telegram:
+
+```sh
+TELEBAR_TEST_PROXY_BINARY=/absolute/exact/telebar-runtime \
+  cargo test --manifest-path rust/Cargo.toml --locked --offline --lib \
+  native_driver::tests::actual_proxy_child_loss_and_saved_bridge_recovery_preserve_native_identity \
+  -- --ignored --exact
+```
+
 ## Implemented helper entry points
 
 The candidate implements `--launch`, `--host-window`, `--daemon`, `--menu`,

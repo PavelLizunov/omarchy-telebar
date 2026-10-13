@@ -9,8 +9,11 @@ import subprocess
 import sys
 import tempfile
 
-binary, library, sandbox = (pathlib.Path(p).resolve(strict=True) for p in sys.argv[1:])
-root = pathlib.Path(tempfile.mkdtemp(prefix="telebar-private-keyring-"))
+mode = sys.argv[4] if len(sys.argv) == 5 else "--keyring-fixture"
+assert mode in ("--keyring-fixture", "--send-fixture")
+binary, library, sandbox = (pathlib.Path(p).resolve(strict=True) for p in sys.argv[1:4])
+sending = mode == "--send-fixture"
+root = pathlib.Path(tempfile.mkdtemp(prefix="telebar-private-send-" if sending else "telebar-private-keyring-"))
 exposed = root / "exposed"
 exposed.mkdir(mode=0o700)
 shutil.copyfile(binary, exposed / "test-keyring")
@@ -37,9 +40,13 @@ try:
            "TELEBAR_TEST_TDLIB": str(exposed / "lib/libtdjson.so"),
            "TELEBAR_PRIVATE_ROOT": str(exposed), "TELEBAR_DENIED_FILE": str(sentinel),
            "TELEBAR_DENIED_SOCKET": str(root / "external.sock")}
+    test = "actual_private_keyring_and_driver_startup_preserve_account_key_identity"
+    if sending:
+        env["TELEBAR_PRIVATE_SEND"] = "1"
+        env["TELEBAR_TEST_INERT_ABI"] = env["TELEBAR_TEST_TDLIB"]
+        test = "actual_send_driver_acceptance_keeps_playback_inputs_and_originals"
     result = subprocess.run([str(sandbox), str(exposed), str(exposed / "test-keyring"),
-                             "actual_private_keyring_and_driver_startup_preserve_account_key_identity",
-                             "--ignored", "--exact", "--nocapture"], env=env,
+                             test, "--ignored", "--exact", "--nocapture"], env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, timeout=45, check=False)
     sys.stdout.buffer.write(result.stdout)
@@ -51,7 +58,7 @@ try:
     assert result.returncode == 0, f"exact sandbox consumer exit {result.returncode}"
     print(json.dumps({"externalFileBaseline": True, "externalUnixBaseline": True,
                       "externalDenied": True, "deniedDeviceBaseline": True,
-                      "privateRoot": True, "bounded": True}))
+                      "privateRoot": True, "bounded": True, "sendFixture": sending}))
 finally:
     host.close()
     shutil.rmtree(root)

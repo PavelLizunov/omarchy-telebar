@@ -1181,11 +1181,18 @@ impl Driver {
         home: &crate::storage::Storage,
         effects: &mut Effects,
     ) -> io::Result<()> {
-        effects
-            .replies
-            .extend(self.runtime.expire(Instant::now()).replies);
-        app.bridge.poll();
-        if app.bridge.restore_after_loss(Instant::now()) {
+        self.pump_bridge_at(app, home, effects, Instant::now())
+    }
+    fn pump_bridge_at(
+        &mut self,
+        app: &mut crate::application::Application,
+        home: &crate::storage::Storage,
+        effects: &mut Effects,
+        now: Instant,
+    ) -> io::Result<()> {
+        effects.replies.extend(self.runtime.expire(now).replies);
+        app.bridge.poll_at(now);
+        if app.bridge.restore_after_loss(now) {
             self.restore_saved_bridge(app);
         }
         for done in std::mem::take(&mut self.bridge_done) {
@@ -2143,6 +2150,143 @@ impl Driver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires explicit inert proxy runtime;only loopback readiness,no Telegram"]
+    fn actual_proxy_child_loss_and_saved_bridge_recovery_preserve_native_identity() {
+        let binary = std::env::var_os("TELEBAR_TEST_PROXY_BINARY").expect("exact inert runtime");
+        let root =
+            std::env::temp_dir().join(format!("telebar-bridge-child-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let home = crate::storage::Storage::open(&root).unwrap();
+        let mut app = crate::application::Application::load(&home).unwrap();
+        app.bridge.context = Some(crate::bridge::Context {
+            binary: binary.into(),
+            environment: Default::default(),
+        });
+        let mut driver = Driver::without_native("default".into(), "en".into());
+        let now = Instant::now();
+        for (id, client) in [("default", 41), ("other", 42)] {
+            driver
+                .runtime
+                .register(id.into(), id.into(), client, vec![], now)
+                .unwrap();
+        }
+        driver
+            .runtime
+            .metadata
+            .get_mut("other")
+            .unwrap()
+            .bridge_ready = true;
+        app.bridge.metadata = json!({"default":{"proxy_id":7,"previous_id":4},"other":{"proxy_id":9,"previous_id":5}});
+        let crate::commands::Action::BridgeReady(running) = app
+            .bridge
+            .context
+            .clone()
+            .unwrap()
+            .start(&std::sync::atomic::AtomicBool::new(false))
+            .unwrap()
+        else {
+            panic!("proxy readiness");
+        };
+        let old = running.helper.pid();
+        app.bridge.running = Some(running);
+        app.bridge
+            .running
+            .as_mut()
+            .unwrap()
+            .terminate_owned()
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(3);
+        while app.bridge.running.is_some() && Instant::now() < until {
+            app.bridge.poll_at(now);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(app.bridge.running.is_none());
+        assert!(!Path::new(&format!("/proc/{old}")).exists());
+        assert_eq!(
+            app.bridge.restart_after,
+            Some(now + Duration::from_secs(30))
+        );
+        let mut effects = Effects::default();
+        driver
+            .pump_bridge_at(&mut app, &home, &mut effects, now + Duration::from_secs(29))
+            .unwrap();
+        assert!(driver.bridge_restore.is_empty());
+        // Advance one explicit owner clock: confirmed child loss, not native
+        // request uncertainty or a sleeping retry loop. Unready first account
+        // cannot starve later account; capture effects BEFORE native dispatch.
+        driver
+            .pump_bridge_at(&mut app, &home, &mut effects, now + Duration::from_secs(31))
+            .unwrap();
+        assert_eq!(driver.bridge_operations.len(), 1);
+        let (token, operation) = driver.bridge_operations.pop().unwrap();
+        let (account, generation) = driver.runtime.engine.job_owner(token).unwrap();
+        assert_eq!(account, "other");
+        assert!(matches!(operation, crate::bridge::Operation::Enable));
+        assert_eq!(generation, 1);
+        assert!(app.bridge.restart_after.is_none());
+        let crate::commands::Action::BridgeReady(running) = app
+            .bridge
+            .context
+            .clone()
+            .unwrap()
+            .start(&std::sync::atomic::AtomicBool::new(false))
+            .unwrap()
+        else {
+            panic!("proxy recovery");
+        };
+        let new = running.helper.pid();
+        assert_ne!(new, old);
+        app.bridge.running = Some(running);
+        let action = driver.bridge_action(&app, &account, operation).unwrap();
+        let first = driver
+            .runtime
+            .engine
+            .job_complete(token, Ok(action), Instant::now());
+        assert_eq!(first.native[0].query["@type"], "getProxies");
+        let reply = json!({"@type":"proxies","@client_id":42,"@extra":first.native[0].query["@extra"],"proxies":[{"id":9,"is_enabled":true},{"id":5}]});
+        let next = driver.runtime.engine.receive(reply);
+        assert_eq!(next.native[0].query["@type"], "editProxy");
+        assert_eq!(next.native[0].query["proxy_id"], 9);
+        assert_eq!(
+            next.native[0].query["proxy"]["port"],
+            app.bridge.running.as_ref().unwrap().port
+        );
+        let completed = driver.runtime.engine.receive(
+            json!({"@type":"proxy","id":9,"@client_id":42,"@extra":next.native[0].query["@extra"]}),
+        );
+        driver
+            .bridge_owners
+            .insert(token, (account.clone(), operation));
+        app.bridge.busy.insert(account);
+        driver.bridge_mutations = completed.bridge_mutations;
+        driver
+            .pump_bridge_at(&mut app, &home, &mut effects, Instant::now())
+            .unwrap();
+        assert_eq!(
+            app.bridge.metadata["other"],
+            json!({"proxy_id":9,"previous_id":5})
+        );
+        assert!(app.bridge.busy.is_empty());
+        assert!(
+            home.read(".config/omagram/bridge.json", 8192)
+                .unwrap()
+                .is_some()
+        );
+        // Remaining unready profile stays queued and no repeated native
+        // mutation is submitted after one settled recovery.
+        driver
+            .pump_bridge_at(&mut app, &home, &mut effects, Instant::now())
+            .unwrap();
+        assert!(driver.bridge_operations.is_empty());
+        assert_eq!(
+            driver.bridge_restore.iter().cloned().collect::<Vec<_>>(),
+            ["default"]
+        );
+        app.bridge.running = None;
+        assert!(!Path::new(&format!("/proc/{new}")).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     #[ignore = "requires an explicitly provided verified TDLib library"]
     fn bridge_disable_persists_only_current_owner_and_releases_admission() {
