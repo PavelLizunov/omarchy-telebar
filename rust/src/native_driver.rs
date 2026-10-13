@@ -101,6 +101,8 @@ pub struct Driver {
     notification_updates: Vec<(String, Value)>,
     pub capture_context: Option<crate::capture::Context>,
     capture: Option<crate::capture::Capture>,
+    #[cfg(test)]
+    capture_inputs: Option<Vec<String>>,
     file_openers: Vec<(crate::process::Managed, std::fs::File)>,
     sound_jobs: crate::jobs::Pool,
     sound_owners: std::collections::HashMap<crate::lifecycle::Token, (String, u64)>,
@@ -152,6 +154,8 @@ impl Driver {
             notification_updates: vec![],
             capture_context: None,
             capture: None,
+            #[cfg(test)]
+            capture_inputs: None,
             file_openers: vec![],
             sound_jobs: Default::default(),
             sound_owners: Default::default(),
@@ -848,6 +852,8 @@ impl Driver {
             };
             let context = self.capture_context.clone();
             let capacity = self.worker_count() < 2;
+            #[cfg(test)]
+            let capture_inputs = self.capture_inputs.clone();
             let capture = &mut self.capture;
             let mut transition = None;
             let aid = self.runtime.engine.routed_account(&request);
@@ -865,6 +871,9 @@ impl Driver {
                     if state.retained.record.is_some() || state.retained.recovery_blocked(){return Err("a recorded message is still pending; resolve or discard it first".into());}
                     let chat=crate::commands::arg_int(args,"chatId",None,None,None)?;
                     if capture.is_some(){return Err("a voice or video message is already being recorded".into());}
+                    #[cfg(test)]
+                    let selected=crate::capture::Capture::start_with(context,aid,generation,kind,chat,capture_inputs.clone())?;
+                    #[cfg(not(test))]
                     let selected=crate::capture::Capture::start(context,aid,generation,kind,chat)?;
                     let mut answer=json!({"startedAt":selected.started});let mut event=json!({"event":"recording","state":kind,"chatId":number(chat),"startedAt":selected.started,"account":selected.account});if let Some(preview)=&selected.preview{answer["preview"]=json!(preview);event["preview"]=json!(preview);}
                     *capture=Some(selected);transition=Some(event);Ok(crate::commands::Action::Reply(answer))
@@ -2306,6 +2315,260 @@ mod tests {
         app.bridge.running = None;
         assert!(!Path::new(&format!("/proc/{new}")).exists());
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    #[ignore = "requires explicit synthetic video send ABI and identity-preserving confinement"]
+    fn actual_video_request_routes_retain_retry_and_discard_owned_inputs() {
+        assert_eq!(std::env::var("TELEBAR_PRIVATE_VIDEO").as_deref(), Ok("1"));
+        assert!(std::fs::File::open(std::env::var_os("TELEBAR_DENIED_FILE").unwrap()).is_err());
+        assert!(
+            std::os::unix::net::UnixStream::connect(
+                std::env::var_os("TELEBAR_DENIED_SOCKET").unwrap()
+            )
+            .is_err()
+        );
+        assert!(std::fs::File::open("/dev/video0").is_err());
+        for family in [libc::AF_INET, libc::AF_INET6] {
+            let fd = unsafe { libc::socket(family, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+            if fd >= 0 {
+                unsafe { libc::close(fd) };
+                panic!("fixture network denial missing");
+            }
+        }
+        let root = std::path::PathBuf::from(std::env::var_os("TELEBAR_PRIVATE_ROOT").unwrap())
+            .join("video-home");
+        std::fs::create_dir(&root).unwrap();
+        let home = crate::storage::Storage::open(&root).unwrap();
+        let mut app = crate::application::Application::load(&home).unwrap();
+        let context = crate::session::Context::new(
+            root.clone(),
+            root.clone(),
+            Default::default(),
+            "en".into(),
+        )
+        .unwrap();
+        context.configure_application(&mut app).unwrap();
+        let library = std::env::var_os("TELEBAR_TEST_INERT_ABI").unwrap();
+        let mut driver = Driver::open(Path::new(&library), "default".into(), "en".into()).unwrap();
+        context.register_catalog(&app, &mut driver).unwrap();
+        driver.capture_context = Some(crate::capture::Context {
+            home: root.clone(),
+            runtime: root.clone(),
+            environment: Default::default(),
+        });
+        let synthetic = |duration: &str| {
+            vec![
+                "-re".into(),
+                "-f".into(),
+                "lavfi".into(),
+                "-i".into(),
+                format!("testsrc2=size=80x60:rate=10:duration={duration}"),
+                "-re".into(),
+                "-f".into(),
+                "lavfi".into(),
+                "-i".into(),
+                format!("sine=frequency=440:duration={duration}"),
+            ]
+        };
+        driver.capture_inputs = Some(synthetic("5"));
+        let until = Instant::now() + Duration::from_secs(2);
+        while !driver.runtime.engine.accounts["default"].ready {
+            assert!(Instant::now() < until);
+            driver
+                .tick_application(&mut app, &home, &mut |_| panic!("no parameters"))
+                .unwrap();
+        }
+        let request = |driver: &mut Driver,
+                       app: &mut crate::application::Application,
+                       id: u64,
+                       cmd: &str,
+                       args: Value|
+         -> Value {
+            let req = Request::parse(
+                json!({"id":id,"cmd":cmd,"args":args})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            let mut effects = driver.request_application(app, &home, 7, req).unwrap();
+            let until = Instant::now() + Duration::from_secs(6);
+            loop {
+                if let Some((_, v)) = effects.replies.into_iter().find(|(_, v)| v["id"] == id) {
+                    return v;
+                }
+                assert!(Instant::now() < until, "finite video route {cmd}");
+                effects = driver
+                    .tick_application(app, &home, &mut |_| panic!("no parameters"))
+                    .unwrap();
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+        assert_eq!(
+            request(
+                &mut driver,
+                &mut app,
+                1,
+                "videonote.record",
+                json!({"chatId":101})
+            )["ok"],
+            true
+        );
+        let capture = driver.capture.as_ref().unwrap();
+        let pid = capture.pid();
+        let raw = capture.path.clone();
+        let preview = capture.preview.clone().unwrap();
+        assert_eq!(
+            request(
+                &mut driver,
+                &mut app,
+                2,
+                "videonote.record",
+                json!({"chatId":101})
+            )["error"],
+            "a voice or video message is already being recorded"
+        );
+        assert_eq!(
+            request(
+                &mut driver,
+                &mut app,
+                3,
+                "voice.stop",
+                json!({"send":false})
+            )["error"],
+            "no voice message is being recorded"
+        );
+        let until = Instant::now() + Duration::from_secs(3);
+        while preview.metadata().map_or(0, |m| m.len()) == 0 {
+            assert!(Instant::now() < until);
+            driver
+                .tick_application(&mut app, &home, &mut |_| panic!("no parameters"))
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        std::thread::sleep(Duration::from_millis(1300));
+        let sent = request(
+            &mut driver,
+            &mut app,
+            4,
+            "videonote.stop",
+            json!({"send":true,"replyToMessageId":3,"silent":true}),
+        );
+        assert_eq!(sent["ok"], true, "{sent}");
+        assert_eq!(sent["result"]["content"]["kind"], "videoNote");
+        let playback = sent["result"]["content"]["media"]["file"]["path"]
+            .as_str()
+            .unwrap();
+        let bytes = std::fs::read(playback).unwrap();
+        assert_eq!(crate::media::probe(playback)[1..], [480, 480]);
+        assert!(!preview.exists());
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+        assert!(raw.exists());
+        driver.capture_inputs = Some(synthetic("1.1"));
+        assert_eq!(
+            request(
+                &mut driver,
+                &mut app,
+                5,
+                "videonote.record",
+                json!({"chatId":101})
+            )["ok"],
+            true
+        );
+        let raw = driver.capture.as_ref().unwrap().path.clone();
+        let until = Instant::now() + Duration::from_secs(3);
+        while driver.capture.is_some() {
+            let effects = driver
+                .tick_application(&mut app, &home, &mut |_| panic!("no parameters"))
+                .unwrap();
+            assert!(effects.work.is_empty() && effects.native.is_empty());
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let view = driver.runtime.engine.accounts["default"]
+            .state
+            .retained
+            .view("default");
+        assert_eq!(view["state"], "prepareFailed");
+        let token = view["token"].as_str().unwrap();
+        let retried = request(
+            &mut driver,
+            &mut app,
+            6,
+            "recording.retry",
+            json!({"token":token}),
+        );
+        assert_eq!(retried["ok"], true, "{retried}");
+        assert_eq!(retried["result"]["content"]["kind"], "videoNote");
+        assert!(
+            driver.runtime.engine.accounts["default"]
+                .state
+                .retained
+                .record
+                .is_none()
+        );
+        assert!(raw.exists());
+        driver.capture_inputs = Some(synthetic("5"));
+        assert_eq!(
+            request(
+                &mut driver,
+                &mut app,
+                7,
+                "videonote.record",
+                json!({"chatId":101})
+            )["ok"],
+            true
+        );
+        let raw = driver.capture.as_ref().unwrap().path.clone();
+        let preview = driver.capture.as_ref().unwrap().preview.clone().unwrap();
+        let pid = driver.capture.as_ref().unwrap().pid();
+        assert_eq!(
+            request(
+                &mut driver,
+                &mut app,
+                8,
+                "videonote.stop",
+                json!({"send":false})
+            )["ok"],
+            true
+        );
+        assert!(!raw.exists() && !preview.exists());
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid as i32, &mut status, libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+        home.write("omagram/rec/raw-note.mp4", b"inert unsent bytes", 0o600)
+            .unwrap();
+        assert_eq!(
+            request(
+                &mut driver,
+                &mut app,
+                9,
+                "videonote.discard",
+                json!({"path":root.join("omagram/rec/raw-note.mp4")})
+            )["ok"],
+            true
+        );
+        assert!(!root.join("omagram/rec/raw-note.mp4").exists());
+        driver.close(Duration::from_secs(2)).unwrap();
+        drop(driver);
+        crate::upload_lease::recover_unsent(&home, ".local/share/omagram/sent").unwrap();
+        assert_eq!(std::fs::read(playback).unwrap(), bytes);
+        println!(
+            "normal test-build video record/stop/retry/discard routes; actual synthetic ffmpeg/preview/FFI; no camera or Telegram; retained playback PASS"
+        );
     }
     #[test]
     fn spontaneous_capture_exit_is_polled_retained_and_never_sent() {

@@ -215,6 +215,20 @@ bash rust/tests/run-voice-driver.sh /absolute/exact/send_driver-test \
   /absolute/task-owned/libsendfixture.so /absolute/task-owned/keyring-sandbox
 ```
 
+`tests/run-video-driver.sh` routes normal video record/stop and retained retry/
+discard requests through an explicitly compiled lib-test Driver, real ffmpeg
+lavfi video/audio and the synthetic send ABI. It checks preview/output, 480-square
+conversion, spontaneous retention with no send, explicit retry acknowledgement,
+unsent stop, exact child reaping and kept playback. Its input seam is `cfg(test)`
+only: release still uses fixed camera/Pulse capture and has no environment or CLI
+input override. This is command routing, not production device acceptance.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked --offline --lib --no-run
+bash rust/tests/run-video-driver.sh /absolute/exact/lib-test \
+  /absolute/task-owned/libsendfixture.so /absolute/task-owned/keyring-sandbox
+```
+
 `tests/run-bridge-driver.sh` checks normal `bridge.test` and status through the
 actual Driver, worker and one owned Rust proxy in a private network namespace.
 The explicit C fixture alone supplies local ping success/refusal. Busy/refused

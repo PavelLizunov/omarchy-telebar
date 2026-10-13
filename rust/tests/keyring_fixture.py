@@ -10,10 +10,10 @@ import sys
 import tempfile
 
 mode = sys.argv[4] if len(sys.argv) == 5 else "--keyring-fixture"
-assert mode in ("--keyring-fixture", "--send-fixture", "--voice-fixture")
+assert mode in ("--keyring-fixture", "--send-fixture", "--voice-fixture", "--video-fixture")
 binary, library, sandbox = (pathlib.Path(p).resolve(strict=True) for p in sys.argv[1:4])
 voice = mode == "--voice-fixture"
-sending = mode in ("--send-fixture", "--voice-fixture")
+sending = mode in ("--send-fixture", "--voice-fixture", "--video-fixture")
 root = pathlib.Path(tempfile.mkdtemp(prefix="telebar-private-send-" if sending else "telebar-private-keyring-"))
 exposed = root / "exposed"
 exposed.mkdir(mode=0o700)
@@ -53,6 +53,9 @@ try:
     if voice:
         env["TELEBAR_PRIVATE_VOICE"] = "1"
         test = "actual_voice_driver_uses_only_the_private_synthetic_pulse_source"
+    if mode == "--video-fixture":
+        env["TELEBAR_PRIVATE_VIDEO"] = "1"
+        test = "native_driver::tests::actual_video_request_routes_retain_retry_and_discard_owned_inputs"
     result = subprocess.run([str(sandbox), str(exposed), str(exposed / "test-keyring"),
                              test, "--ignored", "--exact", "--nocapture"], env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
