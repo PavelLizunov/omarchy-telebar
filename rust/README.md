@@ -208,6 +208,18 @@ bash rust/tests/run-voice-driver.sh /absolute/exact/send_driver-test \
   /absolute/task-owned/libsendfixture.so /absolute/task-owned/keyring-sandbox
 ```
 
+`tests/run-bridge-driver.sh` checks normal `bridge.test` and status through the
+actual Driver, worker and one owned Rust proxy in a private network namespace.
+The explicit C fixture alone supplies local ping success/refusal. Busy/refused
+requests release admission and preserve child and metadata identity; explicit
+subsequent commands reuse the child without automatic retries. No proxy enable
+or persistence occurs. This is route/lifecycle evidence, not remote latency.
+
+```sh
+bash rust/tests/run-bridge-driver.sh /absolute/exact/send_driver-test \
+  /absolute/task-owned/libsendfixture.so /absolute/exact/telebar-runtime
+```
+
 `tests/run-proxy-remote.sh` is a separate explicit public transport check, not part
 of inert/default tests. It permits host networking only inside a private namespace
 and sends one unauthenticated MTProto `req_pq_multi` through the actual Rust proxy,

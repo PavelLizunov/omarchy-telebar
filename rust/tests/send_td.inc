@@ -4,10 +4,16 @@
  */
 static int fixture_messages, fixture_profile, fixture_refused, fixture_next=10;
 static json_object *fixture_input;
+static int fixture_ping_refused;
 static int fixture_resources(int client,const char *type,json_object *query,json_object *extra) {
     if(!strcmp(type,"getOption") && get(query,"name") && !strcmp(json_object_get_string(get(query,"name")),"telebarFixtureInput")) {
         json_object *input=get(query,"fixture_file");if(!input || json_object_get_type(input)!=json_type_object)abort();
         if(fixture_input) {json_object_put(fixture_input);} fixture_input=json_object_get(input);publish(client,"{\"@type\":\"ok\"}",extra);return 1;
+    }
+    if(!strcmp(type,"getOption") && get(query,"name") && !strcmp(json_object_get_string(get(query,"name")),"telebarFixturePingRefuse")) {fixture_ping_refused=1;publish(client,"{\"@type\":\"ok\"}",extra);return 1;}
+    if(!strcmp(type,"pingProxy")) {
+        if(fixture_ping_refused) {fixture_ping_refused=0;publish(client,"{\"@type\":\"error\",\"code\":400,\"message\":\"synthetic ping refused\"}",extra);}
+        else {publish(client,"{\"@type\":\"seconds\",\"seconds\":0.125}",extra);}return 1;
     }
     if(!strcmp(type,"getFile") || !strcmp(type,"downloadFile")) {
         if(!fixture_input) {abort();} publish(client,json_object_to_json_string_ext(fixture_input,JSON_C_TO_STRING_PLAIN),extra);return 1;

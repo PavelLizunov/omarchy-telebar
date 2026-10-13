@@ -541,6 +541,82 @@ fn actual_send_driver_acceptance_keeps_playback_inputs_and_originals() {
     assert!(Path::new(&playable).exists() && Path::new(&note_path).exists());
 }
 
+#[test]
+#[ignore = "requires reviewed private bridge namespace and explicit synthetic ping ABI"]
+fn actual_bridge_test_route_owns_one_proxy_and_preserves_metadata() {
+    assert_eq!(std::env::var("TELEBAR_ISOLATED_BRIDGE").as_deref(), Ok("1"));
+    let root = Path::new("/tmp/telebar-bridge-driver");
+    fs::create_dir(root).unwrap();
+    let home = Storage::open(root).unwrap();
+    let mut app = Application::load(&home).unwrap();
+    app.bridge.context = Some(telebar_runtime::bridge::Context {
+        binary: std::env::var_os("TELEBAR_TEST_PROXY_BINARY")
+            .unwrap()
+            .into(),
+        environment: Default::default(),
+    });
+    let library = std::env::var_os("TELEBAR_TEST_INERT_ABI").unwrap();
+    let mut driver = Driver::open(Path::new(&library), "default".into(), "en".into()).unwrap();
+    driver
+        .register("default".into(), "Bridge fixture".into(), vec![])
+        .unwrap();
+    let until = Instant::now() + Duration::from_secs(2);
+    while !driver.runtime.engine.accounts["default"].ready {
+        assert!(Instant::now() < until);
+        driver
+            .tick_application(&mut app, &home, &mut |_| panic!("no parameters"))
+            .unwrap();
+    }
+    let answer = command(&mut driver, &mut app, &home, 70, "bridge.test", json!({}));
+    assert_eq!(reply(&answer, 70)["ok"], true);
+    assert_eq!(reply(&answer, 70)["result"]["seconds"], 0.125);
+    let pid = app.bridge.running.as_ref().unwrap().helper.pid();
+    let status = command(&mut driver, &mut app, &home, 71, "bridge.status", json!({}));
+    assert_eq!(reply(&status, 71)["ok"], true);
+    assert_eq!(reply(&status, 71)["result"]["pid"], pid);
+    assert_eq!(reply(&status, 71)["result"]["running"], true);
+    assert_eq!(reply(&status, 71)["result"]["enabled"], false);
+    assert!(app.bridge.metadata.as_object().unwrap().is_empty());
+    assert!(!root.join(".config/omagram/bridge.json").exists());
+    app.bridge.busy.insert("default".into());
+    let refused = command(&mut driver, &mut app, &home, 72, "bridge.test", json!({}));
+    assert_eq!(
+        reply(&refused, 72)["error"],
+        "a bridge operation is already running"
+    );
+    assert_eq!(app.bridge.running.as_ref().unwrap().helper.pid(), pid);
+    app.bridge.busy.clear();
+    let mut action = Some(Action::Native {
+        query: json!({"@type":"getOption","name":"telebarFixturePingRefuse"}),
+        answer: Answer::Empty,
+    });
+    let effects = driver
+        .request_with_local(
+            7,
+            request(73, "chat.history", json!({"chatId":101})),
+            &mut |_, _, _| Some(Ok(action.take().unwrap())),
+        )
+        .unwrap();
+    let configured = collect(&mut driver, &mut app, &home, 73, effects);
+    assert_eq!(reply(&configured, 73)["ok"], true);
+    let refused = command(&mut driver, &mut app, &home, 74, "bridge.test", json!({}));
+    assert_eq!(reply(&refused, 74)["error"], "synthetic ping refused");
+    assert!(app.bridge.busy.is_empty());
+    assert_eq!(app.bridge.running.as_ref().unwrap().helper.pid(), pid);
+    let again = command(&mut driver, &mut app, &home, 75, "bridge.test", json!({}));
+    assert_eq!(reply(&again, 75)["ok"], true);
+    assert_eq!(app.bridge.running.as_ref().unwrap().helper.pid(), pid);
+    assert!(!root.join(".config/omagram/bridge.json").exists());
+    app.bridge.running = None;
+    assert_capture_reaped(pid);
+    driver.close(Duration::from_secs(2)).unwrap();
+    drop(driver);
+    println!(
+        "normal bridge.test synthetic success/refusal; one actual Rust proxy, metadata unchanged, child reaped; no external network PASS"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 struct VoiceGraph {
     environment: std::collections::BTreeMap<String, String>,
     _owners: Vec<telebar_runtime::process::Managed>,
