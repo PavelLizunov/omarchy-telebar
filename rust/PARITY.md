@@ -148,8 +148,19 @@ recording-runtime context are present; inert native fixtures remain root-free.
 bounded cancellable Secret Service save worker. Values travel through stdin,
 never argv; partial store failure is reported. Completion acknowledges the save
 before session-owned startup, and retired/expired tokens or stale generations
-cannot trigger parameters. Synthetic fake-store checks passed; no real keyring
-was contacted. Explicit asynchronous startup preparation is now integrated into
+cannot trigger parameters. Synthetic fake-store checks passed; no real user keyring was contacted. A separate
+actual private GNOME Secret Service fixture now exercises root-owned secret-tool,
+account-key lookup/store, asynchronous Driver startup, sequential encrypted
+disposable database reopen and account.add. AF_UNIX-only service policy refuses
+IPv4/IPv6 sockets. Review exposed the first wrapper's filesystem/Unix/device
+containment gap: env clearing alone was not isolation. The corrected test-only
+Landlock ABI9 launcher preserves root helper identity and denies host file,
+pathname/abstract Unix socket, device and signal scopes; external existing
+file/socket/inert-device controls pass. `/usr` and narrow non-secret seat/passwd
+metadata remain read-only; only the private fixture tree is writable. User-manager
+PrivateUsers=identity preflight was refused, so no root remapping/trust relaxation
+or privileged fallback was used. This is native
+helper/private service evidence, not the user's Secret Service or account acceptance. Explicit asynchronous startup preparation is now integrated into
 the single native Driver with account/client/generation/serial/auth ownership.
 Startup and user jobs share a two-worker admission ceiling; a bounded FIFO
 queues up to ten account startups without retry loops, deduplicates current
@@ -372,12 +383,18 @@ separate child process. Original Telegram hosts/DC fallback and Flowseal MIT
 attribution remain. Finite config/handshake/write deadlines and owner EOF/signal
 shutdown are tested. Native bridge enable/disable continuations preserve previous
 proxy identity, persist only current metadata and release stale admission.
+The official parameter/database path reaches the pre-phone authorization state
+on two disposable no-network accounts. New account.add receives the same durable
+recording checkpoint owner before native client creation/catalog persistence.
 Saved-account restoration is queued after bridge-ready parameters. A confirmed
 owned proxy-child loss queues one recovery after 30 seconds; an unready first
 account cannot starve later ready profiles. Native mutation uncertainty is never
 automatically retried. Synthetic owner/deadline checks pass; real recovery and
 Telegram TLS/relay connectivity, account proxy restoration and full-duplex
-pressure/ping behavior remain unverified. A finite 295-input helper corpus has zero differences
+behavior remain unverified. The actual duplex pump now has finite fragmented
+cipher-pressure and idle ping/pong checks; the same native TLS/upgrade helper
+passes local trust/hostname negative controls and binary transport. No remote
+TLS/relay or working-account success is inferred. A finite 295-input helper corpus has zero differences
 for AES, obfuscation, packet splitting and managed menu text. It is not network
 acceptance. The real proxy process survives 32 inert loopback connections and
 exits on its private owner pipe closing in a host-network-free namespace.

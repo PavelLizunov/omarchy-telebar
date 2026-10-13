@@ -72,6 +72,7 @@ impl Application {
     ) -> Effects {
         let mut created = None;
         let mut added = None;
+        let mut retained = None;
         let count = runtime.engine.accounts.len();
         let mut roots = Vec::new();
         let known: HashSet<_> = runtime.engine.accounts.values().map(|a| a.client).collect();
@@ -85,6 +86,10 @@ impl Application {
             if runtime.metadata.contains_key(&id){return Err("the request failed".into());}
             if let (Some((home, _)), Some(recording_runtime)) = (&self.upload_context, &self.recording_runtime) {
                 roots = crate::paths::AccountPaths::new(&home.join(".local/share/omagram"), &id)?.media_roots(recording_runtime);
+                let checkpoint=crate::recording_checkpoint::Checkpoint::open(home,recording_runtime,&id).map_err(|_| "the account recording context could not be prepared")?;
+                let mut owner=crate::recorded_send::Retained::default();owner.attach(checkpoint).map_err(|_| "the account recording context could not be prepared")?;
+                if owner.record.is_some() || owner.recovery_blocked() {return Err("the account recording identity already exists".into());}
+                retained=Some(owner);
             }
             let client=create().map_err(|_|"Telegram is not available")?;created=Some(client);if client<=0||known.contains(&client){return Err("Telegram is not available".into());}
             let mut catalog=self.catalog.clone();catalog["accounts"].as_array_mut().ok_or("the request failed")?.push(json!({"id":id,"name":name,"phone":"","meId":0}));catalog["active"]=json!(id);
@@ -102,6 +107,15 @@ impl Application {
                     std::time::Instant::now(),
                 )
                 .expect("unique valid created account/client");
+            if let Some(retained) = retained {
+                runtime
+                    .engine
+                    .accounts
+                    .get_mut(&id)
+                    .expect("registered account")
+                    .state
+                    .retained = retained;
+            }
             runtime.engine.active = id.clone();
             effects.native.append(&mut registration.native);
             if let Some((home, databases)) = &mut self.upload_context {

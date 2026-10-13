@@ -58,7 +58,7 @@ impl Storage {
         }
         let mut directory = File::options()
             .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+            .custom_flags(libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open("/")?;
         // O_NOFOLLOW on only the leaf is insufficient: pin every ancestor.
         for part in root.components().skip(1) {
@@ -68,7 +68,10 @@ impl Storage {
             let name = part
                 .to_str()
                 .ok_or_else(|| io::Error::other("invalid storage root"))?;
-            directory = open_at(&directory, name, libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
+            // Ancestors require traversal/metadata only, not directory listing.
+            // O_PATH retains the same no-follow inode/ownership checks and lets
+            // a least-privilege caller deny reading unrelated ancestor content.
+            directory = open_at(&directory, name, libc::O_PATH | libc::O_DIRECTORY, 0)?;
             let m = directory.metadata()?;
             // Root-owned sticky temporary parents are safe for disposable
             // owned fixtures; other shared writable ancestors are rejected.
@@ -79,6 +82,7 @@ impl Storage {
                 return Err(io::Error::other("unsafe storage ancestor"));
             }
         }
+        directory = open_at(&directory, ".", libc::O_RDONLY | libc::O_DIRECTORY, 0)?;
         owned(&directory, true)?;
         Ok(Self { root: directory })
     }

@@ -96,6 +96,45 @@ TELEBAR_TEST_INERT_ABI=/absolute/fixture/lib/libtdjson.so \
   cargo test --manifest-path rust/Cargo.toml --locked --offline --test input_driver -- --ignored
 ```
 
+## Official startup and private Secret Service checks
+
+`tests/native_parameters.rs` exercises the official loaded JSON ABI through the
+actual Driver on two disposable profiles. It sends synthetic parameters, creates
+distinct encrypted database paths and reaches `phone`, then closes both clients.
+The wrapper removes host home/bus/devices and network. This is actual native
+parameter/database acceptance, not real Telegram authorization or existing-user
+profile acceptance. Wrapper tests fail closed when required kernel isolation is
+unavailable; a plain env-cleared host test is not equivalent containment.
+
+`tests/keyring_service.rs` starts a finite private D-Bus and GNOME Secret Service
+with synthetic credentials under a new temporary home. The real root-owned
+`secret-tool` and normal asynchronous startup worker store/look up exact account
+keys, sequentially reopen disposable databases and add a third account through
+the actual catalog/Driver. A task-owned user service enforces AF_UNIX-only sockets;
+the test verifies that IPv4/IPv6 socket creation fails. An identity-preserving
+Landlock ABI 9 launcher additionally denies file/device/pathname Unix sockets
+outside the new private tree. Existing external sentinel/socket and inert device
+negative controls prove denial, not merely absence. Read-only `/usr`, four inert
+pseudo-devices and narrow non-secret passwd/machine/seat metadata are admitted;
+no host bus/key directories are accessible. Both helpers are reaped.
+Root/helper trust is not relaxed
+for a user namespace, and no production route is added for these tests.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked --offline --test native_parameters --no-run
+bash rust/tests/run-native-parameters.sh /absolute/exact/native_parameters-test /absolute/verified/lib/libtdjson.so
+cargo test --manifest-path rust/Cargo.toml --locked --offline --test keyring_service --no-run
+gcc -std=gnu11 -Wall -Wextra -Werror -O2 rust/tests/keyring_sandbox.c -o /absolute/task-owned/keyring-sandbox
+bash rust/tests/run-keyring-service.sh /absolute/exact/keyring_service-test /absolute/verified/lib/libtdjson.so /absolute/task-owned/keyring-sandbox
+```
+
+The proxy's actual TLS/WebSocket upgrade and duplex cipher pump are also tested
+with a local self-signed fixture, explicit trust root, wrong-host/untrusted-root
+negative controls, binary frames, idle ping/pong and fragmented pressure. Normal
+production connections still use only admitted Telegram destinations and system
+roots. Local transport verification does not establish remote Telegram reachability
+or working-account bundled-bridge recovery.
+
 ## Implemented helper entry points
 
 The candidate implements `--launch`, `--host-window`, `--daemon`, `--menu`,

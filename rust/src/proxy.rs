@@ -133,35 +133,12 @@ async fn websocket(
     for (host, address) in targets(dc) {
         let attempt = async {
             let stream = TcpStream::connect((address.as_deref().unwrap_or(&host), 443)).await?;
-            let mut request = format!("wss://{host}/apiws")
-                .into_client_request()
-                .map_err(|_| failure())?;
-            request.headers_mut().insert(
-                "Sec-WebSocket-Protocol",
-                "binary".parse().expect("fixed header"),
-            );
-            let config = WebSocketConfig::default()
-                .read_buffer_size(16384)
-                .write_buffer_size(0)
-                .max_write_buffer_size(MAX_PACKET + 65536)
-                .max_message_size(Some(MAX_PACKET))
-                .max_frame_size(Some(MAX_PACKET));
-            let connector = native_tls::TlsConnector::new().map_err(|_| failure())?;
-            let tls = tokio_native_tls::TlsConnector::from(connector)
-                .connect(&host, stream)
-                .await
-                .map_err(|_| failure())?;
-            let stream = UpgradeStream {
-                inner: tls,
-                remaining: Some(16384),
-                scratch: Vec::new(),
-            };
-            let (mut ws, _) =
-                tokio_tungstenite::client_async_with_config(request, stream, Some(config))
-                    .await
-                    .map_err(|_| failure())?;
-            ws.get_mut().remaining = None;
-            Ok::<_, io::Error>(ws)
+            tls_websocket(
+                stream,
+                &host,
+                native_tls::TlsConnector::new().map_err(|_| failure())?,
+            )
+            .await
         };
         let budget = deadline
             .saturating_duration_since(tokio::time::Instant::now())
@@ -175,8 +152,41 @@ async fn websocket(
     }
     Err(failure())
 }
+async fn tls_websocket(
+    stream: TcpStream,
+    host: &str,
+    connector: native_tls::TlsConnector,
+) -> io::Result<WebSocketStream<UpgradeStream<tokio_native_tls::TlsStream<TcpStream>>>> {
+    let mut request = format!("wss://{host}/apiws")
+        .into_client_request()
+        .map_err(|_| failure())?;
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "binary".parse().expect("fixed header"),
+    );
+    let config = WebSocketConfig::default()
+        .read_buffer_size(16384)
+        .write_buffer_size(0)
+        .max_write_buffer_size(MAX_PACKET + 65536)
+        .max_message_size(Some(MAX_PACKET))
+        .max_frame_size(Some(MAX_PACKET));
+    let tls = tokio_native_tls::TlsConnector::from(connector)
+        .connect(host, stream)
+        .await
+        .map_err(|_| failure())?;
+    let stream = UpgradeStream {
+        inner: tls,
+        remaining: Some(16384),
+        scratch: Vec::new(),
+    };
+    let (mut ws, _) = tokio_tungstenite::client_async_with_config(request, stream, Some(config))
+        .await
+        .map_err(|_| failure())?;
+    ws.get_mut().remaining = None;
+    Ok(ws)
+}
 async fn relay(stream: TcpStream, secret: [u8; 16], counts: Counts) -> io::Result<()> {
-    let (mut reader, mut writer) = stream.into_split();
+    let (mut reader, writer) = stream.into_split();
     let mut handshake = [0; 64];
     timeout(Duration::from_secs(10), reader.read_exact(&mut handshake))
         .await
@@ -185,7 +195,7 @@ async fn relay(stream: TcpStream, secret: [u8; 16], counts: Counts) -> io::Resul
     let mut ws = websocket(dc).await?;
     let relay = crypto::relay_handshake(tag, dc)?;
     let crypto = Crypto::new(&handshake, &secret, &relay)?;
-    let mut splitter = Splitter::new(&relay, tag)?;
+    let splitter = Splitter::new(&relay, tag)?;
     timeout(
         Duration::from_secs(30),
         ws.send(Message::Binary(relay.to_vec().into())),
@@ -193,6 +203,19 @@ async fn relay(stream: TcpStream, secret: [u8; 16], counts: Counts) -> io::Resul
     .await
     .map_err(|_| failure())?
     .map_err(|_| failure())?;
+    relay_frames(reader, writer, ws, crypto, splitter, counts).await
+}
+async fn relay_frames<S>(
+    mut reader: tokio::net::tcp::OwnedReadHalf,
+    mut writer: tokio::net::tcp::OwnedWriteHalf,
+    ws: WebSocketStream<S>,
+    crypto: Crypto,
+    mut splitter: Splitter,
+    counts: Counts,
+) -> io::Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let (mut sink, mut source) = ws.split();
     let (mut client_dec, mut telegram_enc, mut client_enc, mut telegram_dec) = (
         crypto.client_dec,
@@ -372,6 +395,275 @@ pub fn fixture_lifetime(
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Tungstenite's public callback contract fixes the large HTTP error type.
+    #[allow(clippy::result_large_err)]
+    fn binary_fixture_headers(
+        request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+        mut response: tokio_tungstenite::tungstenite::handshake::server::Response,
+    ) -> Result<
+        tokio_tungstenite::tungstenite::handshake::server::Response,
+        tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+    > {
+        assert_eq!(request.uri().path(), "/apiws");
+        assert_eq!(request.headers()["Sec-WebSocket-Protocol"], "binary");
+        response
+            .headers_mut()
+            .insert("Sec-WebSocket-Protocol", "binary".parse().unwrap());
+        Ok(response)
+    }
+    #[test]
+    fn local_tls_upgrade_verifies_host_and_trust_and_uses_native_binary_frames() {
+        use openssl::{
+            asn1::Asn1Time,
+            bn::BigNum,
+            hash::MessageDigest,
+            pkey::PKey,
+            rsa::Rsa,
+            x509::{
+                X509, X509NameBuilder,
+                extension::{BasicConstraints, SubjectAlternativeName},
+            },
+        };
+        let key = PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_text("CN", "fixture.telebar.invalid")
+            .unwrap();
+        let name = name.build();
+        let mut cert = X509::builder().unwrap();
+        cert.set_version(2).unwrap();
+        cert.set_serial_number(&BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap())
+            .unwrap();
+        cert.set_subject_name(&name).unwrap();
+        cert.set_issuer_name(&name).unwrap();
+        cert.set_pubkey(&key).unwrap();
+        cert.set_not_before(&Asn1Time::days_from_now(0).unwrap())
+            .unwrap();
+        cert.set_not_after(&Asn1Time::days_from_now(1).unwrap())
+            .unwrap();
+        cert.append_extension(BasicConstraints::new().critical().ca().build().unwrap())
+            .unwrap();
+        let san = SubjectAlternativeName::new()
+            .dns("fixture.telebar.invalid")
+            .build(&cert.x509v3_context(None, None))
+            .unwrap();
+        cert.append_extension(san).unwrap();
+        cert.sign(&key, MessageDigest::sha256()).unwrap();
+        let pem = cert.build().to_pem().unwrap();
+        let identity =
+            native_tls::Identity::from_pkcs8(&pem, &key.private_key_to_pem_pkcs8().unwrap())
+                .unwrap();
+        let acceptor =
+            tokio_native_tls::TlsAcceptor::from(native_tls::TlsAcceptor::new(identity).unwrap());
+        let certificate = native_tls::Certificate::from_pem(&pem).unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            timeout(Duration::from_secs(8), async {
+                for (trusted, host, accepted) in [
+                    (true, "fixture.telebar.invalid", true),
+                    (false, "fixture.telebar.invalid", false),
+                    (true, "other.telebar.invalid", false),
+                ] {
+                    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+                        .await
+                        .unwrap();
+                    let address = listener.local_addr().unwrap();
+                    let acceptor = acceptor.clone();
+                    let server = tokio::spawn(async move {
+                        let (stream, _) = listener.accept().await.unwrap();
+                        let tls = acceptor.accept(stream).await;
+                        if !accepted {
+                            assert!(tls.is_err(), "untrusted/wrong-host TLS must be refused");
+                            return;
+                        }
+                        let mut ws = tokio_tungstenite::accept_hdr_async(
+                            tls.unwrap(),
+                            binary_fixture_headers,
+                        )
+                        .await
+                        .unwrap();
+                        assert_eq!(
+                            ws.next().await.unwrap().unwrap(),
+                            Message::Binary(b"synthetic-native-transport".to_vec().into())
+                        );
+                        ws.send(Message::Ping(b"tls-idle".to_vec().into()))
+                            .await
+                            .unwrap();
+                        assert_eq!(
+                            ws.next().await.unwrap().unwrap(),
+                            Message::Pong(b"tls-idle".to_vec().into())
+                        );
+                        ws.send(Message::Binary(b"synthetic-server-reply".to_vec().into()))
+                            .await
+                            .unwrap();
+                        ws.send(Message::Close(None)).await.unwrap();
+                    });
+                    let mut builder = native_tls::TlsConnector::builder();
+                    if trusted {
+                        builder.add_root_certificate(certificate.clone());
+                    }
+                    let stream = TcpStream::connect(address).await.unwrap();
+                    let client = tls_websocket(stream, host, builder.build().unwrap()).await;
+                    if accepted {
+                        let mut client = client.unwrap();
+                        client
+                            .send(Message::Binary(
+                                b"synthetic-native-transport".to_vec().into(),
+                            ))
+                            .await
+                            .unwrap();
+                        assert_eq!(
+                            client.next().await.unwrap().unwrap(),
+                            Message::Ping(b"tls-idle".to_vec().into())
+                        );
+                        client.flush().await.unwrap();
+                        assert_eq!(
+                            client.next().await.unwrap().unwrap(),
+                            Message::Binary(b"synthetic-server-reply".to_vec().into())
+                        );
+                        assert!(matches!(
+                            client.next().await.unwrap().unwrap(),
+                            Message::Close(_)
+                        ));
+                    } else {
+                        assert!(client.is_err());
+                    }
+                    server.await.unwrap();
+                }
+            })
+            .await
+            .expect("finite TLS three-request no-retry budget");
+        });
+    }
+    #[test]
+    fn actual_relay_flushes_idle_ping_and_preserves_full_duplex_cipher_bytes() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            timeout(Duration::from_secs(5), async {
+                let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+                    .await
+                    .unwrap();
+                let address = listener.local_addr().unwrap();
+                let (connected, accepted) =
+                    tokio::join!(TcpStream::connect(address), listener.accept());
+                let mut client = connected.unwrap();
+                let stream = accepted.unwrap().0;
+                let (local, remote) = tokio::io::duplex(65536);
+                let ws = WebSocketStream::from_raw_socket(
+                    local,
+                    tokio_tungstenite::tungstenite::protocol::Role::Client,
+                    Some(
+                        WebSocketConfig::default()
+                            .write_buffer_size(0)
+                            .max_message_size(Some(MAX_PACKET)),
+                    ),
+                )
+                .await;
+                let mut server = WebSocketStream::from_raw_socket(
+                    remote,
+                    tokio_tungstenite::tungstenite::protocol::Role::Server,
+                    Some(
+                        WebSocketConfig::default()
+                            .write_buffer_size(0)
+                            .max_message_size(Some(MAX_PACKET)),
+                    ),
+                )
+                .await;
+                let mut handshake = [7u8; 64];
+                for (i, b) in handshake.iter_mut().enumerate() {
+                    *b = (i + 1) as u8;
+                }
+                let secret = [3u8; 16];
+                let relay =
+                    crypto::relay_with_random([11u8; 64], [1, 2], crypto::SECURE, 2).unwrap();
+                let owner = Crypto::new(&handshake, &secret, &relay).unwrap();
+                let peer = Crypto::new(&handshake, &secret, &relay).unwrap();
+                let splitter = Splitter::new(&relay, crypto::SECURE).unwrap();
+                let counts = Counts::default();
+                let tracked = counts.clone();
+                let (read, write) = stream.into_split();
+                let task = tokio::spawn(async move {
+                    relay_frames(read, write, ws, owner, splitter, tracked).await
+                });
+                // No application upload traffic: automatic pong still flushes.
+                server
+                    .send(Message::Ping(b"idle-keepalive".to_vec().into()))
+                    .await
+                    .unwrap();
+                let pong = server.next().await.unwrap().unwrap();
+                assert_eq!(pong, Message::Pong(b"idle-keepalive".to_vec().into()));
+                use crate::proxy_crypto::Ctr;
+                use openssl::hash::{MessageDigest, hash};
+                let mut seed = handshake[8..40].to_vec();
+                seed.extend(secret);
+                let key = hash(MessageDigest::sha256(), &seed).unwrap();
+                let mut encrypt = Ctr::new(&key, &handshake[40..56]).unwrap();
+                encrypt.update(&[0; 64]).unwrap();
+                let mut plain = Vec::new();
+                for i in 0..128u32 {
+                    plain.extend(1024u32.to_le_bytes());
+                    plain.extend(vec![i as u8; 1024]);
+                }
+                let cipher = encrypt.update(&plain).unwrap();
+                let mut expected = peer.telegram_enc;
+                let expected = expected.update(&plain).unwrap();
+                let upload = async {
+                    for chunk in cipher.chunks(13) {
+                        client.write_all(chunk).await.unwrap();
+                    }
+                };
+                let receive = async {
+                    let mut got = vec![];
+                    while got.len() < expected.len() {
+                        match server.next().await.unwrap().unwrap() {
+                            Message::Binary(bytes) => got.extend(bytes),
+                            other => panic!("unexpected relay frame {other:?}"),
+                        }
+                    }
+                    assert_eq!(got, expected);
+                };
+                tokio::join!(upload, receive);
+                let down = vec![0x5a; 65536];
+                let expected = vec![0x5a; 65536];
+                // Compose Telegram-to-client cipher direction using the exact
+                // native owner inverses; no Telegram account or TLS involved.
+                let reverse: Vec<_> = relay[8..56].iter().copied().rev().collect();
+                let mut telegram = Ctr::new(&reverse[..32], &reverse[32..]).unwrap();
+                let mut expected_cipher = peer.client_enc;
+                let expected = expected_cipher.update(&expected).unwrap();
+                let wire = telegram.update(&down).unwrap();
+                let down_send = async {
+                    server.send(Message::Binary(wire.into())).await.unwrap();
+                };
+                let down_read = async {
+                    let mut got = vec![0; expected.len()];
+                    client.read_exact(&mut got).await.unwrap();
+                    assert_eq!(got, expected);
+                };
+                tokio::join!(down_send, down_read);
+                assert_eq!(
+                    counts.0.up_bytes.load(std::sync::atomic::Ordering::Relaxed),
+                    plain.len() as u64
+                );
+                assert_eq!(
+                    counts
+                        .0
+                        .down_bytes
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    down.len() as u64
+                );
+                server.send(Message::Close(None)).await.unwrap();
+                assert!(task.await.unwrap().is_ok());
+            })
+            .await
+            .expect("finite relay pressure/ping budget");
+        });
+    }
     #[test]
     fn upgrade_input_cannot_exceed_the_original_header_budget() {
         let runtime = tokio::runtime::Builder::new_current_thread()

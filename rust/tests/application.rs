@@ -116,6 +116,23 @@ fn hello_switch_and_settings_observe_persisted_state() {
     assert_eq!(failed.native[0].query["@type"], "close");
     fs::remove_file(root.join(".local/share/omagram/accounts.json")).unwrap();
     app.upload_context = Some((root.clone(), vec![]));
+    home.write("not-runtime", b"inert invalid storage", 0o600)
+        .unwrap();
+    app.recording_runtime = Some(root.join("not-runtime"));
+    let count = runtime.engine.accounts.len();
+    let before = app.catalog.clone();
+    let refused = app.add(
+        &home,
+        &mut runtime,
+        9,
+        request(11, "account.add", json!({"name":"Fixture"})),
+        &mut || panic!("checkpoint context refusal precedes native client creation"),
+    );
+    assert_eq!(refused.replies[0].1["ok"], false);
+    assert!(refused.native.is_empty());
+    assert_eq!(runtime.engine.accounts.len(), count);
+    assert_eq!(app.catalog, before);
+    home.ensure_dir("runtime").unwrap();
     app.recording_runtime = Some(root.join("runtime"));
     let added = app.add(
         &home,
@@ -133,6 +150,10 @@ fn hello_switch_and_settings_observe_persisted_state() {
     assert_eq!(added.replies[0].1["event"], "accountAdded");
     assert_eq!(added.native[0].query["@type"], "getOption");
     assert_eq!(runtime.engine.accounts[id].state.roots.len(), 8);
+    assert!(
+        runtime.engine.accounts[id].state.retained.has_checkpoint(),
+        "new accounts share durable recording owner"
+    );
     assert!(runtime.engine.accounts[id].state.roots[6].contains(&format!("accounts/{id}/sent")));
     // Real startup owner receives synthetic ready/getMe; persistence belongs
     // to the local application and preserves account order/active identity.
