@@ -4,9 +4,10 @@
 
 <h1 align="center">Telebar</h1>
 
-The standalone [Rust runtime candidate](rust/README.md) is in progress and is not
-the installed backend. Its production cutover remains disabled until full parity
-and consumer acceptance pass.
+Telebar's application runtime is now [standalone Rust](rust/README.md), with
+native QML/JavaScript, Quickshell and official TDLib. Build the native package
+before installation; the repository's legacy Python files are development
+oracles, not an application fallback or a directly installable native package.
 
 Independently maintained by [PavelLizunov](https://github.com/PavelLizunov),
 based on [Omagram by ReidenXerx](https://github.com/ReidenXerx/omarchy-omagram).
@@ -15,18 +16,18 @@ Upstream changes are adopted selectively; this project has its own development d
 > **Development source checkpoint, not a verified stable release.** The manifest
 > remains `1.2.1-dev.2`; current source extends the earlier tagged release. See
 > [progress and open issues](PROGRESS.md) and [release history](CHANGELOG.md).
-> Reading/selection, near-name presence, contrast, browser image copying and
-> explicit recording recovery corrections are installed in the local development
-> client. The main window/backend reported healthy connected state after activation,
-> but a subsequent user-reported repeat failure remains unresolved.
-> Current recorded checks: 291 isolated Python tests (two local tool skips), eight
-> JavaScript suites and 248 native QML passes across 19 suites. Six inspected strict
-> contrast/presence frames cover representative palettes and radii 0/8; measured
-> covered text contrast is at least 4.548:1. Physical account/device transitions,
-> exhaustive accessibility and independent whole-source/security acceptance remain
-> pending. Quick-view audio uses `ffplay`; output-device following is not established.
-> The correctness audit will precede any backend rewrite decision. See
-> [executable correctness contracts](BACKEND-DESIGN.md#executable-correctness-contracts-local-p1-candidate).
+> The checked native package is installed locally. Its Rust executable owns both
+> existing ready accounts; the shell and application window report connected
+> heartbeats. The 91-file package contains no Python code or fallback. Current
+> runtime checks passed 104 default Rust tests, formatting, warnings-denied Clippy
+> and 21,136 frozen comparisons with zero differences. The preserved current UI
+> previously passed 192 selected QML results, eight JavaScript suites and 291 legacy
+> oracle contracts (two skips). Bounded local microphone/camera capture and normal
+> audio helpers passed without Telegram test sends. This is not exhaustive command,
+> manual interaction, audible-quality or independent security acceptance. The
+> sent-video incident, forum-parent unread mismatch and historical window
+> disappearance remain separate open issues. See [acceptance limits](rust/PARITY.md)
+> and the historical [stabilization contracts](BACKEND-DESIGN.md#executable-correctness-contracts-local-p1-candidate).
 
 <p align="center">
   <b>An unofficial Telegram client that lives in your <a href="https://omarchy.org">Omarchy</a> desktop, not in another window.</b><br>
@@ -194,10 +195,13 @@ incoming call is shown so you can decline it or answer in another Telegram app.
 
 ## Requirements
 
-Omarchy with Hyprland 0.56 or newer, and these packages (most are already on a stock install):
+Omarchy with Hyprland 0.56 or newer, Quickshell and a running systemd user manager.
+Window launches and backend starts use owned transient user services; the existing
+backend socket owner is reused. No boot-time service is enabled. These runtime
+packages are mostly already present on a stock install:
 
 ```bash
-sudo pacman -S --needed qt6-multimedia qt6-multimedia-ffmpeg qt6-lottie libsecret python-gobject qrencode
+sudo pacman -S --needed qt6-multimedia qt6-multimedia-ffmpeg qt6-lottie libsecret qrencode ffmpeg pipewire-audio wl-clipboard xdg-utils openssl
 ```
 
 TDLib is not packaged for Arch, so Telebar builds the exact version it was tested with (1.8.67)
@@ -207,12 +211,47 @@ into your home directory. That needs, once:
 sudo pacman -S --needed git cmake gperf clang openssl zlib
 ```
 
-## Install
+## Build and install the native package
+
+Use the checked native feature/checkpoint branch, not the historical Python default
+branch. Rust 1.88 or newer, Cargo, OpenSSL development files and `pkg-config` are
+build-only requirements. From this checkout, choose a new output outside it:
 
 ```bash
-omarchy plugin add https://github.com/PavelLizunov/omarchy-telebar.git --enable
+export CARGO_TARGET_DIR="$HOME/.cache/telebar-native-build"
+cargo build --manifest-path rust/Cargo.toml --release --locked
+"$CARGO_TARGET_DIR/release/telebar-runtime" --package "$PWD" "$HOME/telebar-native-package"
+omarchy plugin validate "$HOME/telebar-native-package"
+```
+
+Do not use `omarchy plugin add` on this source checkout: its legacy Python files
+are test oracles. The generated package has native Bash entry shims and one Rust
+ELF, with no Python application. Its manifest identifies the admitted inputs;
+build success alone is not account or interaction acceptance.
+
+For a new installation with no existing Telebar or Omagram owner, move the checked
+package into the user-owned plugin directory and enable it through Omarchy:
+
+```bash
+mkdir -p "$HOME/.config/omarchy/plugins"
+test ! -e "$HOME/.config/omarchy/plugins/io.github.pavellizunov.telebar"
+test ! -L "$HOME/.config/omarchy/plugins/io.github.pavellizunov.telebar"
+mv -T -- "$HOME/telebar-native-package" "$HOME/.config/omarchy/plugins/io.github.pavellizunov.telebar"
+omarchy-shell shell rescanPlugins
+omarchy plugin enable io.github.pavellizunov.telebar
 ~/.config/omarchy/plugins/io.github.pavellizunov.telebar/bin/omagram-build-tdlib
 ```
+
+For an existing installation, save window and quick-reply compositions first.
+Preserve a code-only rollback outside watched plugin directories. Quit the exact
+backend through its supported route while it still owns its native clients,
+wait for process/socket retirement and verify the exclusive lock is available
+before opening those same profiles with Rust. Disabling a plugin can destroy its
+Process immediately; it is not proof of graceful TDLib shutdown. Stage outside
+the recursive plugin watcher and replace only the checked code coherently. Never
+copy live databases, run both owners, or restart the shared shell just to stop
+Telebar. Retain separate Qt recovery adaptations when present. Check installed
+hashes, loaded executable identity, account readiness and UI connections afterward.
 
 The build takes about ten minutes and roughly 2 GB of memory per parallel job (it picks the
 job count from your memory). Nothing is installed system-wide and nothing needs root:
@@ -234,7 +273,7 @@ Optionally add Telebar to the Omarchy menu (Trigger → Telebar):
    tools*. Telegram requires every client to use its own id; Telebar does not ship one.
 2. Open Telebar — search for it in the app launcher (Super + Space), from the menu, by
    right-clicking the bar icon, or with
-   `/usr/bin/python3 ~/.config/omarchy/plugins/io.github.pavellizunov.telebar/bin/omagram`.
+   `~/.config/omarchy/plugins/io.github.pavellizunov.telebar/bin/omagram`.
 3. Enter the API id and hash, then your phone number, the code Telegram sends you, and your
    two-step verification password if you have one. Or choose **Use a QR code instead** and scan
    it with Telegram on your phone (Settings → Devices → Link Desktop Device); drawing the code
@@ -373,10 +412,10 @@ pending counts and numeric cache/layout sizes. The focused window also samples Q
 animation-tick intervals. These are **not GPU or compositor frame timings**; sampling
 intentionally keeps an animation callback active while the focused window is visible.
 
-An independent watchdog records location-only Python thread stacks if the daemon stops
-progressing for 2.5 seconds, at most once per 15 seconds. It reports missing UI heartbeats
-and their recovery. It cannot distinguish a compositor/GPU stall from a blocked UI thread
-on its own, and cannot produce native TDLib/Qt stacks. A stopped TDLib receive thread is
+A separate native watchdog reports lack of daemon progress after 2.5 seconds,
+at most once per 15 seconds, plus missing UI heartbeats and their recovery.
+It does not collect Python or native TDLib/Qt stacks. It cannot distinguish a
+compositor/GPU stall from a blocked UI thread on its own. A stopped TDLib receive thread is
 reported to the UI rather than failing silently. Ordinary UI callbacks are capped at 512
 and expire after three minutes; an expired send is not automatically retried, since it
 may already have reached Telegram. The daemon independently expires pending IPC and
@@ -390,8 +429,9 @@ request arguments, exception messages or frame-local variables are recorded. Ope
 names and timestamps still reveal usage patterns: do not publish the log unreviewed.
 Disk writes run on a dedicated bounded queue. If the filesystem fails, diagnosis records
 can be dropped; status exposes logger queue/drop/error counts. Logging is best-effort,
-not a durable audit trail. The code hash in the startup record identifies the instrumented
-backend and selected UI sources.
+not a durable audit trail. Status reports the runtime revision. The installed
+package manifest and an independently checked executable hash identify code;
+revision text or a heartbeat alone is not exact-source attestation.
 
 Current counters can be queried over the private local socket using `diagnostics.status`.
 Use `diagnostics.ui` only for numeric UI reports; arbitrary strings are discarded and
@@ -511,7 +551,10 @@ a video in your video player, `o` opens the chat in the window and `Esc` closes.
 
 ## How it is put together
 
-- **`bin/omagramd`** — the service. It holds the Telegram session through TDLib and serves
+- **Native package `bin/telebar-runtime`** — the Rust application, launcher and helper
+  implementation. The five compatible `bin/omagram*` Bash shims dispatch fixed modes
+  to that executable. Python is used only by development comparison tests.
+- **Native package `bin/omagramd`** — the service. It holds the Telegram session through TDLib and serves
   the window, the bar and the overlay over a Unix socket. Omarchy's shell keeps it running;
   the window starts it too if needed, and only one instance ever runs.
 - **`bin/omagram`** — opens or focuses the window, a separate Quickshell process with its own
@@ -546,7 +589,9 @@ a video in your video player, `o` opens the chat in the window and `Esc` closes.
   rejection, one recording per account is kept for explicit retry or discard, with its original
   chat, topic/thread, reply and send options. The window and quick view expose the same controls.
   Timeout or uncertain delivery disables retry; dismissing that state does not delete a file
-  TDLib might still use. This recovery state lasts for the running service, not across restarts.
+  TDLib might still use. Durable per-account checkpoints restore retained state
+  after restart without automatic sending. Uncertain, missing or substituted inputs
+  remain protected; retry is disabled when delivery or identity cannot be established.
 - **Telegram content is shown as text.** Names and previews are rendered as plain text, message
   formatting is escaped before it is drawn, and notification bodies are escaped, because
   Omarchy's notifications render markup and links. Links lead only to web and mail addresses
@@ -559,7 +604,10 @@ a video in your video player, `o` opens the chat in the window and `Esc` closes.
 - **The library is only loaded if it is safe to.** `libtdjson.so` is used only if it is a
   regular file you own that nobody else can write, in directories you own.
 
-`bin/plugin_safety.py` is a shared safety library vendored unchanged into each of these plugins.
+The legacy `bin/plugin_safety.py` and Python backend sources below are retained only
+for development-oracle checks. They are excluded from the native package. Build and
+check the Rust runtime using [its guide](rust/README.md); the following commands test
+the historical Python oracle and shared UI, not the installed Rust application.
 
 ```bash
 python3 -B tests/lifecycle_contract_test.py # pending limits, expiry and stale-resource cleanup

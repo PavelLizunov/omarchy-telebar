@@ -5,9 +5,9 @@ use crate::{
 };
 use std::{collections::BTreeMap, io, path::PathBuf};
 
-/// Enabled only in the checked cutover batch after the full migration gate.
-/// Keeping the implementation in source never grants working-profile access.
-pub const CUTOVER_READY: bool = false;
+/// Production entry points for the checked, explicitly authorized cutover batch.
+/// This flag enables launch; installation and live acceptance are separate evidence.
+pub const CUTOVER_READY: bool = true;
 
 pub struct Context {
     pub home: PathBuf,

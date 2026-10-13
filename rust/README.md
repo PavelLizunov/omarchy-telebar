@@ -1,10 +1,16 @@
-# Telebar Rust runtime candidate
+# Telebar Rust runtime
 
-This is the standalone replacement in progress, not the installed application.
-Native QML/JavaScript, Quickshell and official TDLib are retained. The working
-Python backend continues to own real accounts until the full migration gate and
-safe cutover pass. `session::CUTOVER_READY` is false: production daemon/window
-launch is deliberately refused. Do not enable it merely because a build passes.
+The standalone Rust package is now installed on the development machine and
+owns the two existing, ready accounts. Native QML/JavaScript, Quickshell and
+official TDLib are retained. `session::CUTOVER_READY` is true for the checked,
+explicitly authorized cutover batch. This enables production entry points; it
+is not a universal acceptance flag. Manual interaction and audible-quality
+acceptance remain pending, and diagnostics deliberately keep
+`migration_complete: false` rather than asserting those outcomes.
+
+The source checkout retains historical Python code for development comparison.
+Only the generated native package is installed. It contains no Python runtime,
+PyO3, fallback, or second TDLib service. See the root [installation guide](../README.md).
 
 The behavioral and storage contract, observed evidence and remaining acceptance
 are maintained in [PARITY.md](PARITY.md). The sent-video incident is independently
@@ -139,7 +145,8 @@ failed at parameter readiness because they omitted the legacy daemon's initial
 `getOption(version)` activation of lazy clients. Restoring that inspected startup
 shape passed without changing native runtime behavior or relaxing containment.
 No open database is copied. Python is not packaged or used by the native application.
-Working authorized account transition remains a separate cutover requirement.
+The confined fixture remains distinct from the later working-account cutover
+recorded below; it does not by itself accept an authorized account transition.
 
 `tests/host_keyring_readonly.rs` is a separate explicit ignored host-acceptance
 check. Given only the current catalog account IDs and existing session bus, the
@@ -341,9 +348,10 @@ bash rust/tests/run-native-proxy.sh /absolute/exact/native_proxy-test \
 ## Implemented helper entry points
 
 The candidate implements `--launch`, `--host-window`, `--daemon`, `--menu`,
-`--build-tdlib` and the owned `--proxy` child mode. Launcher/daemon cutover is
-blocked until acceptance; launcher names in the installed plugin still invoke
-Python. Menu/build entries must not be used on real user configuration as a test.
+`--build-tdlib` and the owned `--proxy` child mode. The native package's five Bash
+shims retain the executable names and dispatch fixed modes to the Rust image.
+Launcher and daemon entry points are enabled for this checked cutover. Arbitrary
+menu/configuration changes or a full TDLib rebuild are not part of acceptance tests.
 The build helper preserves the official pinned TDLib commit and a capped private
 build log. A complete TDLib rebuild is not performed just to test this port.
 
@@ -356,7 +364,7 @@ are checked independently of live Telegram connectivity.
 
 ## Native package and host handoff
 
-`--package <absolute-source> <new-absolute-output>` assembles an inert candidate
+`--package <absolute-source> <new-absolute-output>` assembles a native package
 outside the checkout. It refuses existing output, unsafe source links, unowned
 or writable inputs, missing entry points and Python QML/JavaScript/menu invocations.
 Per-root file types are allowlisted; Python files/bytecode are rejected before
@@ -437,9 +445,11 @@ QML/JavaScript baseline, including TelebarClient/TelebarService and extracted
 chat/settings/Main owners. The four obsolete Omagram client/service/quick type
 names are removed from this candidate; the manifest points to the current names.
 This is native UI preservation for migration, not publication of the concurrent
-Python backend/tests/documentation backlog. The source worktree/index and installed
-Python backend are retained. A local package and publication are not installation
-or loaded-user acceptance.
+Python backend/tests/documentation backlog. The active source worktree/index are
+preserved; the prior installed Python code is retained outside watched directories
+for rollback. Package publication, installation and loaded-user acceptance are
+separate states. The later local cutover below supersedes the historical
+uninstalled state without changing these earlier evidence boundaries.
 Ready, no-library, composer refusal/acceptance, retained recording/resolution and
 quick history use native Socket; radius zero/nonzero images were inspected.
 Final integrated-UI interactions passed 192 selected QtTest results, eight
@@ -471,8 +481,10 @@ PreviewIo rerender asserts zero executions and preserves the restored desktop
 hash; its pixels match the earlier layout. The earlier nested client may also
 have issued a read-only hello to its default production socket before overriding
 that path; no account mutation is inferred. Final fixtures assert a blank and
-disconnected default before setting the explicit socket. Host devices, compositor interaction,
-working-account cutover and whole-UI/manual acceptance remain unverified.
+disconnected default before setting the explicit socket. Those earlier fixtures
+do not establish host devices, compositor interaction or working-account cutover.
+The local checks below add bounded hardware and loaded-consumer evidence, not
+whole-UI/manual acceptance.
 
 The compatible `tests/consumer_socket.py` also checks diagnostics.ui/status through
 the normal shared socket consumer: numeric redaction, immediate rate-limit refusal,
@@ -494,3 +506,52 @@ synthetic messages, refuses parameters/mutations and has no network/files/device
 access. `MainConsumer.qml` with `expectedAuth: ready` checks actual list/history
 rendering. This does not authorize profile access or replace official native
 acceptance; json-c and a C compiler are development-only fixture dependencies.
+
+## Local native cutover and remaining acceptance
+
+The user explicitly confirmed that needed window/quick-reply work was saved and
+authorized restart and bounded local device checks. The launch-enabled exported
+source passed 104 default Rust tests (24 explicitly ignored), formatting,
+warnings-denied all-target Clippy, a locked offline release build, 21,136 frozen
+comparisons with zero differences, plugin validation, the no-library socket
+consumer and actual native package/shim/EOF/environment checks. The release
+SHA-256 is `3b9b97d128049e209f3ca48b38baa89a7c12ed00d13810abd0f1df6f306331fb`.
+Later documentation-only edits do not claim a new executable build.
+
+`tests/physical_capture.rs` is an explicit ignored local acceptance test. Normal
+fixed camera/Pulse inputs, real capture/preparation and 480-square video pass;
+voice playback through ffplay and a notification sound through pw-cat exit
+normally. Captures were approximately four seconds each, with bounded helpers,
+exact unsent-file cleanup and reaping. No TDLib client, parameter or message was
+created by that test. Its first run used an incomplete test environment and
+failed before capture; the corrected fixture uses normal launcher discovery.
+Successful processes do not establish perceived sound quality or a camera image
+judgment. Do not invoke this test without explicit device/output authority.
+
+Deployment staged the 91-file, Python-free package outside the recursive plugin
+watcher, then exchanged the exact code directory atomically. Code-only backups
+remain external; account databases, settings and keys were neither copied nor
+deleted. Disabling Telebar initially destroyed the old shell-owned Python Process
+and left a stale socket. This was not a graceful shutdown. The legacy owner was
+then reopened alone and sent normal `app.quit`, after which its process/socket
+retired and the same exclusive lock was available. The observer exhausted its
+frame bound before a reply, so a quit acknowledgement is not claimed. Rust was
+started only after those checks. The shared Qt 6.12 recovery shell was not stopped.
+
+The installed executable hash matches the tested release. Both existing accounts
+reach `ready`; normal catalog/order/active identity, the legacy lock inode and
+the exact Rust socket owner are verified. The existing shell and the normally
+launched application window report connected numeric heartbeats. The native
+managed desktop entry was explicitly refreshed; recovery QML copies match only
+the existing QtQuick 6.11 import adaptation, and their executable links resolve
+to the native package. The original bar placement and unrelated shell settings
+are semantically unchanged. Rollback code hashes and the prior confined
+Rust/Python/Rust disposable-profile handoff are verified; a reverse transition
+on working authorized databases is not claimed.
+
+No Telegram test send, logout, account-switch or read-state test was performed.
+Manual keyboard/pointer/quick-reply acceptance, audible quality, working-network
+failure/recovery and all-command end-to-end certification remain open. The
+sent-video P1, forum-parent unread mismatch and historical disappearing window
+are separate unresolved issues. Installation and two ready accounts are not a
+stable release, a playback fix or independent whole-source security certification.

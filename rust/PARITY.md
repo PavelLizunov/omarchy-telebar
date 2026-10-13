@@ -1,9 +1,13 @@
 # Rust replacement contract
 
-Status: migration in progress. Rust is the selected final application runtime.
-The Python application still serves production until the complete replacement
-passes acceptance. A partial Rust implementation must not open real accounts.
-Native QML/JavaScript/Quickshell and official TDLib remain unchanged.
+Status: the checked Rust package is installed and owns both existing ready
+accounts on the development machine. The Python application is retired from
+that installed package; legacy code remains external for rollback and in source
+as a development oracle. Native QML/JavaScript/Quickshell and official TDLib are
+retained. `CUTOVER_READY=true` enables this explicitly authorized cutover batch;
+`migration_complete=false` still records the pending manual/full acceptance.
+Historical fixture results below retain their original scopes; later live startup
+does not retroactively turn synthetic checks into Telegram or device acceptance.
 
 ## Baseline and ownership
 
@@ -592,7 +596,11 @@ native QML consumers; mocks and compilation alone do not establish usability.
 All 170 command handlers, state updates, projection families, settings/keyring,
 notifications/sounds, recording/media/clipboard, bridge transport, diagnostics,
 launcher, menu installer and build/install requirements must be accounted for.
-No release cutover or removal of Python happens until complete acceptance.
+The checked local package has been cut over after bounded source, native Socket,
+physical-helper and working-account startup checks. This does not establish full
+valid-input behavior for every command or authorize test sends/logout/read-state
+mutations. Manual and untested lifecycle limits remain explicit rather than
+calling the whole 170-command contract accepted.
 
 Before cutover, inspect active/retained work and host watchers, preserve an
 external restorable installed-code snapshot, stop the verified original owner
@@ -601,6 +609,19 @@ Do not ordinary-copy open databases. Apply the checked version coherently and
 verify installed hashes, loaded candidate identity, accounts and consumer routes.
 Preserve the active Git branch/index and publish only task-owned checked changes
 to a separate checkpoint branch on the confirmed user-owned existing remote.
+
+The local cutover uses one Rust socket/lock owner, both original ready accounts,
+normal connected shell/window consumers and the same official TDLib library.
+The package contains 91 ordinary files with no Python or symlinks. Physical
+camera/microphone capture/preparation and native audio-helper exits passed locally
+with no Telegram sends; perceived quality and interactive manual acceptance are
+pending. The old installed code is hash-verified outside the watched tree.
+Its reverse handoff on working accounts was not exercised; only the earlier
+confined disposable Rust/Python/Rust transition is accepted. The initial plugin
+disable destroyed the old Python Process, leaving a stale socket. It was reopened
+alone and sent normal quit before Rust start; no graceful first-disable or final
+quit acknowledgement is claimed. The exact old PID retired and the same owner
+lock became available. The shared Qt recovery shell/configuration was preserved.
 
 The sent-video P1 remains unresolved. Synthetic outgoing H.264 decoding did not
 establish the reported real clip's projection, download, click, codec or audio.

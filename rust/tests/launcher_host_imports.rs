@@ -56,7 +56,6 @@ fn normal_launcher_admits_root_owned_imports_in_private_runtime_without_python()
     assert_eq!(fs::read_to_string(app.join("shell.qml")).unwrap(), entry);
     assert!(!context.socket().exists());
     assert!(!root.join(".local").exists());
-    const { assert!(!telebar_runtime::session::CUTOVER_READY) };
     // remove_dir_all removes these generated links without following targets.
     fs::remove_dir_all(&root).unwrap();
     assert!(!root.exists());

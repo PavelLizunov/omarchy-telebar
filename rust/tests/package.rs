@@ -64,7 +64,10 @@ fn native_package_has_only_native_entry_points_and_preserves_source() {
     }
     let manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(output.join("runtime-candidate.json")).unwrap()).unwrap();
-    assert_eq!(manifest["cutoverReady"], false);
+    assert_eq!(
+        manifest["cutoverReady"],
+        telebar_runtime::session::CUTOVER_READY
+    );
     assert_eq!(manifest["runtime"], "rust");
     assert_eq!(
         fs::read(output.join("bin/telebar-runtime")).unwrap(),

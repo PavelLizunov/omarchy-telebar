@@ -19,7 +19,7 @@ package = pathlib.Path(sys.argv[1])
 assert os.statvfs(package).f_flag & os.ST_RDONLY
 assert all(name == "lo" for _, name in socket.if_nameindex())
 record = json.loads((package / "runtime-candidate.json").read_text())
-assert record["runtime"] == "rust" and record["cutoverReady"] is False
+assert record["runtime"] == "rust" and isinstance(record["cutoverReady"], bool)
 for path, digest in record["sourceHashes"].items():
     assert hashlib.sha256((package / path).read_bytes()).hexdigest() == digest
 files = [p for p in package.rglob("*") if p.is_file()]
@@ -30,8 +30,13 @@ with tempfile.TemporaryDirectory(prefix="telebar-package-process-") as name:
     poison = root / "bash-env"
     poison.write_text(f"touch {marker}\nexit 71\n")
     environment = dict(os.environ, BASH_ENV=str(poison), PYTHONPATH=str(root), HOME=str(root))
-    # Runtime gate must fail rather than reaching home, keyring or a Python owner.
-    for entry, args in [("omagram", []), ("omagramd", []), ("omagram-build-tdlib", ["--bad"]), ("omagram-menu-install", ["bad"])]:
+    # In a launch-enabled package use invalid argv only: never test production
+    # startup under this isolated package consumer's passwd/home environment.
+    controls = [("omagram", ["--invalid"]), ("omagramd", ["--invalid"]),
+                ("omagram-build-tdlib", ["--bad"]), ("omagram-menu-install", ["bad"])]
+    if not record["cutoverReady"]:
+        controls[:2] = [("omagram", []), ("omagramd", [])]
+    for entry, args in controls:
         result = subprocess.run([str(package / "bin" / entry), *args], env=environment, capture_output=True, timeout=4)
         assert result.returncode == 1, (entry, result.returncode)
         assert not marker.exists()
@@ -52,4 +57,4 @@ with tempfile.TemporaryDirectory(prefix="telebar-package-process-") as name:
         proxy.wait(timeout=4)
     assert not marker.exists()
     assert not list(root.rglob("db.sqlite"))
-print(json.dumps({"package_files":len(files),"python_files":0,"actual_rust_proxy_shim":True,"owner_eof_shutdown":True,"bash_env_ignored":True,"production_gate_preserved":True,"host_profiles":False}))
+print(json.dumps({"package_files":len(files),"python_files":0,"actual_rust_proxy_shim":True,"owner_eof_shutdown":True,"bash_env_ignored":True,"production_gate_matches_manifest":True,"host_profiles":False}))

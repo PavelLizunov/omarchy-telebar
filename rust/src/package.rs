@@ -235,5 +235,13 @@ pub fn assemble(source: &Path, destination: &Path, binary: &Path) -> io::Result<
         );
     }
     output.write("runtime-candidate.json",&serde_json::to_vec_pretty(&json!({"schemaVersion":1,"runtime":"rust","version":env!("CARGO_PKG_VERSION"),"cutoverReady":CUTOVER_READY,"sourceHashes":record}))?,0o644)?;
-    output.write("README.md",b"# Telebar native candidate\n\nThis package contains QML/JavaScript, one Rust ELF runtime and Bash entry shims.\nIt does not contain a Python runtime or fallback. Official TDLib remains in\n~/.local/share/omagram/lib/; accounts, keyring and socket identities are unchanged.\n\nThis is an acceptance candidate, not an installed or released application.\nProduction daemon/window launches remain compile-time gated until the full\nmigration and safe cutover pass. Do not enable or copy it over a working plugin\njust because the package builds. runtime-candidate.json identifies its inputs.\n\nRequires Omarchy/Quickshell, systemd's user manager, Bash, OpenSSL, libsecret's\nsecret-tool, ffmpeg, mpv, PipeWire tools, wl-clipboard, xdg-utils, qrencode and the\nQt Multimedia/FFmpeg/Lottie modules. Rust/Cargo are build-only dependencies.\nThe entry names omagram, omagramd, omagram-menu-install, omagram-build-tdlib and\nomagram-proxy preserve their command contracts and use the native runtime.\n",0o644)
+    let launch_status = if CUTOVER_READY {
+        "Production entry points are enabled for the checked cutover batch. A package\nmanifest is not proof of installation, loaded accounts or manual acceptance.\nNever run it alongside another owner of the same TDLib databases.\n"
+    } else {
+        "Production daemon/window launches remain gated. Do not install this candidate\njust because it builds. Complete acceptance and a safe single-owner cutover first.\n"
+    };
+    let readme = format!(
+        "# Telebar native runtime\n\nThis package contains QML/JavaScript, one Rust ELF runtime and Bash entry shims.\nIt does not contain a Python runtime or fallback. Official TDLib remains in\n~/.local/share/omagram/lib/; accounts, keyring and socket identities are unchanged.\n\n{launch_status}\nruntime-candidate.json identifies the exact package inputs and launch gate.\nRequires Omarchy/Quickshell, systemd's user manager, Bash, OpenSSL, libsecret's\nsecret-tool, ffmpeg, PipeWire tools, wl-clipboard, xdg-utils, qrencode and the\nQt Multimedia/FFmpeg/Lottie modules. Rust/Cargo are build-only dependencies.\nThe entry names omagram, omagramd, omagram-menu-install, omagram-build-tdlib and\nomagram-proxy preserve their command contracts and use the native runtime.\n"
+    );
+    output.write("README.md", readme.as_bytes(), 0o644)
 }
