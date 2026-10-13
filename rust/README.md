@@ -60,7 +60,10 @@ inode; converter/probe I/O uses admitted fd paths. Cleanup atomically holds an
 entry before checking its inode and never deletes a substituted file. A restore
 collision preserves the replacement in a private quarantine rather than erasing
 it. This is Linux-specific bounded ownership, not isolation from malicious code
-already running with the same user's access.
+already running with the same user's access. Downloads export now applies the
+same exact-inode cleanup owner, rejects source changes and refuses success when
+the visible output/home directory has been replaced. Raw recording path discard
+also removes only the admitted inode rather than reopening a substituted name.
 
 Each account's sent directory and the runtime media directory admit at most
 4096 top-level entries and 32 GiB, including existing legacy/uncertain inputs,

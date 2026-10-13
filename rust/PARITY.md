@@ -571,6 +571,15 @@ phone with no network, working profiles, authorization or Telegram sends. This
 separate evidence complements synthetic delayed-child-loss and public resPQ;
 none of these alone establishes production-account cutover readiness.
 
+Remaining export/raw-discard ownership checks exposed two more pathname gaps:
+Downloads error cleanup could unlink a substituted output and raw recording
+path discard lost the admitted file identity. Both now use the existing pinned
+Storage exact-inode owner. Export verifies source metadata and visible output
+identity before reporting success, rejects moved/replaced Downloads and never
+removes a substituted file. Deterministic cancellation/output/root/source and
+raw-input replacement checks preserve originals and foreign replacements. This
+is bounded Linux ownership, not a malicious-same-UID sandbox or power-loss proof.
+
 ## Acceptance and remaining scope
 
 Format, Clippy, Rust unit/integration tests and differential corpora must run

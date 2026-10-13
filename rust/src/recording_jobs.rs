@@ -44,6 +44,33 @@ fn owned_input(path: &str, root: &std::path::Path) -> Result<Upload> {
         file,
     })
 }
+fn remove_input(source: Upload, root: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let relative = source
+        .path
+        .strip_prefix(root)
+        .ok()
+        .and_then(|p| p.to_str())
+        .ok_or_else(|| std::io::Error::other("invalid recording input"))?;
+    let m = source.file.metadata()?;
+    let removed = Storage::open(root)?.remove_owned(relative, m.dev(), m.ino())?;
+    if !removed {
+        return Err(std::io::Error::other("recording input changed"));
+    }
+    Ok(())
+}
+fn remove_collected(files: &[(Storage, String, Option<std::fs::File>)]) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    // Keep every descriptor alive through the entire deletion batch. Dev/inode
+    // numbers without the open file can be recycled after ordinary unlink.
+    for (storage, relative, file) in files {
+        if let Some(file) = file {
+            let m = file.metadata()?;
+            storage.remove_owned(relative, m.dev(), m.ino())?;
+        }
+    }
+    Ok(())
+}
 pub fn plan(
     command: &str,
     args: &Value,
@@ -74,14 +101,8 @@ pub fn plan(
         {
             return Err("the recording is owned by a pending send; resolve it by token".into());
         }
-        let _ = owned_input(path, &rec).map_err(|_| "that is not a recording of Telebar's")?;
-        let name = std::path::Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or("that is not a recording of Telebar's")?;
-        Storage::open(&rec)
-            .and_then(|s| s.remove_file(name))
-            .map_err(|_| "that is not a recording of Telebar's")?;
+        let source = owned_input(path, &rec).map_err(|_| "that is not a recording of Telebar's")?;
+        remove_input(source, &rec).map_err(|_| "that is not a recording of Telebar's")?;
         return Ok(Action::Reply(json!({})));
     }
     if command == "recording.discard" {
@@ -123,21 +144,17 @@ pub fn plan(
                     .ok_or("the retained recording is not available")?;
                 let storage =
                     Storage::open(root).map_err(|_| "the retained recording is not available")?;
-                match storage.open_read(relative) {
-                    Ok(_) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                let file = match storage.open_read(relative) {
+                    Ok(file) => Some(file),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
                     Err(_) => return Err("the retained recording is not available".into()),
-                }
-                files.push((storage, relative.to_owned()));
+                };
+                files.push((storage, relative.to_owned(), file));
             }
             if let Some(input) = &record.input {
                 input.rejected(400);
             }
-            for (storage, relative) in files {
-                storage
-                    .remove_file(&relative)
-                    .map_err(|_| "the retained recording is not available")?;
-            }
+            remove_collected(&files).map_err(|_| "the retained recording is not available")?;
         }
         return Ok(Action::DiscardRecorded(token.into()));
     }
@@ -375,5 +392,89 @@ impl Preparation {
             options: self.options,
             input: Some(lease),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn raw_discard_never_unlinks_a_file_substituted_after_admission() {
+        let root = std::env::temp_dir().join(format!("telebar-raw-inode-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let store = Storage::open(&root).unwrap();
+        store.write("note.mp4", b"original media", 0o600).unwrap();
+        let source = owned_input(root.join("note.mp4").to_str().unwrap(), &root).unwrap();
+        std::fs::rename(root.join("note.mp4"), root.join("original.mp4")).unwrap();
+        store
+            .write("note.mp4", b"replacement media", 0o600)
+            .unwrap();
+        assert!(remove_input(source, &root).is_err());
+        assert_eq!(
+            std::fs::read(root.join("note.mp4")).unwrap(),
+            b"replacement media"
+        );
+        assert_eq!(
+            std::fs::read(root.join("original.mp4")).unwrap(),
+            b"original media"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn fallback_discard_pins_unlinked_and_missing_inputs_until_batch_finishes() {
+        use std::os::unix::fs::MetadataExt;
+        let root =
+            std::env::temp_dir().join(format!("telebar-fallback-inode-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let store = Storage::open(&root).unwrap();
+        for name in ["first", "second", "ordinary"] {
+            store.write(name, b"original media", 0o600).unwrap();
+        }
+        let files = ["first", "second", "ordinary", "missing"]
+            .into_iter()
+            .map(|name| {
+                let owned = Storage::open(&root).unwrap();
+                let file = match owned.open_read(name) {
+                    Ok(file) => Some(file),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(e) => panic!("{e}"),
+                };
+                (owned, name.to_owned(), file)
+            })
+            .collect::<Vec<_>>();
+        for index in [0, 1] {
+            let before = files[index].2.as_ref().unwrap().metadata().unwrap();
+            std::fs::remove_file(root.join(&files[index].1)).unwrap();
+            store
+                .write(&files[index].1, b"foreign replacement", 0o600)
+                .unwrap();
+            let old = files[index].2.as_ref().unwrap().metadata().unwrap();
+            let replacement = store
+                .open_read(&files[index].1)
+                .unwrap()
+                .metadata()
+                .unwrap();
+            assert_eq!(old.ino(), before.ino());
+            assert_eq!(old.nlink(), 0);
+            assert_ne!(
+                (replacement.dev(), replacement.ino()),
+                (old.dev(), old.ino()),
+                "open inode must not be reused"
+            );
+        }
+        store.write("missing", b"new foreign input", 0o600).unwrap();
+        remove_collected(&files).unwrap();
+        for name in ["first", "second"] {
+            assert_eq!(
+                std::fs::read(root.join(name)).unwrap(),
+                b"foreign replacement"
+            );
+        }
+        assert_eq!(
+            std::fs::read(root.join("missing")).unwrap(),
+            b"new foreign input"
+        );
+        assert!(!root.join("ordinary").exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

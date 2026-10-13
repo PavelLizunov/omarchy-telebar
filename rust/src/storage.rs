@@ -51,6 +51,10 @@ pub struct Storage {
     root: File,
 }
 impl Storage {
+    pub(crate) fn from_directory(root: File) -> io::Result<Self> {
+        owned(&root, true)?;
+        Ok(Self { root })
+    }
     pub fn open(root: &Path) -> io::Result<Self> {
         use std::os::unix::fs::OpenOptionsExt;
         if !root.is_absolute() {
