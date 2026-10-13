@@ -113,7 +113,10 @@ unavailable; a plain env-cleared host test is not equivalent containment.
 with synthetic credentials under a new temporary home. The real root-owned
 `secret-tool` and normal asynchronous startup worker store/look up exact account
 keys, sequentially reopen disposable databases and add a third account through
-the actual catalog/Driver. A task-owned user service enforces AF_UNIX-only sockets;
+the actual catalog/Driver. Both profiles first reach `needCredentials`; normal
+`credentials.set` requests use the real worker/keyring and acknowledge before
+restarting only the routed profile. Each then reaches `phone`, and malformed
+save input leaves the private stored credentials unchanged. A task-owned user service enforces AF_UNIX-only sockets;
 the test verifies that IPv4/IPv6 socket creation fails. An identity-preserving
 Landlock ABI 9 launcher additionally denies file/device/pathname Unix sockets
 outside the new private tree. Existing external sentinel/socket and inert device
@@ -161,7 +164,9 @@ confined actual Driver also checks protected Downloads save/name collision,
 explicit inert `xdg-open` lifecycle, sticker inflation, storage stats/clear,
 round-video animation/cache, account listing and sound-request admission. Cache
 clear preserves generated/sent media and selected originals; native replies are
-still synthetic, not actual TDLib storage deletion. These checks do not establish
+still synthetic, not actual TDLib storage deletion. Normal bridge status and
+invalid/unavailable set/test requests also preserve saved proxy metadata without
+persisting a new bridge or attempting a native ping. These checks do not establish
 real Telegram sends, host opener/audio output or physical recording/playback.
 
 ```sh

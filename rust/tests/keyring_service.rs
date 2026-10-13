@@ -144,12 +144,6 @@ fn actual_private_keyring_and_driver_startup_preserve_account_key_identity() {
         Instant::now() + Duration::from_secs(12),
     );
     assert!(keyring.get("api_id").unwrap().is_none());
-    assert!(
-        keyring
-            .save_credentials("123", "0123456789abcdef0123456789abcdef")
-            .unwrap()
-    );
-    assert_eq!(keyring.credentials().unwrap().unwrap().0, 123);
     let default = keyring.database_key("default", &storage).unwrap();
     let other = keyring.database_key("other", &storage).unwrap();
     assert!(telebar_runtime::keyring::valid_key(&default));
@@ -179,16 +173,76 @@ fn actual_private_keyring_and_driver_startup_preserve_account_key_identity() {
         .runtime
         .metadata
         .values()
-        .any(|m| m.auth["state"] != "phone")
-        && Instant::now() < until
+        .any(|m| m.auth["state"] != "needCredentials")
     {
+        assert!(
+            Instant::now() < until,
+            "private missing-credential boundary"
+        );
         driver
-            .tick_application(&mut app, &storage, &mut |_| {
-                panic!("configured asynchronous startup must own private keyring")
-            })
+            .tick_application(&mut app, &storage, &mut |_| panic!("private async owner"))
             .unwrap();
         std::thread::sleep(Duration::from_millis(2));
     }
+    for (rid, account) in [(20, "other"), (21, "default")] {
+        let request = telebar_runtime::wire::Request::parse(
+            json!({"id":rid,"cmd":"credentials.set","account":account,"args":{"apiId":123,"apiHash":"0123456789abcdef0123456789abcdef"}}).to_string().as_bytes(),
+        ).unwrap();
+        let mut effects = driver
+            .request_application(&mut app, &storage, 7, request)
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(10);
+        let mut acknowledged = false;
+        let mut starting = false;
+        loop {
+            for (_, frame) in effects.replies {
+                if frame["id"] == rid {
+                    assert_eq!(frame["ok"], true, "private credentials request");
+                    acknowledged = true;
+                }
+                if frame["event"] == "auth"
+                    && frame["account"] == account
+                    && frame["auth"]["state"] == "starting"
+                {
+                    assert!(acknowledged, "save reply must precede restart event");
+                    starting = true;
+                }
+            }
+            if acknowledged && driver.runtime.metadata[account].auth["state"] == "phone" {
+                break;
+            }
+            assert!(
+                Instant::now() < until,
+                "private credentials route/startup settlement"
+            );
+            effects = driver
+                .tick_application(&mut app, &storage, &mut |_| panic!("private async owner"))
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(starting);
+        if account == "other" {
+            assert_eq!(
+                driver.runtime.metadata["default"].auth["state"], "needCredentials",
+                "only routed account restarts"
+            );
+        }
+    }
+    assert_eq!(
+        keyring.credentials().unwrap().unwrap(),
+        (123, "0123456789abcdef0123456789abcdef".into())
+    );
+    let bad = telebar_runtime::wire::Request::parse(br#"{"id":22,"cmd":"credentials.set","args":{"apiId":false,"apiHash":"0123456789abcdef0123456789abcdef"}}"#).unwrap();
+    let refused = driver
+        .request_application(&mut app, &storage, 7, bad)
+        .unwrap();
+    assert!(
+        refused
+            .replies
+            .iter()
+            .any(|(_, frame)| frame["id"] == 22 && frame["ok"] == false)
+    );
+    assert_eq!(keyring.credentials().unwrap().unwrap().0, 123);
     for id in ["default", "other"] {
         assert_eq!(driver.runtime.metadata[id].auth["state"], "phone");
         assert!(!driver.runtime.engine.accounts[id].ready);
@@ -271,7 +325,7 @@ fn actual_private_keyring_and_driver_startup_preserve_account_key_identity() {
     let _ = (daemon_pid, bus_pid);
     println!(
         "{}",
-        json!({"actualSecretTool":true,"privateSecretService":true,"accountKeysPreserved":true,"asynchronousOfficialStartupAccounts":3,"sequentialDatabaseReopen":true,"accountAdd":true,"authorization":"phone","workingProfiles":false,"realUserSecrets":false,"helpersReaped":true,"landlockFileUnixDeviceDenial":true,"systemHelperRootIdentity":true})
+        json!({"actualSecretTool":true,"privateSecretService":true,"accountKeysPreserved":true,"asynchronousOfficialStartupAccounts":3,"sequentialDatabaseReopen":true,"accountAdd":true,"credentialsSetDriver":true,"replyBeforeRoutedStartup":true,"invalidSavePreservesCredentials":true,"authorization":"phone","workingProfiles":false,"realUserSecrets":false,"helpersReaped":true,"landlockFileUnixDeviceDenial":true,"systemHelperRootIdentity":true})
     );
     fs::remove_dir_all(root).unwrap();
 }

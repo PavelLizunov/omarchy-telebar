@@ -494,6 +494,38 @@ fn actual_send_driver_acceptance_keeps_playback_inputs_and_originals() {
         json!({"userId":900}),
     );
     assert_eq!(reply(&sound, 51)["ok"], true); // Actual private audio output has its separate consumer; no host PipeWire here.
+    let status = command(&mut driver, &mut app, &home, 52, "bridge.status", json!({}));
+    assert_eq!(reply(&status, 52)["ok"], true);
+    assert_eq!(reply(&status, 52)["result"]["running"], false);
+    assert_eq!(reply(&status, 52)["result"]["enabled"], false);
+    assert_eq!(reply(&status, 52)["result"]["pid"], 0);
+    let invalid = command(
+        &mut driver,
+        &mut app,
+        &home,
+        53,
+        "bridge.set",
+        json!({"enabled":"yes"}),
+    );
+    assert_eq!(
+        reply(&invalid, 53)["error"],
+        "enabled must be true or false"
+    );
+    let unavailable = command(&mut driver, &mut app, &home, 54, "bridge.test", json!({}));
+    assert_eq!(
+        reply(&unavailable, 54)["error"],
+        "the bundled bridge is not available"
+    );
+    app.bridge.metadata = json!({"default":{"proxy_id":7,"previous_id":4}});
+    let saved = command(&mut driver, &mut app, &home, 55, "bridge.status", json!({}));
+    assert_eq!(reply(&saved, 55)["ok"], true);
+    assert_eq!(reply(&saved, 55)["result"]["enabled"], true);
+    assert_eq!(reply(&saved, 55)["result"]["running"], false);
+    assert_eq!(app.bridge.metadata["default"]["previous_id"], 4);
+    assert!(
+        !root.join(".config/omagram/bridge.json").exists(),
+        "status never persists metadata"
+    );
     let retained = files(&root.join(".local/share/omagram/sent"));
     assert_eq!(retained.len(), 5);
     driver.close(Duration::from_secs(2)).unwrap();
