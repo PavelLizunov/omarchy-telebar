@@ -1,4 +1,52 @@
-# Checkpoints
+# Releases and checkpoints
+
+## 1.3.0-rc.1 (2026-10-14)
+
+First native Rust application prerelease. QML/JavaScript, Quickshell and official
+TDLib remain; there is no application Python, PyO3 or fallback in the downloadable
+native package. Historical Python files remain only in the source archive for
+development comparison. The runtime crate remains an internal unpublished 0.1.0
+package; 1.3.0-rc.1 is the Telebar product version.
+
+### Included
+
+- Native launcher, daemon, helper modes and owned systemd user-manager routes.
+- Existing account, encrypted storage, keyring, lock and IPC identities.
+- Bounded media ownership and durable recording/input recovery without autosend.
+- Original stepped paper-plane icon, native theme geometry and unread semantics.
+- Narrow-window sidebar expansion and clickable/keyboard-accessible Open Telebar.
+- Content-bound QML generations so package updates do not rely on same-URL cache
+  freshness; an already-kept old service still requires a safe scoped recreation.
+- Corrected story/sidebar regression checks using the production width helper.
+
+### Package and checks
+
+The x86-64 Linux archive contains one Rust ELF, five Bash entry shims, native UI,
+licenses and exact hash manifests. It requires glibc 2.34+, OpenSSL 3 and the
+[documented Omarchy runtime dependencies](README.md#requirements). TDLib is not
+redistributed. SHA256SUMS accompanies the archive. GitHub automatic source
+archives are development sources, not native installation packages.
+
+Exact exported-source checks passed 104 default Rust tests, with 24 explicitly
+ignored host/device/isolated acceptance cases, formatting, warnings-denied
+all-target Clippy, locked offline release build, 21,136 frozen replay inputs and
+18 supplementary valid inputs with zero differences. The inert legacy/shared-UI
+checks passed 297 Python contracts, with two missing-tool skips, and nine
+JavaScript suites. Native package/proxy/EOF/environment checks and unchanged
+actual-consumer QML evidence are qualified separately from user acceptance.
+The user confirmed opening the installed window from the compact view.
+
+### Known limitations
+
+This is a prerelease, not exhaustive migration or stable-release acceptance.
+The reported outgoing sent-video playback P1, forum-parent unread mismatch and
+historical window disappearance remain unresolved. All 170 commands on working
+accounts, perceived audio/camera quality, working-network recovery, authorized
+reverse rollback and independent whole-source security review are incomplete.
+The local Qt 6.12 recovery remains separate; clean-stock portability is not
+certified. Runtime diagnostics intentionally retain migration_complete=false.
+No Telegram test send, account logout, device capture or backend/shared-shell
+restart is performed to create this release.
 
 ## 1.2.1-dev.2 (2026-10-07)
 

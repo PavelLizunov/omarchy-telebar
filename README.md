@@ -4,30 +4,27 @@
 
 <h1 align="center">Telebar</h1>
 
-Telebar's application runtime is now [standalone Rust](rust/README.md), with
-native QML/JavaScript, Quickshell and official TDLib. Build the native package
-before installation; the repository's legacy Python files are development
-oracles, not an application fallback or a directly installable native package.
+Telebar’s application runtime is [standalone Rust](rust/README.md), with
+native QML/JavaScript, Quickshell and official TDLib. The [1.3.0-rc.1 prerelease](https://github.com/PavelLizunov/omarchy-telebar/releases/tag/v1.3.0-rc.1)
+provides a ready-built native package for x86-64 Linux. The source checkout’s
+legacy Python files are development oracles, not an application fallback or
+a directly installable native package.
 
 Independently maintained by [PavelLizunov](https://github.com/PavelLizunov),
 based on [Omagram by ReidenXerx](https://github.com/ReidenXerx/omarchy-omagram).
 Upstream changes are adopted selectively; this project has its own development direction.
 
-> **Development source checkpoint, not a verified stable release.** The manifest
-> remains `1.2.1-dev.2`; current source extends the earlier tagged release. See
-> [progress and open issues](PROGRESS.md) and [release history](CHANGELOG.md).
-> The checked native package is installed locally. Its Rust executable owns both
-> existing ready accounts; the shell and application window report connected
-> heartbeats. The 91-file package contains no Python code or fallback. Current
-> runtime checks passed 104 default Rust tests, formatting, warnings-denied Clippy
-> and 21,136 frozen comparisons with zero differences. The preserved current UI
-> previously passed 192 selected QML results, eight JavaScript suites and 291 legacy
-> oracle contracts (two skips). Bounded local microphone/camera capture and normal
-> audio helpers passed without Telegram test sends. This is not exhaustive command,
-> manual interaction, audible-quality or independent security acceptance. The
-> sent-video incident, forum-parent unread mismatch and historical window
-> disappearance remain separate open issues. See [acceptance limits](rust/PARITY.md)
-> and the historical [stabilization contracts](BACKEND-DESIGN.md#executable-correctness-contracts-local-p1-candidate).
+> **1.3.0-rc.1 is a Rust prerelease, not a verified stable release.** Download
+> the native archive, not GitHub’s automatic source archives. See
+> [installation](#build-and-install-the-native-package), [release history](CHANGELOG.md)
+> and [acceptance limits](rust/PARITY.md). The same application implementation is
+> running locally with two existing ready accounts. The user confirmed that the
+> compact view opens the window. The original paper-plane icon, shared narrow-list
+> bounds and corrected Open Telebar label are included. The generated package
+> contains no Python application or fallback. Full command, audible-quality,
+> working-account reverse-rollback and independent security acceptance remain open.
+> The sent-video incident, forum-parent unread mismatch and historical window
+> disappearance are not declared fixed by this release.
 
 <p align="center">
   <b>An unofficial Telegram client that lives in your <a href="https://omarchy.org">Omarchy</a> desktop, not in another window.</b><br>
@@ -218,6 +215,37 @@ sudo pacman -S --needed git cmake gperf clang openssl zlib
 
 ## Build and install the native package
 
+### Download the x86-64 prerelease
+
+Download `telebar-1.3.0-rc.1-linux-x86_64.tar.gz` and `SHA256SUMS` from
+[the release page](https://github.com/PavelLizunov/omarchy-telebar/releases/tag/v1.3.0-rc.1).
+In the download directory, verify the checksum and extract into a new staging
+directory outside the watched plugin tree:
+
+```sh
+sha256sum -c SHA256SUMS
+mkdir telebar-1.3.0-rc.1-staging
+tar -xzf telebar-1.3.0-rc.1-linux-x86_64.tar.gz -C telebar-1.3.0-rc.1-staging
+omarchy plugin validate "$PWD/telebar-1.3.0-rc.1-staging/io.github.pavellizunov.telebar"
+```
+
+Use the extracted directory in place of `$HOME/telebar-native-package` in the
+installation steps below. The archive has one Rust executable, native QML and
+Bash entry shims, including a content-bound UI generation. It does not need
+Python, Rust or Cargo at application runtime. Its binary needs x86-64 Linux,
+glibc 2.34 or newer and OpenSSL 3. Omarchy, Quickshell, the systemd user manager
+and the other requirements above still apply. TDLib is not bundled or upgraded.
+A fresh, otherwise stock Omarchy installation has not been tested; the local
+Qt 6.12 recovery is a separate host change, not a bundled release dependency.
+The plugin runs unsandboxed with your user permissions in the shared shell.
+
+Do not install GitHub’s automatic Source code archives as plugins: they retain
+the historical comparison code. Do not overwrite an active installation or
+start a second owner against existing accounts; follow the handoff guidance
+below. Extracting or validating the archive neither installs nor enables it.
+
+### Build from source
+
 Use the checked native feature/checkpoint branch, not the historical Python default
 branch. Rust 1.88 or newer, Cargo, OpenSSL development files and `pkg-config` are
 build-only requirements. From this checkout, choose a new output outside it:
@@ -350,8 +378,9 @@ The quick view remains a compact chat view; use the main window to choose forum 
 ### Window layout and stories
 
 Drag the separator between the chat list and the conversation to resize the list. Its saved
-width is 72–1200 pixels and is capped at 45% of the current window width, leaving most of
-the window for the conversation. The default is 300 pixels. Drag below 180 pixels and
+width is 72–1200 pixels. Wide windows cap it at 45% of the window. Narrow windows
+allow up to 300 pixels while reserving 40 pixels for the adjacent controls, so
+expansion can reach the detailed-list breakpoint. The default is 300 pixels. Drag below 180 pixels and
 release to collapse it to a 72-pixel avatar rail with unread badges. Double-click the
 separator to collapse/expand. Search expands the rail; the profile button still switches
 accounts and provides access to Settings in compact mode.

@@ -35,8 +35,11 @@ tray UI, updater or server list is bundled.
 Rust candidate dependencies are pinned in `rust/Cargo.lock`. OpenSSL bindings use
 the system OpenSSL library (Apache-2.0 for current OpenSSL); the `openssl` Rust
 crate is Apache-2.0. Tokio and Tungstenite are MIT; native-tls is MIT/Apache-2.0.
-Dependency metadata and upstream license files remain the authoritative notices;
-a successful build is not an advisory or license audit.
+Dependency metadata and upstream license files remain the authoritative notices.
+Native release archives include the compiled Linux runtime dependencies’ license
+texts and version inventory in `LICENSES/rust-dependencies/`. This distribution
+uses their MIT, Apache-2.0, ISC, Zlib and Unicode licenses as applicable; a
+successful build is not a vulnerability or independent license audit.
 
 ## Interface drawings
 
