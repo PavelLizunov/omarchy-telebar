@@ -23,6 +23,8 @@ FocusScope {
   property string query: ""
   property string nextOffset: ""
   property int serial: 0
+  onVisibleChanged: if (!visible) { picker.serial++; searchLater.stop(); picker.loading = false }
+  onChatIdChanged: { picker.serial++; searchLater.stop(); picker.loading = false }
   property var previewSet: null       // a set that is not yours, opened from a sticker: { id, title }
   property bool currentInstalled: false
   readonly property bool favorites: picker.tab === 1
@@ -47,6 +49,7 @@ FocusScope {
   }
 
   function show(index) {
+    searchLater.stop()
     var count = picker.sets.length + picker.setsStart + (picker.previewSet ? 1 : 0)
     picker.tab = ((index % count) + count) % count
     picker.cursor = 0
@@ -78,7 +81,9 @@ FocusScope {
 
   // A sticker in a chat leads to its set: one of yours, or shown last until you add it.
   function openSet(setId) {
+    var serial = ++picker.serial
     app.request("stickers.sets", {}, function (answer) {
+      if (serial !== picker.serial || !picker.visible) return
       if (answer.ok) picker.sets = answer.result.sets || []
       var at = -1
       for (var i = 0; i < picker.sets.length; i++) if (picker.sets[i].id === setId) at = i
@@ -103,12 +108,14 @@ FocusScope {
     var set = picker.currentSet
     if (!set) return
     var installing = !picker.currentInstalled
+    var serial = picker.serial
     app.request("stickers.install", { setId: set.id, installed: installing }, function (answer) {
+      if (serial !== picker.serial || !picker.visible) return
       if (!answer.ok) { picker.notice(answer.error || "Could not change your sticker sets"); return }
       picker.notice(installing ? "The set is one of yours now" : "The set is removed from yours")
       picker.currentInstalled = installing
       app.request("stickers.sets", {}, function (sets) {
-        if (!sets.ok) return
+        if (!sets.ok || serial !== picker.serial || !picker.visible) return
         picker.sets = sets.result.sets || []
         var at = -1
         for (var i = 0; i < picker.sets.length; i++) if (picker.sets[i].id === set.id) at = i
@@ -121,6 +128,7 @@ FocusScope {
 
   // Your saved GIFs while nothing is typed; otherwise what the @gif bot finds, a page at a time.
   function loadGifs(more) {
+    if (!picker.gifs || !picker.visible || searchLater.running) return
     if (more && (!picker.query || !picker.nextOffset || picker.loading)) return
     var serial = picker.serial
     picker.loading = true
@@ -147,6 +155,7 @@ FocusScope {
     id: searchLater
     interval: 400
     onTriggered: {
+      if (!picker.visible || !picker.gifs) return
       picker.serial++
       picker.items = []
       picker.cursor = 0
@@ -258,6 +267,8 @@ FocusScope {
         font.pixelSize: Style.font.body
         onTextChanged: {
           picker.query = text.trim()
+          picker.serial++
+          picker.loading = false
           searchLater.restart()
         }
 

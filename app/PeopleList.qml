@@ -12,6 +12,8 @@ FocusScope {
   property string title: ""
   property var rows: []                // [{ type: "user" or "chat", id, name, detail }]
   property bool loading: false
+  property int serial: 0
+  onVisibleChanged: if (!visible) list.serial++
   property int cursor: 0
 
   signal picked(var row)
@@ -21,6 +23,7 @@ FocusScope {
   z: 60
 
   function open(title) {
+    list.serial++
     list.title = title
     list.rows = []
     list.cursor = 0

@@ -19,6 +19,8 @@ FocusScope {
   property string query: ""
   property int cursor: 0
   property bool busy: false
+  property int serial: 0
+  onVisibleChanged: if (!visible) { dialog.serial++; dialog.busy = false }
   property string error: ""
 
   readonly property bool listing: dialog.mode === "people" || dialog.mode === "members"
@@ -32,6 +34,7 @@ FocusScope {
   z: 60
 
   function open() {
+    dialog.serial++
     dialog.selected = ({})
     dialog.busy = false
     groupName.clear()
@@ -52,6 +55,8 @@ FocusScope {
   }
 
   function showMode(mode) {
+    dialog.serial++
+    dialog.busy = false
     dialog.mode = mode
     dialog.cursor = 0
     dialog.error = ""
@@ -99,7 +104,8 @@ FocusScope {
     else if (dialog.mode === "channel") dialog.createChannel()
   }
 
-  function finish(answer, failure, notice) {
+  function finish(answer, failure, notice, serial) {
+    if (serial !== dialog.serial || !dialog.visible) return
     dialog.busy = false
     if (!answer.ok || !answer.result.chatId) {
       dialog.error = answer.error || failure
@@ -110,32 +116,40 @@ FocusScope {
   }
 
   function openUser(userId) {
+    if (dialog.busy) return
+    var serial = dialog.serial
     dialog.busy = true
-    dialog.app.request("user.chat", { userId: userId }, function (answer) { dialog.finish(answer, "That chat could not be opened") })
+    dialog.app.request("user.chat", { userId: userId }, function (answer) { dialog.finish(answer, "That chat could not be opened", "", serial) })
   }
 
   function openUsername(username) {
+    if (dialog.busy) return
+    var serial = dialog.serial
     dialog.busy = true
-    dialog.app.request("username.chat", { username: username }, function (answer) { dialog.finish(answer, "No one on Telegram is @" + username) })
+    dialog.app.request("username.chat", { username: username }, function (answer) { dialog.finish(answer, "No one on Telegram is @" + username, "", serial) })
   }
 
   function createGroup() {
+    if (dialog.busy) return
+    var serial = dialog.serial
     var title = groupName.text.trim()
     if (!title) { dialog.error = "A group needs a name"; return }
     dialog.busy = true
     dialog.app.request("group.create", { title: title, userIds: Object.keys(dialog.selected).map(Number) }, function (answer) {
       var left = answer.ok ? answer.result.notAdded : 0
       dialog.finish(answer, "The group could not be created",
-                    left > 0 ? (left === 1 ? "One person" : left + " people") + " could not be added: their privacy settings do not allow it" : "")
+                    left > 0 ? (left === 1 ? "One person" : left + " people") + " could not be added: their privacy settings do not allow it" : "", serial)
     })
   }
 
   function createChannel() {
+    if (dialog.busy) return
+    var serial = dialog.serial
     var title = channelName.text.trim()
     if (!title) { dialog.error = "A channel needs a name"; return }
     dialog.busy = true
     dialog.app.request("channel.create", { title: title, description: channelAbout.text.trim(), channel: true }, function (answer) {
-      dialog.finish(answer, "The channel could not be created")
+      dialog.finish(answer, "The channel could not be created", "", serial)
     })
   }
 

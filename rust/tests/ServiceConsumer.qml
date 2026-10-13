@@ -10,8 +10,8 @@ Rectangle {
   height: 650
   color: "#101315"
   property string pluginRoot: ""
-  property string serviceEntry: "shell/Service.qml"
-  property string quickEntry: "shell/QuickView.qml"
+  property string serviceEntry: "shell/TelebarService.qml"
+  property string quickEntry: "shell/TelebarQuickView.qml"
   property string fixtureSocket: ""
   property int themeRadius: 0
   property bool settled: false

@@ -153,7 +153,7 @@ Rectangle {
   Component { id: forwardScreen; App.ForwardPicker { app: model; chats: model.chats; multiple: true; Component.onCompleted: { open(101,[1,2]); chosen = [900] } } }
   Component { id: pollScreen; App.PollComposer { app: model; Component.onCompleted: { open("Community",false); quiz = preview.variant === "quiz" } } }
   Component { id: infoScreen; App.ChatInfo { app: model; client: model; chat: model.chats[0]; visible: true } }
-  Component { id: quickScreen; Shell.QuickView { service: quickService; compact: true; opened: true; Component.onCompleted: if (preview.scene === "quick-reply") reset(101,0) } }
+  Component { id: quickScreen; Shell.TelebarQuickView { service: quickService; compact: true; opened: true; Component.onCompleted: if (preview.scene === "quick-reply") reset(101,0) } }
   QtObject {
     id: quickService
     property bool ready: true

@@ -408,10 +408,38 @@ python3 -B rust/tests/preview_io_test.py
 python3 -B rust/tests/preview_io.py /absolute/reviewed-source /absolute/new/preview-root
 ```
 
-The current Telebar Main and service/quick consumers were checked against a
-frozen local UI composite, not substituted with this checkpoint's older UI tree.
+The native checkpoint now deliberately composes the preserved current Telebar
+QML/JavaScript baseline, including TelebarClient/TelebarService and extracted
+chat/settings/Main owners. The four obsolete Omagram client/service/quick type
+names are removed from this candidate; the manifest points to the current names.
+This is native UI preservation for migration, not publication of the concurrent
+Python backend/tests/documentation backlog. The source worktree/index and installed
+Python backend are retained. A local package and publication are not installation
+or loaded-user acceptance.
 Ready, no-library, composer refusal/acceptance, retained recording/resolution and
 quick history use native Socket; radius zero/nonzero images were inspected.
+Final integrated-UI interactions passed 192 selected QtTest results, eight
+JavaScript suites and 291 preserved legacy Python contracts (two skips) in private
+read-only namespaces. Three identity checks also passed. Only affected type/path
+and extracted-handler dependencies were updated in the inherited test suite;
+unrelated Python refactoring was excluded. These inert interaction checks are
+separate from native Socket/MCP evidence and physical input. Both assertion-safe
+client fixtures passed through real Socket with explicit private roots, no
+credential startup and no database parameters. Initial calls refused a nonexistent
+import directory before QML execution; the exact corrected calls had no diagnostics.
+Their finite units reached their manager limit before final IPC cleanup; inactive
+owners, an unlocked exact lock inode and refused stale sockets were verified before
+removing those owned socket entries. This is cleanup evidence, not graceful quit.
+The service fixture defaults to current Telebar types; explicit historical pairs
+remain supported for earlier checkpoint checks. The separately retained initial
+32-result interaction run and earlier 127-result send-contract log keep their
+original identities; an earlier summary incorrectly counted the latter as 65.
+The final 127-result send-contract run and 25 additional settings/dialog guard
+results apply to the exact integrated UI. A finite token comparison of 209
+extracted root handlers found 185 unchanged bodies after explicit context aliases.
+The 24 listed differences were reviewed directly and relevant consumer guards
+checked. Token comparison is not a general parser or whole-refactor semantic
+certification.
 The first service preview incorrectly used native Process and rewrote the managed
 host launcher to the candidate path. Its safety claim is revoked. The installed
 launcher was restored using its supported desktop-entry route. The explicit

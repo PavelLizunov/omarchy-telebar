@@ -4,6 +4,14 @@ import Quickshell
 import qs.Commons
 import "Model.js" as Model
 import "Keymap.js" as Keymap
+import "ChatNavigation.js" as ChatNavigation
+import "ChatAttachments.js" as ChatAttachments
+import "ChatActions.js" as ChatActions
+import "ChatScheduled.js" as ChatScheduled
+import "ChatInfoActions.js" as ChatInfoActions
+import "ChatReactions.js" as ChatReactions
+import "ChatComposition.js" as ChatComposition
+import "ChatSuggestions.js" as ChatSuggestions
 
 // The open chat: its header, the pinned message, messages and the composer.
 //
@@ -20,6 +28,9 @@ FocusScope {
   id: root
 
   property var app
+  readonly property var composer: composerView.input
+  readonly property var composerButtons: composerView.buttons
+  readonly property var headerButtons: headerView.buttons
   property var client
   property var chat: null
   property var history: []            // the chat's messages, or its open topic's
@@ -79,6 +90,7 @@ FocusScope {
 
   // What the list shows: the history, or the chat's scheduled messages while scheduledOpen.
   property bool scheduledOpen: false
+  onScheduledOpenChanged: root.navigationSerial++
   property var scheduledMessages: []
   property bool scheduledLoading: false
   readonly property var messages: root.scheduledOpen ? root.scheduledMessages : root.history
@@ -117,9 +129,7 @@ FocusScope {
   signal searchInChatRequested()
 
   function focusComposer() {
-    if (root.showTopics) topicList.forceActiveFocus()
-    else if (root.composerBlock !== "" && !root.scheduledOpen) blockButton.forceActiveFocus()
-    else composer.forceActiveFocus()
+    return ChatNavigation.focusComposer({ blockButton: blockButton, composer: composer, root: root, topicList: topicList })
   }
 
   // Where you cannot write, a bar stands in for the message box: join the group or channel, or mute a
@@ -131,13 +141,7 @@ FocusScope {
   property real joiningChatId: 0
 
   function joinChat() {
-    if (!root.chat) return
-    var chatId = root.chat.id
-    var channel = root.chat.kind === "channel"
-    root.joiningChatId = chatId
-    client.request("chat.join", { chatId: chatId }, function (answer) {
-      root.flash(answer.ok ? Model.joinText(answer.result.state, channel) : (answer.error || "Could not join"))
-    })
+    return ChatNavigation.joinChat({ client: client, root: root })
   }
 
   onComposerBlockChanged: {
@@ -147,93 +151,24 @@ FocusScope {
   }
 
   function focusMessages() {
-    if (root.showTopics) { topicList.forceActiveFocus(); return }
-    if (!root.messages.length) return
-    if (root.cursor < 0 || root.cursor >= root.messages.length) root.cursor = root.messages.length - 1
-    messageList.forceActiveFocus()
-    messageList.positionViewAtIndex(root.cursor, ListView.Contain)
+    return ChatNavigation.focusMessages({ ListView: ListView, messageList: messageList, root: root, topicList: topicList })
   }
 
   // A message found by search: the cursor goes to it if it is loaded.
+  property int navigationSerial: 0
+
   function focusMessage(messageId) {
-    root.closeScheduled()
-    for (var i = 0; i < root.messages.length; i++) {
-      if (root.messages[i].id !== messageId) continue
-      root.cursor = i
-      root.stickToBottom = false
-      messageList.forceActiveFocus()
-      messageList.positionViewAtIndex(i, ListView.Center)
-      return true
-    }
-    return false
+    return ChatNavigation.focusMessage({ ListView: ListView, messageList: messageList, root: root }, messageId)
   }
 
   function resetForChat() {
-    root.invalidateSend()
-    root.invalidateMention()
-    messageMenu.close()
-    muteMenu.close()
-    sendMenu.close()
-    rescheduleMenu.close()
-    autoDeleteMenu.close()
-    composerMenu.close()
-    headerMenu.close()
-    draftTimer.stop()
-    root.revealed = ({})
-    root.pollChoices = ({})
-    root.selection = ({})
-    root.prompt = null
-    root.replyToId = 0
-    root.editingId = 0
-    root.editingCaption = false
-    root.draftBeforeEdit = ""
-    root.cursor = -1
-    root.confirmDeleteId = 0
-    root.notice = ""
-    root.stickToBottom = true
-    root.stickersOpen = false
-    root.emojiOpen = false
-    root.forgetReactions()
-    root.pinnedMessage = null
-    root.lastTypingMs = 0
-    root.translations = ({})
-    root.botCommands = null
-    root.suggestions = []
-    root.attachments = []
-    root.joiningChatId = 0
-    root.locationOpen = false
-    root.dateOpen = false
-    root.forgetLinkPreview()
-    root.scheduledOpen = false
-    root.scheduledMessages = []
-    // The chat's draft, as Telegram keeps it: you continue where you left off, on any device.
-    root.draftChatId = root.chat ? root.chat.id : 0
-    root.draftTopicId = root.topicId
-    root.draftThread = root.threadOpen
-    root.savedDraft = root.topicId ? (app.openTopic.draft || "") : (root.chat && root.chat.draft ? root.chat.draft : "")
-    root.setComposerText(root.savedDraft)
-    root.loadPinned()
+    return ChatNavigation.resetForChat({ app: app, attachDialog: attachDialog, autoDeleteMenu: autoDeleteMenu, composerMenu: composerMenu, draftTimer: draftTimer, headerMenu: headerMenu, messageMenu: messageMenu, muteMenu: muteMenu, rescheduleMenu: rescheduleMenu, root: root, sendMenu: sendMenu })
   }
 
   // Into a forum topic, or back to the topic list: what was being written stays with the topic
   // it was written in, and the topic opened brings back its own draft.
   function switchTopic() {
-    root.invalidateSend()
-    root.invalidateMention()
-    root.leaveChat()
-    root.closeScheduled()
-    root.draftTopicId = root.topicId
-    root.draftThread = root.threadOpen
-    root.replyToId = 0
-    root.editingId = 0
-    root.editingCaption = false
-    root.draftBeforeEdit = ""
-    root.selection = ({})
-    root.cursor = -1
-    root.confirmDeleteId = 0
-    root.stickToBottom = true
-    root.savedDraft = root.topicId ? (app.openTopic.draft || "") : (root.chat.draft || "")
-    root.setComposerText(root.savedDraft)
+    return ChatNavigation.switchTopic({ app: app, attachDialog: attachDialog, root: root })
   }
 
   // ---------------------------------------------------------------- more to send: dice, contact cards, locations
@@ -242,114 +177,64 @@ FocusScope {
   readonly property var typedLocation: root.locationOpen ? Model.parseLocation(locationField.text) : null
 
   function openMoreMenu(item) {
-    if (!root.chat || !root.canWrite) return
-    var at = item ? item.mapToItem(root, 0, 0) : composer.mapToItem(root, composer.cursorRectangle.x, composer.cursorRectangle.y)
-    moreMenu.open(at.x, at.y - Style.space(4))
+    return ChatAttachments.openMoreMenu({ Style: Style, composer: composer, moreMenu: moreMenu, root: root }, item)
   }
 
   function morePicked(id) {
-    if (!root.chat) return
-    if (id === "poll") {
-      pollComposer.open(Model.chatTitle(root.chat, app.meId), root.chat.kind === "channel")
-    } else if (id === "dice") {
-      var at = composer.mapToItem(root, composer.cursorRectangle.x, composer.cursorRectangle.y)
-      diceMenu.open(at.x, at.y - Style.space(4))
-    } else if (id === "contact") {
-      peoplePicker.open(0, [])
-    } else if (id === "location") {
-      root.openLocationBar()
-    }
+    return ChatAttachments.morePicked({ Style: Style, app: app, composer: composer, diceMenu: diceMenu, peoplePicker: peoplePicker, pollComposer: pollComposer, root: root }, id)
   }
 
   // What the + button sends goes where a message would: into the open topic or thread, as a reply.
   function sendExtra(command, args, what) {
-    if (!root.chat || root.sendPending || videoNote.visible) return
-    args.chatId = root.chat.id
-    root.target(args)
-    if (root.replyToId) args.replyToMessageId = root.replyToId
-    var snapshot = root.beginSend()
-    snapshot.failurePrefix = "Could not send " + what + ": "
-    client.request(command, args, function (answer) {
-      root.completeSend(snapshot, answer, 0, true)
-    })
+    return ChatAttachments.sendExtra({ client: client, root: root, videoNote: videoNote }, command, args, what)
   }
 
   function sendDice(emoji) {
-    root.sendExtra("message.sendDice", { emoji: emoji }, "the dice")
+    return ChatAttachments.sendDice({ root: root }, emoji)
   }
 
   function sendPoll(poll) {
-    root.focusComposer()
-    root.sendExtra("message.sendPoll", { question: poll.question, options: poll.options, anonymous: poll.anonymous,
-                                         multiple: poll.multiple, quiz: poll.quiz, correct: poll.correct,
-                                         explanation: poll.explanation }, "the poll")
+    return ChatAttachments.sendPoll({ root: root }, poll)
   }
 
   function shareContact(chatId) {
-    root.focusComposer()
-    var person = Model.findChat(app.chats || [], chatId)
-    if (person && person.userId) root.sendExtra("message.sendContact", { userId: person.userId }, "the contact card")
+    return ChatAttachments.shareContact({ app: app, root: root }, chatId)
   }
 
   property bool dateOpen: false
   readonly property var typedDay: root.dateOpen ? Model.parseDay(dateField.text, root.nowMs) : null
 
   function openDateBar() {
-    if (!root.chat) return
-    root.locationOpen = false
-    dateField.text = ""
-    root.dateOpen = true
-    dateField.forceActiveFocus()
+    return ChatAttachments.openDateBar({ dateField: dateField, root: root })
   }
 
   function closeDateBar() {
-    root.dateOpen = false
-    dateField.text = ""
-    root.focusComposer()
+    return ChatAttachments.closeDateBar({ dateField: dateField, root: root })
   }
 
   // The last message sent by the end of that day: the chat opens around it.
   function jumpToDay() {
-    var start = Model.parseDay(dateField.text, root.nowMs)
-    if (start === null || !root.chat) return
-    var chatId = root.chat.id
-    client.request("chat.messageByDate", { chatId: chatId, date: start + 86399 }, function (answer) {
-      if (!root.chat || root.chat.id !== chatId) return
-      if (answer.ok && answer.result.messageId) root.jumpTo(answer.result.messageId)
-      else root.flash("No messages on or before that day")
-    })
-    root.closeDateBar()
+    return ChatAttachments.jumpToDay({ client: client, dateField: dateField, root: root })
   }
 
   function openLocationBar() {
-    locationField.text = ""
-    root.dateOpen = false
-    root.locationOpen = true
-    locationField.forceActiveFocus()
+    return ChatAttachments.openLocationBar({ locationField: locationField, root: root })
   }
 
   function closeLocationBar() {
-    root.locationOpen = false
-    locationField.text = ""
-    root.focusComposer()
+    return ChatAttachments.closeLocationBar({ locationField: locationField, root: root })
   }
 
   function sendLocation() {
-    var place = Model.parseLocation(locationField.text)
-    if (!place) return
-    root.sendExtra("message.sendLocation", { latitude: place.latitude, longitude: place.longitude }, "the location")
-    root.closeLocationBar()
+    return ChatAttachments.sendLocation({ locationField: locationField, root: root })
   }
 
   function attach(asPhoto) {
-    if (!root.chat || !root.canWrite) return
-    attachDialog.asPhoto = asPhoto
-    attachDialog.open()
+    return ChatAttachments.attach({ attachDialog: attachDialog, root: root }, asPhoto)
   }
 
   function urlToPath(url) {
-    var s = String(url)
-    return s.indexOf("file://") === 0 ? decodeURIComponent(s.slice(7)) : ""
+    return ChatAttachments.urlToPath({  }, url)
   }
 
   // Files wait above the message box until sent, so a caption can go with them: the text in the box.
@@ -358,48 +243,20 @@ FocusScope {
   property bool attachAsMedia: true
 
   function addAttachments(paths, asMedia) {
-    if (!root.chat || !paths.length || !root.canWrite) return
-    if (!root.attachments.length) root.attachAsMedia = asMedia !== false
-    var next = root.attachments.slice()
-    for (var i = 0; i < paths.length; i++) {
-      if (next.some(function (a) { return a.path === paths[i] })) continue
-      if (next.length >= 10) {
-        root.flash("Ten files go at once: the rest were left out")
-        break
-      }
-      next.push({ path: paths[i], name: paths[i].split("/").pop(), kind: Model.attachmentKind(paths[i]) })
-    }
-    root.attachments = next
-    root.focusComposer()
+    return ChatAttachments.addAttachments({ root: root }, paths, asMedia)
   }
 
   function removeAttachment(index) {
-    var next = root.attachments.slice()
-    next.splice(index, 1)
-    root.attachments = next
+    return ChatAttachments.removeAttachment({ root: root }, index)
   }
 
   // Photos and videos go as albums, files and music as albums of their own, the caption on the first.
   function sendAttachments(options) {
-    if (!root.chat || root.sendPending || videoNote.visible) return
-    var caption = composer.text.replace(/\s+$/, "")
-    if (caption.length > 2048) { root.flash("That caption is too long."); return }
-    var args = root.target({ chatId: root.chat.id, paths: root.attachments.map(function (a) { return a.path }),
-                             asMedia: root.attachAsMedia, caption: caption })
-    if (root.replyToId) args.replyToMessageId = root.replyToId
-    if (options && typeof options.silent === "boolean") args.silent = options.silent
-    if (options && options.sendAt) args.sendAt = options.sendAt
-    var snapshot = root.beginSend()
-    client.request("message.sendFiles", args, function (answer) {
-      root.completeSend(snapshot, answer, options && options.sendAt ? options.sendAt : 0)
-    })
+    return ChatAttachments.sendAttachments({ client: client, composer: composer, root: root, videoNote: videoNote }, options)
   }
 
   function toggleStickers() {
-    if (!root.chat || !root.canWrite) return
-    root.stickersOpen = !root.stickersOpen
-    if (root.stickersOpen) Qt.callLater(function () { stickerPicker.open() })
-    else root.focusComposer()
+    return ChatAttachments.toggleStickers({ root: root, stickerPicker: stickerPicker })
   }
 
   readonly property bool shortcutsOn: !!root.chat && !app.settingsOpen && !root.modalOpen && !root.blocked
@@ -449,40 +306,15 @@ FocusScope {
   }
 
   function startVoice() {
-    if (!root.chat || root.recordingVoice || !root.canWrite || videoNote.visible || app.recordedSend) return
-    root.recordingNow = Date.now()
-    client.request("voice.start", { chatId: root.chat.id }, function (answer) {
-      if (!answer.ok) root.flash("Could not record: " + (answer.error || "no microphone"))
-    })
+    return ChatAttachments.startVoice({ app: app, client: client, root: root, videoNote: videoNote })
   }
 
   function stopVoice(send) {
-    if (send && (!root.chat || root.sendPending || videoNote.visible)) return
-    var args = root.target({ send: send })
-    if (send && root.replyToId) args.replyToMessageId = root.replyToId
-    var snapshot = send ? root.beginSend() : null
-    client.request("voice.stop", args, function (answer) {
-      if (snapshot) root.completeSend(snapshot, answer, 0, true)
-      else if (!answer.ok) root.flash(answer.error || "Could not discard the voice message")
-    })
-    Qt.callLater(root.focusComposer)
+    return ChatAttachments.stopVoice({ client: client, root: root, videoNote: videoNote }, send)
   }
 
   function composerAction(action, item) {
-    if (!root.chat || !root.canWrite) return
-    if (action === "overflow") {
-      var at = (item || composerButtons).mapToItem(root, 0, 0)
-      composerMenu.open(at.x, at.y - Style.space(4))
-    }
-    else if (action === "silent") root.toggleSilent()
-    else if (action === "send") root.send()
-    else if (action === "later") root.openSendMenu(item)
-    else if (action === "attach") root.attach(true)
-    else if (action === "emoji") root.openEmoji()
-    else if (action === "stickers") root.toggleStickers()
-    else if (action === "video") root.openVideo()
-    else if (action === "voice") root.startVoice()
-    else if (action === "more") root.openMoreMenu(item)
+    return ChatAttachments.composerAction({ Style: Style, composerButtons: composerButtons, composerMenu: composerMenu, root: root }, action, item)
   }
 
   FilePicker {
@@ -565,181 +397,79 @@ FocusScope {
   // ---------------------------------------------------------------- what messages ask for
 
   function copyOf(map) {
-    var next = {}
-    for (var k in map) next[k] = map[k]
-    return next
+    return ChatActions.copyOf({  }, map)
   }
 
   function reveal(id) {
-    var next = root.copyOf(root.revealed)
-    next[id] = true
-    root.revealed = next
+    return ChatActions.reveal({ root: root }, id)
   }
 
   function stepFrom(index, delta) {
-    var i = index + delta
-    while (i > 0 && i < root.messages.length - 1 && Model.inAlbumAfterFirst(root.messages, i)) i += delta
-    if (delta < 0) while (i > 0 && Model.inAlbumAfterFirst(root.messages, i)) i--
-    return Math.max(0, Math.min(root.messages.length - 1, i))
+    return ChatActions.stepFrom({ root: root }, index, delta)
   }
 
   function jumpTo(messageId) {
-    if (!root.focusMessage(messageId) && root.chat) app.openChatAt(root.chat.id, messageId)
+    return ChatActions.jumpTo({ app: app, root: root }, messageId)
   }
 
   function openExternal(url) {
-    var safe = Model.safeUrl(url)
-    if (!safe) { root.flash("That link cannot be opened"); return }
-    Quickshell.execDetached(["/usr/bin/xdg-open", safe])
+    return ChatActions.openExternal({ Quickshell: Quickshell, root: root }, url)
   }
 
   // The comments under a channel post, or the replies to a message: they open as a thread of the
   // chat they live in, and Alt+Left leads back here.
   function openThread(message) {
-    if (!message || !root.chat || message.sendAt || message.sending) return
-    if (root.threadOpen && (message.id === root.topicId || message.threadId === root.topicId)) return   // this thread
-    if (!message.replies && !message.threadId) { root.flash("This message has no comments or replies"); return }
-    app.openThread(message.chatId, message.id)
+    return ChatActions.openThread({ app: app, root: root }, message)
   }
 
   function openUsername(username) {
-    client.request("username.chat", { username: username }, function (answer) {
-      if (answer.ok && answer.result.chatId) app.openChatById(answer.result.chatId, false)
-      else root.flash("No one on Telegram is @" + username)
-    })
+    return ChatActions.openUsername({ app: app, client: client, root: root }, username)
   }
 
   function openUser(userId) {
-    if (!userId) return
-    client.request("user.chat", { userId: userId }, function (answer) {
-      if (answer.ok && answer.result.chatId) app.openChatById(answer.result.chatId, false)
-      else root.flash(answer.error || "That chat cannot be opened")
-    })
+    return ChatActions.openUser({ app: app, client: client, root: root }, userId)
   }
 
   function sendText(text) {
-    if (!root.chat || !text) return
-    client.request("message.send", root.target({ chatId: root.chat.id, text: text }), function (answer) {
-      if (!answer.ok) root.flash("Could not send: " + (answer.error || "unknown error"))
-    })
-    root.stickToBottom = true
+    return ChatActions.sendText({ client: client, root: root }, text)
   }
 
   function openLink(link, message) {
-    var s = String(link || "")
-    if (s === "omagram:spoiler") { if (message) root.reveal(message.id); return }
-    if (s.indexOf("omagram:mention:") === 0) { root.openUsername(decodeURIComponent(s.slice(16))); return }
-    if (s.indexOf("omagram:user:") === 0) { root.openUser(Number(s.slice(13))); return }
-    if (s.indexOf("omagram:search:") === 0) { root.searchRequested(decodeURIComponent(s.slice(15))); return }
-    if (s.indexOf("omagram:command:") === 0) { root.sendText(decodeURIComponent(s.slice(16))); return }
-    var url = Model.safeUrl(s)
-    if (!url) return
-    if (/^mailto:/i.test(url)) { root.openExternal(url); return }
-    client.request("link.open", { url: url }, function (answer) {
-      if (!answer.ok) { root.flash(answer.error || "That link cannot be opened"); return }
-      var r = answer.result
-      if (r.kind === "external") {
-        root.openExternal(r.url)
-      } else if (r.kind === "chat" && r.chatId) {
-        if (r.messageId) app.openChatAt(r.chatId, r.messageId)
-        else app.openChatById(r.chatId, false)
-        if (r.botStart) root.prompt = { text: "Start the bot?", action: "Start",
-                                        run: function () { client.request("bot.start", { chatId: r.chatId, parameter: r.botStart }) } }
-      } else if (r.kind === "invite") {
-        if (r.chatId) { app.openChatById(r.chatId, false); return }
-        root.prompt = { text: "Join “" + r.title + "”" + (r.members ? " (" + r.members + " members)" : "") + "?", action: "Join",
-                        run: function () {
-                          client.request("chat.joinLink", { link: r.link }, function (joined) {
-                            if (joined.ok && joined.result.chatId) app.openChatById(joined.result.chatId, false)
-                            else root.flash(joined.error || "Could not join")
-                          })
-                        } }
-      } else if (r.kind === "proxy") {
-        root.prompt = { text: "Connect to Telegram through the " + (Model.PROXY_TYPE_NAMES[r.type] || "") + " proxy " + r.server + ":" + r.port + "?",
-                        action: "Use it",
-                        run: function () {
-                          client.request("proxy.addLink", { link: r.link }, function (added) {
-                            root.flash(added.ok ? "Connecting through " + r.server + ":" + r.port : (added.error || "Could not add the proxy"))
-                          })
-                        } }
-      }
-    })
+    return ChatActions.openLink({ app: app, client: client, root: root }, link, message)
   }
 
   function runPrompt(accept) {
-    var p = root.prompt
-    root.prompt = null
-    if (accept && p && p.run) p.run()
+    return ChatActions.runPrompt({ root: root }, accept)
   }
 
   function pressButton(message, button) {
-    if (!message || !button) return
-    if (button.kind === "callback") {
-      client.request("button.callback", { chatId: message.chatId, messageId: message.id, data: button.data }, function (answer) {
-        if (!answer.ok) { root.flash(answer.error || "The bot did not answer"); return }
-        if (answer.result.url) root.openLink(answer.result.url, message)
-        else if (answer.result.text) root.flash(answer.result.text)
-      })
-    } else if (button.kind === "url") {
-      root.openLink(button.url, message)
-    } else if (button.kind === "user") {
-      root.openUser(button.userId)
-    } else if (button.kind === "copy") {
-      root.copyText(button.copyText)
-    } else {
-      root.flash("“" + button.text + "” needs an official Telegram app")
-    }
+    return ChatActions.pressButton({ client: client, root: root }, message, button)
   }
 
   function pressKey(button) {
-    if (!button || !root.keyboard) return
-    if (button.kind !== "text") { root.flash("“" + button.text + "” needs an official Telegram app"); return }
-    root.sendText(button.text)
-    if (root.keyboard.oneTime) root.keyboardHiddenFor = root.keyboard.messageId
+    return ChatActions.pressKey({ root: root }, button)
   }
 
   function vote(message, index) {
-    var poll = message && message.content ? message.content.poll : null
-    if (!poll || poll.closed) return
-    if (!poll.multiple) {
-      client.request("poll.vote", { chatId: message.chatId, messageId: message.id, optionIds: [index] }, function (answer) {
-        if (!answer.ok) root.flash(answer.error || "Could not vote")
-      })
-      return
-    }
-    var chosen = (root.pollChoices[message.id] || []).slice()
-    var at = chosen.indexOf(index)
-    if (at >= 0) chosen.splice(at, 1)
-    else chosen.push(index)
-    var next = root.copyOf(root.pollChoices)
-    next[message.id] = chosen
-    root.pollChoices = next
+    return ChatActions.vote({ client: client, root: root }, message, index)
   }
 
   function submitVote(message) {
-    var chosen = root.pollChoices[message.id] || []
-    if (!chosen.length) return
-    client.request("poll.vote", { chatId: message.chatId, messageId: message.id, optionIds: chosen }, function (answer) {
-      if (!answer.ok) root.flash(answer.error || "Could not vote")
-    })
-    var next = root.copyOf(root.pollChoices)
-    delete next[message.id]
-    root.pollChoices = next
+    return ChatActions.submitVote({ client: client, root: root }, message)
   }
 
   function toggleReaction(message, reaction) {
-    if (!message || !reaction || !reaction.emoji) return
-    client.request("reaction.set", { chatId: message.chatId, messageId: message.id, emoji: reaction.emoji, chosen: !reaction.chosen },
-                   function (answer) { if (!answer.ok) root.flash(answer.error || "Could not react") })
+    return ChatActions.toggleReaction({ client: client, root: root }, message, reaction)
   }
 
   // An album is selected as a whole, as it is shown.
   function toggleSelected(message) {
-    if (!message || root.scheduledOpen) return
-    root.selection = Model.toggleSelection(root.selection, Model.albumIds(root.messages, message))
+    return ChatActions.toggleSelected({ root: root }, message)
   }
 
-  function clearSelection() { root.selection = ({}) }
+  function clearSelection() {
+    return ChatActions.clearSelection({ root: root })
+  }
 
   readonly property bool promptKeysOn: !!root.prompt && !app.settingsOpen && !root.modalOpen && !root.blocked
   Shortcut { sequences: Keymap.keysFor(app.shortcuts, "prompt.accept"); enabled: root.promptKeysOn; onActivated: root.runPrompt(true) }
@@ -748,132 +478,59 @@ FocusScope {
   // ---------------------------------------------------------------- the message menu
 
   function openMenu(message, x, y, selectedText) {
-    if (!message || !root.chat || message.content.kind === "service") return
-    root.menuToComposer = composer.activeFocus
-    root.menuMessage = message
-    root.menuSelectedText = selectedText || ""
-    root.menuProperties = null
-    root.menuReactions = []
-    messageMenu.open(x, y)
-    if (message.sending || message.sendAt) return   // not sent yet: there is nothing to ask
-    var id = message.id
-    client.request("message.properties", { chatId: message.chatId, messageId: id }, function (answer) {
-      if (answer.ok && messageMenu.visible && root.menuMessage && root.menuMessage.id === id) root.menuProperties = answer.result
-    })
-    client.request("reactions.available", { chatId: message.chatId, messageId: id }, function (answer) {
-      if (answer.ok && messageMenu.visible && root.menuMessage && root.menuMessage.id === id)
-        root.menuReactions = (answer.result.emoji || []).slice(0, 8)
-    })
+    return ChatActions.openMenu({ client: client, composer: composer, messageMenu: messageMenu, root: root }, message, x, y, selectedText)
   }
 
   // The selected message's menu, from the keyboard: beside its bubble.
   function openMenuAtCursor() {
-    if (!root.selectedMessage) return
-    var item = messageList.itemAtIndex(root.cursor)
-    var at = item ? item.bubbleItem.mapToItem(root, Math.min(item.bubbleItem.width, Style.space(48)), Math.min(item.bubbleItem.height, Style.space(28)))
-                  : Qt.point(root.width / 2, root.height / 2)
-    root.openMenu(root.selectedMessage, at.x, at.y)
+    return ChatActions.openMenuAtCursor({ Style: Style, messageList: messageList, root: root })
   }
 
   function afterMenu() {
-    if (root.menuToComposer) root.focusComposer()
-    else root.focusMessages()
+    return ChatActions.afterMenu({ root: root })
   }
 
   function menuPicked(id) {
-    var message = root.menuMessage
-    if (!message || !root.chat) return
-    if (id === "reply") root.startReply(message)
-    else if (id === "thread") root.openThread(message)
-    else if (id === "favoriteSticker") root.favoriteSticker(message)
-    else if (id === "stickerSet") root.openStickerSet(message)
-    else if (id === "moreReactions") root.openReactionPicker(message)
-    else if (id === "reactions") root.showReactions(message)
-    else if (id === "viewers") root.showViewers(message)
-    else if (id === "copy") root.copyText(root.menuSelectedText || message.content.text)
-    else if (id === "link") root.copyLink(message)
-    else if (id === "edit") root.startEdit(root.captionHolder(message), true)
-    else if (id === "forward") root.forward(Model.albumIds(root.messages, message))
-    else if (id === "pin" || id === "unpin") root.setPinned(message, id === "pin")
-    else if (id === "select") root.toggleSelected(message)
-    else if (id === "open") root.openFile(message)
-    else if (id === "save") root.saveFile(message)
-    else if (id === "retract") root.retractVote(message)
-    else if (id === "deleteAll" || id === "deleteMe") root.confirmDelete(Model.albumIds(root.messages, message), id === "deleteAll")
-    else if (id === "translate") root.translate(root.captionHolder(message))
-    else if (id === "untranslate") root.untranslate(root.captionHolder(message))
-    else if (id === "sendNow") root.reschedule(message, 0)
-    else if (id === "reschedule") root.openRescheduleMenu(message)
+    return ChatActions.menuPicked({ root: root }, id)
   }
 
   function favoriteSticker(message) {
-    var media = message && message.content ? message.content.media : null
-    if (!media || !media.file) return
-    client.request("sticker.favorite", { fileId: media.file.id, favorite: true }, function (answer) {
-      root.flash(answer.ok ? "Added to your favorite stickers" : (answer.error || "Could not add it to your favorites"))
-    })
+    return ChatActions.favoriteSticker({ client: client, root: root }, message)
   }
 
   // A sticker's set, in the sticker picker: one of yours, or shown last with A to add it.
   function openStickerSet(message) {
-    var media = message && message.content ? message.content.media : null
-    if (!media || !media.setId || !root.chat) return
-    root.stickersOpen = true
-    Qt.callLater(function () { stickerPicker.openSet(media.setId) })
+    return ChatActions.openStickerSet({ root: root, stickerPicker: stickerPicker }, message)
   }
   readonly property var stickers: stickerPicker   // the sticker picker, for checks from outside
 
   function react(message, emoji) {
-    if (!message || !emoji) return
-    client.request("reaction.set", { chatId: message.chatId, messageId: message.id, emoji: emoji, chosen: !Model.reactionChosen(message, emoji) },
-                   function (answer) { if (!answer.ok) root.flash(answer.error || "Could not react") })
+    return ChatActions.react({ client: client, root: root }, message, emoji)
   }
 
   function retractVote(message) {
-    client.request("poll.vote", { chatId: message.chatId, messageId: message.id, optionIds: [] }, function (answer) {
-      if (!answer.ok) root.flash(answer.error || "Could not retract the vote")
-    })
+    return ChatActions.retractVote({ client: client, root: root }, message)
   }
 
   // An album's caption is on one of its messages, not always the first.
   function captionHolder(message) {
-    if (!message.albumId) return message
-    for (var i = 0; i < root.messages.length; i++) {
-      var m = root.messages[i]
-      if (m.albumId === message.albumId && m.content.text) return m
-    }
-    return message
+    return ChatActions.captionHolder({ root: root }, message)
   }
 
   function copyText(text, done) {
-    clipboard.text = text
-    clipboard.selectAll()
-    clipboard.copy()
-    root.flash(done || "Copied")
+    return ChatActions.copyText({ clipboard: clipboard, root: root }, text, done)
   }
 
   function copyLink(message) {
-    if (!message) return
-    client.request("message.link", { chatId: message.chatId, messageId: message.id }, function (answer) {
-      if (answer.ok && answer.result.link)
-        root.copyText(answer.result.link, answer.result.public ? "Link copied" : "Link copied: it opens only for members of this chat")
-      else root.flash(answer.error || "This message has no link")
-    })
+    return ChatActions.copyLink({ client: client, root: root }, message)
   }
 
   function setPinned(message, pinned) {
-    if (!message) return
-    client.request("message.pin", { chatId: message.chatId, messageId: message.id, pinned: pinned }, function (answer) {
-      if (!answer.ok) root.flash(answer.error || (pinned ? "Could not pin the message" : "Could not unpin the message"))
-    })
+    return ChatScheduled.setPinned({ client: client, root: root }, message, pinned)
   }
 
   function loadPinned() {
-    if (!root.chat) return
-    var chatId = root.chat.id
-    client.request("chat.pinned", { chatId: chatId }, function (answer) {
-      if (root.chat && root.chat.id === chatId) root.pinnedMessage = answer.ok ? answer.result.message : null
-    })
+    return ChatScheduled.loadPinned({ client: client, root: root })
   }
 
   Connections {
@@ -890,409 +547,186 @@ FocusScope {
 
   // The other ways to send what is typed: without sound, at a time, once the other person is online.
   function openSendMenu(item) {
-    if (!root.chat || root.editingId || root.secretBlocked) return
-    root.sendMenuItems = Model.sendMenu(root.chat, app.meId, root.nowMs, composer.text.trim() !== "")
-    if (!root.sendMenuItems.length) { root.flash("Type a message first"); return }
-    // Above what opened it: the clock button, or the text cursor.
-    var at = item ? item.mapToItem(root, 0, 0) : composer.mapToItem(root, composer.cursorRectangle.x, composer.cursorRectangle.y)
-    sendMenu.open(at.x, at.y - Style.space(4))
+    return ChatScheduled.openSendMenu({ Style: Style, app: app, composer: composer, root: root, sendMenu: sendMenu }, item)
   }
 
+  property int scheduledSerial: 0
+
   function openScheduled() {
-    if (!root.chat) return
-    if (root.editingId) root.finishEdit()
-    root.selection = ({})
-    root.scheduledMessages = []
-    root.scheduledOpen = true
-    root.cursor = -1
-    root.stickToBottom = true
-    root.loadScheduled()
-    messageList.forceActiveFocus()
+    return ChatScheduled.openScheduled({ messageList: messageList, root: root })
   }
 
   function closeScheduled() {
-    if (!root.scheduledOpen) return
-    if (root.editingId) root.finishEdit()
-    root.scheduledOpen = false
-    root.scheduledMessages = []
-    root.cursor = -1
-    root.stickToBottom = true
+    return ChatScheduled.closeScheduled({ root: root })
   }
 
   function loadScheduled() {
-    if (!root.chat || !root.scheduledOpen) return
-    var chatId = root.chat.id
-    root.scheduledLoading = true
-    client.request("chat.scheduled", { chatId: chatId }, function (answer) {
-      if (!root.chat || root.chat.id !== chatId || !root.scheduledOpen) return
-      root.scheduledLoading = false
-      if (!answer.ok) { root.flash(answer.error || "Could not load the scheduled messages"); return }
-      root.scheduledMessages = Model.scheduledOrder(answer.result.messages)
-      if (root.cursor >= root.scheduledMessages.length) root.cursor = root.scheduledMessages.length - 1
-    })
+    return ChatScheduled.loadScheduled({ client: client, root: root })
   }
 
   // sendAt: a date in seconds, -1 once the other person is online, 0 to send it now.
   function reschedule(message, sendAt) {
-    if (!message) return
-    client.request("message.reschedule", { chatId: message.chatId, messageId: message.id, sendAt: sendAt }, function (answer) {
-      if (!answer.ok) { root.flash(answer.error || "Could not change when the message is sent"); return }
-      root.flash(sendAt ? "It will be sent " + Model.scheduleText(sendAt, Date.now()) : "Sent")
-      scheduledReload.restart()
-    })
+    return ChatScheduled.reschedule({ client: client, root: root, scheduledReload: scheduledReload }, message, sendAt)
   }
 
   function openRescheduleMenu(message) {
-    if (!message || !root.chat) return
-    root.rescheduleMessage = message
-    root.rescheduleItems = Model.rescheduleMenu(root.chat, app.meId, root.nowMs)
-    rescheduleMenu.open(messageMenu.menuX, messageMenu.menuY)
+    return ChatScheduled.openRescheduleMenu({ app: app, messageMenu: messageMenu, rescheduleMenu: rescheduleMenu, root: root }, message)
   }
 
   // A GIF from the picker: one of yours, or one the search found.
   function sendGif(item) {
-    if (!root.chat || !item || !item.gif || (!item.queryId && !(item.gif.file && item.gif.file.id))) return
-    var args = {}
-    if (item.queryId) {
-      args.queryId = item.queryId
-      args.resultId = item.resultId
-    } else {
-      args.fileId = item.gif.file.id
-      args.width = item.gif.width || 0
-      args.height = item.gif.height || 0
-      args.duration = item.gif.duration || 0
-    }
-    root.sendExtra("message.sendGif", args, "the GIF")
-    // As with stickers, the picker stays open for another one.
+    return ChatScheduled.sendGif({ root: root }, item)
   }
 
   // ---------------------------------------------------------------- translation
 
   // Into the language of this computer, shown under the original.
   function translate(message) {
-    if (!message || !message.content || !message.content.text) return
-    var id = message.id
-    var chatId = message.chatId
-    var next = root.copyOf(root.translations)
-    next[id] = null
-    root.translations = next
-    client.request("message.translate", { chatId: chatId, messageId: id }, function (answer) {
-      if (!root.chat || root.chat.id !== chatId || root.translations[id] !== null) return
-      var done = root.copyOf(root.translations)
-      if (answer.ok && answer.result.text) {
-        done[id] = answer.result
-      } else {
-        delete done[id]
-        root.flash(answer.error || "Could not translate the message")
-      }
-      root.translations = done
-    })
+    return ChatInfoActions.translate({ client: client, root: root }, message)
   }
 
   function untranslate(message) {
-    if (!message) return
-    var next = root.copyOf(root.translations)
-    delete next[message.id]
-    root.translations = next
+    return ChatInfoActions.untranslate({ root: root }, message)
   }
 
   // ---------------------------------------------------------------- forwarding and deleting
 
   function forward(ids) {
-    if (!root.chat || !ids || !ids.length) return
-    root.forwardRequested(root.chat.id, ids.slice(0, 100))
+    return ChatInfoActions.forward({ root: root }, ids)
   }
 
   function forwardSelection() {
-    root.forward(Model.selectedIds(root.messages, root.selection))
+    return ChatInfoActions.forwardSelection({ root: root })
   }
 
   function deleteMessages(ids, revoke) {
-    if (!root.chat || !ids.length) return
-    client.request("message.delete", { chatId: root.chat.id, messageIds: ids.slice(0, 100), revoke: revoke }, function (answer) {
-      if (!answer.ok) root.flash("Could not delete: " + (answer.error || "unknown error"))
-    })
+    return ChatInfoActions.deleteMessages({ client: client, root: root }, ids, revoke)
   }
 
   function confirmDelete(ids, revoke) {
-    if (!ids.length) return
-    root.prompt = { text: (ids.length === 1 ? "Delete the message" : "Delete " + ids.length + " messages") + (revoke ? " for everyone?" : " for you?"),
-                    action: "Delete", run: function () { root.deleteMessages(ids, revoke); root.clearSelection() } }
+    return ChatInfoActions.confirmDelete({ root: root }, ids, revoke)
   }
 
   // Telegram deletes for everyone what it allows to be, and the rest only for you.
   function deleteSelection() {
-    var ids = Model.selectedIds(root.messages, root.selection)
-    if (!ids.length) return
-    root.prompt = { text: "Delete " + (ids.length === 1 ? "the message" : ids.length + " messages") + ", for everyone where allowed?",
-                    action: "Delete", run: function () { root.deleteMessages(ids, true); root.clearSelection() } }
+    return ChatInfoActions.deleteSelection({ root: root })
   }
 
   function runSelection(action) {
-    if (action === "forward") root.forwardSelection()
-    else if (action === "react") root.reactToSelection()
-    else if (action === "copy") root.copy(null)
-    else if (action === "delete") root.deleteSelection()
-    else root.clearSelection()
+    return ChatInfoActions.runSelection({ root: root }, action)
   }
 
   // ---------------------------------------------------------------- files, mentions, emoji, pasting
 
   function fileOf(message) {
-    var media = message && message.content ? message.content.media : null
-    return media && media.file ? app.fileState(media.file) : null
+    return ChatInfoActions.fileOf({ app: app }, message)
   }
 
   function openFile(message) {
-    var file = root.fileOf(message)
-    if (!file) return
-    if (!file.path) { app.download(file.id, 32); root.flash("Downloading… open it again when it is done"); return }
-    var name = Model.saveName(message)
-    var run = function () {
-      client.request("file.open", { fileId: file.id }, function (answer) { if (!answer.ok) root.flash(answer.error || "Could not open the file") })
-    }
-    if (Model.riskyFile(name) || Model.riskyFile(file.path.split("/").pop()))
-      root.prompt = { text: "“" + name + "” could run a program on this computer. Open it anyway?", action: "Open", run: run }
-    else run()
+    return ChatInfoActions.openFile({ app: app, client: client, root: root }, message)
   }
 
   function saveFile(message) {
-    var file = root.fileOf(message)
-    if (!file) return
-    if (!file.path) { app.download(file.id, 32); root.flash("Downloading… save it again when it is done"); return }
-    client.request("file.save", { fileId: file.id, chatId: message.chatId, messageId: message.id,
-                                  fileName: Model.saveName(message) }, function (answer) {
-      if (answer.ok) root.flash("Saved to Downloads as " + String(answer.result.path).split("/").pop())
-      else root.flash(answer.error || "Could not save the file")
-    })
+    return ChatInfoActions.saveFile({ app: app, client: client, root: root }, message)
   }
 
   function openMuteMenu(item) {
-    if (!root.chat) return
-    var at = item.mapToItem(root, item.width, item.height)
-    muteMenu.open(at.x - Style.space(260), at.y)
+    return ChatInfoActions.openMuteMenu({ Style: Style, muteMenu: muteMenu, root: root }, item)
   }
 
   property bool mentionBusy: false
   property int mentionSerial: 0
   property real pendingMention: 0
   function invalidateMention() {
-    root.reactionSerial++
-    root.mentionSerial++
-    root.mentionBusy = false
-    root.pendingMention = 0
+    return ChatInfoActions.invalidateMention({ root: root })
   }
   function finishMention() {
-    if (!pendingMention || !root.chat || !root.focusMessage(pendingMention)) return
-    var id = pendingMention
-    pendingMention = 0
-    client.request("chat.read", root.target({ chatId: root.chat.id, messageIds: [id] }), function (answer) {
-      if (!answer.ok) root.flash(answer.error || "Could not mark the mention read")
-    })
+    return ChatInfoActions.finishMention({ client: client, root: root })
   }
   onHistoryChanged: Qt.callLater(root.finishMention)
   function nextMention() {
-    if (!root.chat || mentionBusy) return
-    var chatId = root.chat.id
-    var topic = root.topicId
-    var thread = root.threadOpen
-    var account = app.activeAccount
-    var token = ++mentionSerial
-    mentionBusy = true
-    client.request("chat.nextMention", root.target({ chatId: chatId }), function (answer) {
-      if (token !== root.mentionSerial) return
-      root.mentionSerial++
-      root.mentionBusy = false
-      if (!root.chat || root.chat.id !== chatId || root.topicId !== topic || root.threadOpen !== thread || app.activeAccount !== account) return
-      if (!answer.ok) { root.flash(answer.error || "Could not find the next mention"); return }
-      if (answer.result.messageId) {
-        root.pendingMention = answer.result.messageId
-        if (root.focusMessage(root.pendingMention)) root.finishMention()
-        else app.openChatAt(chatId, root.pendingMention)
-      } else {
-        client.request("chat.readMentions", root.target({ chatId: chatId }), function (cleared) {
-          if (!cleared.ok) root.flash(cleared.error || "Could not clear unread mentions")
-        })
-      }
-    })
+    return ChatInfoActions.nextMention({ app: app, client: client, root: root })
   }
 
   // The next message of yours with a reaction you have not seen; seeing it reads its reactions.
   property int reactionSerial: 0
   function nextReaction() {
-    if (!root.chat) return
-    var chatId = root.chat.id
-    var topic = root.topicId
-    var thread = root.threadOpen
-    var account = app.activeAccount
-    var token = ++root.reactionSerial
-    client.request("chat.nextReaction", root.target({ chatId: chatId }), function (answer) {
-      if (token !== root.reactionSerial) return
-      root.reactionSerial++
-      if (!answer.ok || !root.chat || root.chat.id !== chatId || root.topicId !== topic || root.threadOpen !== thread || app.activeAccount !== account) return
-      if (answer.result.messageId) {
-        root.jumpTo(answer.result.messageId)
-        app.markRead(chatId, [answer.result.messageId], topic, thread)
-      } else {
-        client.request("chat.readReactions", root.target({ chatId: chatId }))
-      }
-    })
+    return ChatInfoActions.nextReaction({ app: app, client: client, root: root })
   }
 
   function showReactions(message) {
-    if (!message) return
-    peopleList.open("Who reacted")
-    client.request("message.reactions", { chatId: message.chatId, messageId: message.id }, function (answer) {
-      if (!peopleList.visible) return
-      if (!answer.ok) { peopleList.show([]); root.flash(answer.error || "Telegram did not say who reacted"); return }
-      peopleList.show((answer.result.reactions || []).map(function (r) {
-        return { type: r.type, id: r.id, name: r.name, detail: (r.emoji || "a reaction") + "   " + Model.listTime(r.date, root.nowMs) }
-      }))
-    })
+    return ChatInfoActions.showReactions({ client: client, peopleList: peopleList, root: root }, message)
   }
 
   function showViewers(message) {
-    if (!message) return
-    peopleList.open("Who has seen it")
-    client.request("message.viewers", { chatId: message.chatId, messageId: message.id }, function (answer) {
-      if (!peopleList.visible) return
-      if (!answer.ok) { peopleList.show([]); root.flash(answer.error || "Telegram did not say who has seen it"); return }
-      peopleList.show((answer.result.viewers || []).map(function (v) {
-        return { type: "user", id: v.userId, name: v.name, detail: v.date ? "seen " + Model.listTime(v.date, root.nowMs) : "seen" }
-      }))
-    })
+    return ChatInfoActions.showViewers({ client: client, peopleList: peopleList, root: root }, message)
   }
 
   function openPerson(row) {
-    root.focusMessages()
-    if (row.type === "user") root.openUser(row.id)
-    else app.openChatById(row.id, false)
+    return ChatInfoActions.openPerson({ app: app, root: root }, row)
   }
 
   function toBottom() {
-    if (!root.chat) return
-    root.stickToBottom = true
-    messageList.positionViewAtEnd()
-    app.loadHistory(root.chat.id, 0)
+    return ChatInfoActions.toBottom({ app: app, messageList: messageList, root: root })
   }
 
   // ---------------------------------------------------------------- the chat's info
 
   function openInfo() {
-    if (!root.chat) return
-    root.infoOpen = true
-    Qt.callLater(function () { infoPanel.forceActiveFocus() })
+    return ChatInfoActions.openInfo({ infoPanel: infoPanel, root: root })
   }
 
   function closeInfo() {
-    root.infoOpen = false
-    root.focusComposer()
+    return ChatInfoActions.closeInfo({ root: root })
   }
 
   function toggleInfo() {
-    if (root.infoOpen) root.closeInfo()
-    else root.openInfo()
+    return ChatInfoActions.toggleInfo({ root: root })
   }
 
   function infoAction(id) {
-    if (!root.chat) return
-    if (id === "mute") app.toggleMute(root.chat.id)
-    else if (id === "search") root.searchInChatRequested()
-    else if (id === "leave") root.askLeaveChat(root.chat)
-    else if (id === "clear" || id === "delete") root.askClearChat(root.chat, id === "delete")
-    else if (id === "secret") root.startSecretChat(root.chat)
-    else if (id === "endSecret") root.askEndSecret(root.chat)
-    else if (id === "autoDelete") root.openAutoDeleteMenu()
-    else if (id === "hearSound") client.request("sounds.play", { userId: root.chat.userId })
-    else if (id === "otherSound") client.request("sounds.another", { userId: root.chat.userId }, function (answer) {
-      root.flash(answer.ok ? "A new sound for them: this is it" : (answer.error || "Could not change their sound"))
-    })
+    return ChatInfoActions.infoAction({ app: app, client: client, root: root }, id)
   }
 
   // Silent sending, Telegram's own setting of the chat: everything sent here goes without sound until it is off.
   function toggleSilent() {
-    if (!root.chat || !root.canWrite) return
-    var chatId = root.chat.id
-    var silent = !root.chat.silent
-    client.request("chat.setSilent", { chatId: chatId, silent: silent }, function (answer) {
-      if (!answer.ok) root.flash(answer.error || "Telegram did not take the change")
-      else root.flash(silent ? "Silent sending is on: messages here go without sound" : "Silent sending is off")
-    })
+    return ChatInfoActions.toggleSilent({ client: client, root: root })
   }
 
   // After how long messages in the open chat disappear: from its info, or its key.
   function openAutoDeleteMenu() {
-    if (!root.chat) return
-    if (!root.chat.canSetAutoDelete) { root.flash("Messages cannot be set to disappear in this chat"); return }
-    autoDeleteMenu.open(Math.max(Style.space(12), root.width - Style.space(300)), Style.space(64))
+    return ChatInfoActions.openAutoDeleteMenu({ Style: Style, autoDeleteMenu: autoDeleteMenu, root: root })
   }
 
   function setAutoDelete(chat, seconds) {
-    client.request("chat.setAutoDelete", { chatId: chat.id, seconds: seconds }, function (answer) {
-      if (!answer.ok) root.flash(answer.error || "Telegram did not take the change")
-      else root.flash(seconds ? "Messages now disappear after " + Model.autoDeleteText(seconds) : "Messages stay now")
-    })
+    return ChatInfoActions.setAutoDelete({ client: client, root: root }, chat, seconds)
   }
 
   function askLeaveChat(chat) {
-    if (!chat) return
-    var chatId = chat.id
-    root.prompt = { text: "Leave “" + Model.chatTitle(chat, app.meId) + "”?", action: "Leave",
-                    run: function () {
-                      client.request("chat.leave", { chatId: chatId }, function (answer) { if (!answer.ok) root.flash(answer.error || "Could not leave") })
-                      root.infoOpen = false
-                    } }
+    return ChatInfoActions.askLeaveChat({ app: app, client: client, root: root }, chat)
   }
 
   // Your copy only: the other side keeps theirs, as when you clear a chat in any Telegram app.
   function askClearChat(chat, removeFromList) {
-    if (!chat) return
-    var chatId = chat.id
-    root.prompt = { text: (removeFromList ? "Delete the chat with “" : "Clear the history of “") + Model.chatTitle(chat, app.meId) + "” for you?",
-                    action: removeFromList ? "Delete" : "Clear",
-                    run: function () {
-                      client.request("chat.clearHistory", { chatId: chatId, removeFromList: removeFromList, revoke: false }, function (answer) {
-                        if (!answer.ok) root.flash(answer.error || "Could not clear the history")
-                      })
-                      if (removeFromList) root.infoOpen = false
-                    } }
+    return ChatInfoActions.askClearChat({ app: app, client: client, root: root }, chat, removeFromList)
   }
 
   // A secret chat lives on this computer only, as Telegram's secret chats do on any device.
   function startSecretChat(chat) {
-    if (!chat || !chat.userId) return
-    client.request("secret.create", { userId: chat.userId }, function (answer) {
-      if (!answer.ok || !answer.result.chatId) { root.flash(answer.error || "Could not start a secret chat"); return }
-      root.infoOpen = false
-      app.openChatById(answer.result.chatId, false)
-    })
+    return ChatInfoActions.startSecretChat({ app: app, client: client, root: root }, chat)
   }
 
   function askEndSecret(chat) {
-    if (!chat) return
-    var chatId = chat.id
-    root.prompt = { text: "End the secret chat with “" + Model.chatTitle(chat, app.meId) + "”? Nothing more can be sent in it.", action: "End",
-                    run: function () {
-                      client.request("secret.close", { chatId: chatId }, function (answer) { if (!answer.ok) root.flash(answer.error || "Could not end the secret chat") })
-                    } }
+    return ChatInfoActions.askEndSecret({ app: app, client: client, root: root }, chat)
   }
 
   // Omarchy's emoji picker types the emoji into whatever has the keyboard: the message box.
   function openEmoji() {
-    if (!root.chat) return
-    if (root.emojiOpen && !emojiPanel.reacting) {
-      root.closeEmoji()
-      return
-    }
-    root.forgetReactions()
-    root.emojiOpen = true
-    Qt.callLater(function () { emojiPanel.open() })
+    return ChatReactions.openEmoji({ emojiPanel: emojiPanel, root: root })
   }
 
   function closeEmoji() {
-    root.emojiOpen = false
-    root.forgetReactions()
-    root.focusComposer()
+    return ChatReactions.closeEmoji({ root: root })
   }
 
   // Every reaction the messages may get, found by name: from a message's menu, or from
@@ -1300,40 +734,22 @@ FocusScope {
   // are the chat's, and where a single message narrows them, reacting simply reports how many
   // it took rather than hiding a reaction the rest would have accepted.
   function openReactionPicker(messages) {
-    var targets = root.reactionList(messages)
-    if (!targets.length || !root.chat) return
-    var token = ++root.reactionToken
-    root.reactionTargets = targets
-    var first = targets[0]
-    client.request("reactions.available", { chatId: first.chatId, messageId: first.id, all: true }, function (answer) {
-      if (root.reactionToken !== token) return   // you moved on to another message, or closed it
-      if (!answer.ok) {
-        root.reactionTargets = []
-        root.flash(answer.error || "Telegram did not say which reactions it takes")
-        return
-      }
-      root.emojiOpen = true
-      Qt.callLater(function () { emojiPanel.openReactions(answer.result.emoji || []) })
-    })
+    return ChatReactions.openReactionPicker({ client: client, emojiPanel: emojiPanel, root: root }, messages)
   }
 
   // Nothing is being reacted to any more, and no answer still on its way may say otherwise.
   function forgetReactions() {
-    root.reactionTargets = []
-    root.reactionToken++
+    return ChatReactions.forgetReactions({ root: root })
   }
 
   // One message, a list of them, or nothing, as a list.
   function reactionList(messages) {
-    if (!messages) return []
-    return Array.isArray(messages) ? messages.filter(function (m) { return !!m }) : [messages]
+    return ChatReactions.reactionList({  }, messages)
   }
 
   // The reaction picker over what you have selected, or over the message at the cursor.
   function reactToSelection() {
-    if (root.scheduledOpen) return
-    root.openReactionPicker(root.selecting ? Model.selectedMessages(root.messages, root.selection)
-                                           : root.selectedMessage)
+    return ChatReactions.reactToSelection({ root: root })
   }
 
   // One emoji across however many messages. Whether it goes on or comes off is decided once for
@@ -1341,88 +757,29 @@ FocusScope {
   // still refuses individual messages, and what it took is reported as a single line rather than
   // one failure per message.
   function reactToAll(messages, emoji) {
-    var targets = root.reactionList(messages).slice(0, 100)
-    if (!targets.length || !emoji) return
-    var adding = Model.reactionAdds(targets, emoji)
-    var many = targets.length > 1
-    var done = 0
-    var failed = 0
-    var refusal = ""
-    var finish = function () {
-      if (done + failed < targets.length) return
-      if (!failed) { if (many) root.flash((adding ? "Reacted to " : "Took the reaction off ") + targets.length + " messages") }
-      else if (!done) root.flash(refusal || "Could not react")
-      else root.flash((adding ? "Reacted to " : "Took the reaction off ") + done + " of " + targets.length + ": " + (refusal || "Telegram refused the rest"))
-    }
-    for (var i = 0; i < targets.length; i++) {
-      client.request("reaction.set", { chatId: targets[i].chatId, messageId: targets[i].id, emoji: emoji, chosen: adding },
-                     function (answer) {
-                       if (answer.ok) done++
-                       else { failed++; refusal = refusal || answer.error || "" }
-                       finish()
-                     })
-    }
+    return ChatReactions.reactToAll({ client: client, root: root }, messages, emoji)
   }
 
   // Ctrl+V: files a file manager copied, or a copied picture, wait above the message box to be sent like attached ones;
   // anything else pastes as text. `asMedia` false (Ctrl+Shift+V) sends them as files, as they are.
   function pasteFromClipboard(asMedia) {
-    if (!root.chat || root.editingId || !root.canWrite) {
-      composer.paste()
-      return
-    }
-    var chatId = root.chat.id
-    client.request("clipboard.files", {}, function (answer) {
-      if (!root.chat || root.chat.id !== chatId) return
-      var found = answer.ok && answer.result ? answer.result : { paths: [], skipped: 0 }
-      var paths = Array.isArray(found.paths) ? found.paths : []
-      if (found.skipped > 0)
-        root.flash(found.skipped === 1 ? "A folder or an empty or unreadable file was left out"
-                                       : found.skipped + " folders or empty or unreadable files were left out")
-      if (paths.length) {
-        root.addAttachments(paths, asMedia)
-        if (asMedia === false) root.attachAsMedia = false
-      } else if (!(found.skipped > 0)) {
-        composer.paste()
-      }
-    })
+    return ChatReactions.pasteFromClipboard({ app: app, client: client, composer: composer, root: root }, asMedia)
   }
 
   // ---------------------------------------------------------------- drafts and typing
 
   function setComposerText(text) {
-    root.settingText = true
-    composer.text = text
-    root.settingText = false
+    return ChatComposition.setComposerText({ composer: composer, root: root }, text)
   }
 
   Timer { id: draftTimer; interval: 1500; onTriggered: root.saveDraft() }
 
   function saveDraft() {
-    if (!root.draftChatId) return
-    var text = (root.editingId ? root.draftBeforeEdit : composer.text).replace(/\s+$/, "").slice(0, 4096)
-    if (text === root.savedDraft) return
-    root.savedDraft = text
-    var args = { chatId: root.draftChatId, text: text }
-    if (root.draftTopicId) args[root.draftThread ? "threadId" : "topicId"] = root.draftTopicId
-    if (root.replyToId && !root.editingId) args.replyToMessageId = root.replyToId
-    client.request("chat.draft", args)
+    return ChatComposition.saveDraft({ client: client, composer: composer, root: root })
   }
 
   function composerEdited() {
-    root.compositionRevision++
-    suggestLater.restart()
-    previewLater.restart()
-    if (root.settingText || !root.chat) return
-    draftTimer.restart()
-    if (root.editingId) return
-    if (composer.text === "") {
-      if (root.lastTypingMs) client.request("chat.action", root.target({ chatId: root.chat.id, action: "cancel" }))
-      root.lastTypingMs = 0
-    } else if (Date.now() - root.lastTypingMs > 4500) {   // Telegram shows an action for about five seconds
-      root.lastTypingMs = Date.now()
-      client.request("chat.action", root.target({ chatId: root.chat.id, action: "typing" }))
-    }
+    return ChatComposition.composerEdited({ client: client, composer: composer, draftTimer: draftTimer, previewLater: previewLater, root: root, suggestLater: suggestLater })
   }
 
   // ---------------------------------------------------------------- a link's preview while typing
@@ -1434,59 +791,35 @@ FocusScope {
   Timer { id: previewLater; interval: 700; onTriggered: root.lookUpLinkPreview() }
 
   function lookUpLinkPreview() {
-    var link = root.editingId || root.attachments.length ? "" : Model.composerLink(composer.text)
-    if (link === root.linkPreviewLink) return
-    root.linkPreviewLink = link
-    root.linkPreview = null
-    if (!link) { root.linkPreviewMode = "below"; return }
-    client.request("message.linkPreview", { text: composer.text.slice(0, 8192) }, function (answer) {
-      if (root.linkPreviewLink === link) root.linkPreview = answer.ok ? answer.result.preview : null
-    })
+    return ChatComposition.lookUpLinkPreview({ client: client, composer: composer, root: root })
   }
 
   function cycleLinkPreview() {
-    if (!root.linkPreview && root.linkPreviewMode === "below") return
-    root.linkPreviewMode = ({ below: "above", above: "none", none: "below" })[root.linkPreviewMode]
+    return ChatComposition.cycleLinkPreview({ root: root })
   }
 
   function forgetLinkPreview() {
-    previewLater.stop()
-    root.linkPreview = null
-    root.linkPreviewLink = ""
-    root.linkPreviewMode = "below"
+    return ChatComposition.forgetLinkPreview({ previewLater: previewLater, root: root })
   }
 
   // Leaving where the composer's text belongs: its draft is saved and "typing…" ends there.
   function leaveChat() {
-    draftTimer.stop()
-    root.saveDraft()
-    if (root.lastTypingMs && root.draftChatId) {
-      var args = { chatId: root.draftChatId, action: "cancel" }
-      if (root.draftTopicId) args[root.draftThread ? "threadId" : "topicId"] = root.draftTopicId
-      client.request("chat.action", args)
-    }
-    root.lastTypingMs = 0
+    return ChatComposition.leaveChat({ client: client, draftTimer: draftTimer, root: root })
   }
 
   function leaveAccount() {
-    root.invalidateSend()
-    root.invalidateMention()
-    root.leaveChat()
-    if (root.recordingVoice) root.stopVoice(false)
-    videoNote.finish(false)
+    return ChatComposition.leaveAccount({ root: root, videoNote: videoNote })
   }
 
   function flash(text) {
-    root.notice = text
-    noticeTimer.restart()
+    return ChatComposition.flash({ noticeTimer: noticeTimer, root: root }, text)
   }
 
   Timer { id: noticeTimer; interval: 3500; onTriggered: root.notice = "" }
 
   // What is sent from here goes into the open topic, or the open thread.
   function target(args) {
-    if (root.topicId) args[root.threadOpen ? "threadId" : "topicId"] = root.topicId
-    return args
+    return ChatComposition.target({ root: root }, args)
   }
 
   property bool sendPending: false
@@ -1495,157 +828,49 @@ FocusScope {
   onAttachmentsChanged: root.compositionRevision++
   onAttachAsMediaChanged: root.compositionRevision++
   onReplyToIdChanged: root.compositionRevision++
-  onEditingIdChanged: root.compositionRevision++
+  onEditingIdChanged: { root.compositionRevision++; root.navigationSerial++ }
   onLinkPreviewModeChanged: root.compositionRevision++
 
   function invalidateSend() {
-    root.sendSerial++
-    root.sendPending = false
+    return ChatComposition.invalidateSend({ root: root })
   }
 
   function sendContext() {
-    return { revision: root.compositionRevision, chatId: root.chat.id,
-             topicId: root.topicId, thread: root.threadOpen, account: app.activeAccount,
-             editingId: root.editingId, scheduled: root.scheduledOpen, replyToId: root.replyToId }
+    return ChatComposition.sendContext({ app: app, root: root })
   }
 
   function beginSend() {
-    root.sendPending = true
-    var snapshot = root.sendContext()
-    snapshot.serial = ++root.sendSerial
-    return snapshot
+    return ChatComposition.beginSend({ root: root })
   }
 
   function completeSend(snapshot, answer, later, replyOnly) {
-    if (snapshot.serial !== root.sendSerial) return
-    root.sendSerial++
-    root.sendPending = false
-    if (!root.chat || root.chat.id !== snapshot.chatId || root.topicId !== snapshot.topicId
-        || root.threadOpen !== snapshot.thread || app.activeAccount !== snapshot.account) return
-    if (!answer.ok) {
-      root.flash((snapshot.failurePrefix || (snapshot.editingId && !replyOnly ? "Could not edit: " : "Could not send: ")) + (answer.error || "unknown error"))
-      return
-    }
-    if (replyOnly) {
-      if (snapshot.revision === root.compositionRevision) {
-        root.replyToId = 0
-        root.stickToBottom = true
-      }
-      return
-    }
-    if (snapshot.editingId) {
-      if (snapshot.revision === root.compositionRevision && root.editingId === snapshot.editingId) {
-        root.finishEdit()
-        if (snapshot.scheduled && root.scheduledOpen) root.focusMessages()
-      }
-      if (snapshot.scheduled && root.scheduledOpen) root.loadScheduled()
-      return
-    }
-    if (snapshot.revision === root.compositionRevision) {
-      root.attachments = []
-      draftTimer.stop()
-      root.savedDraft = ""
-      root.lastTypingMs = 0
-      root.setComposerText("")
-      root.replyToId = 0
-      root.forgetLinkPreview()
-      root.stickToBottom = true
-    }
-    if (later) root.flash("It will be sent " + Model.scheduleText(later, Date.now()))
+    return ChatComposition.completeSend({ app: app, draftTimer: draftTimer, root: root }, snapshot, answer, later, replyOnly)
   }
 
   // `options`: { silent } sends without sound; { sendAt } at a date in seconds, or with -1 once the
   // other person is online.
   function send(options) {
-    var text = composer.text.replace(/\s+$/, "")
-    if (!root.chat || root.sendPending || videoNote.visible) return
-    if (root.editingId) {
-      if (!root.editingCaption && !text.trim()) return
-      // The service checks the length once the formatting markers are read.
-      if (text.length > (root.editingCaption ? 2048 : 8192)) { root.flash((root.editingCaption ? "That caption" : "That message") + " is too long."); return }
-      var editSnapshot = root.beginSend()
-      client.request("message.edit", { chatId: root.chat.id, messageId: root.editingId, text: text, caption: root.editingCaption }, function (answer) {
-        root.completeSend(editSnapshot, answer, 0)
-      })
-      return
-    }
-    if (root.attachments.length) {
-      root.sendAttachments(options)
-      return
-    }
-    if (!text.trim()) return
-    if (text.length > 8192) { root.flash("That message is too long."); return }
-    var args = root.target({ chatId: root.chat.id, text: text })
-    if (root.replyToId) args.replyToMessageId = root.replyToId
-    if (root.linkPreviewMode !== "below") args.linkPreview = root.linkPreviewMode
-    var later = options && options.sendAt ? options.sendAt : 0
-    if (options && typeof options.silent === "boolean") args.silent = options.silent
-    if (later) args.sendAt = later
-    var snapshot = root.beginSend()
-    client.request("message.send", args, function (answer) {
-      root.completeSend(snapshot, answer, later)
-    })
+    return ChatComposition.send({ client: client, composer: composer, root: root, videoNote: videoNote }, options)
   }
 
   function startReply(message) {
-    if (!message) return
-    if (root.editingId) root.finishEdit()
-    root.replyToId = message.id
-    root.focusComposer()
+    return ChatComposition.startReply({ root: root }, message)
   }
 
   // Your own text messages and captions; `allowed` when Telegram said this one may be edited.
   function startEdit(message, allowed) {
-    if (!message || !message.content || (!allowed && !message.outgoing)) return
-    var kind = message.content.kind
-    if (kind !== "text" && Model.CAPTION_KINDS.indexOf(kind) < 0) return
-    if (!root.editingId) root.draftBeforeEdit = composer.text
-    root.replyToId = 0
-    root.editingId = message.id
-    root.editingCaption = kind !== "text"
-    root.setComposerText(message.content.text || "")
-    root.focusComposer()
-    composer.cursorPosition = composer.length
-    // Its formatting comes back as the Markdown it can be typed in, once the service has written it.
-    var id = message.id
-    var plain = composer.text
-    var revision = root.compositionRevision
-    var account = app.activeAccount
-    var chatId = root.chat ? root.chat.id : 0
-    var topic = root.topicId
-    var thread = root.threadOpen
-    if (message.sending || !(message.content.entities || []).length) return
-    client.request("message.markdown", { chatId: message.chatId, messageId: id }, function (answer) {
-      if (!answer.ok || root.editingId !== id || composer.text !== plain || root.compositionRevision !== revision
-          || app.activeAccount !== account || !root.chat || root.chat.id !== chatId
-          || root.topicId !== topic || root.threadOpen !== thread) return
-      root.setComposerText(answer.result.text)
-      composer.cursorPosition = composer.length
-    })
+    return ChatComposition.startEdit({ app: app, client: client, composer: composer, root: root }, message, allowed)
   }
 
   // Formatting is typed as Telegram's Markdown, as in its own apps: a formatting key puts the markers
   // around the selection (or at the cursor) and takes them off again.
   function wrapSelection(before, after) {
-    var a = composer.selectionStart
-    var b = composer.selectionEnd
-    var r = Model.markdownToggle(composer.text, a, b, before, after)
-    if (r.wrapped) {
-      composer.insert(b, after)
-      composer.insert(a, before)
-    } else {
-      composer.remove(b, b + after.length)
-      composer.remove(a - before.length, a)
-    }
-    composer.select(r.start, r.end)
-    return r
+    return ChatComposition.wrapSelection({ composer: composer }, before, after)
   }
 
   // A link: the selection becomes its text, and the cursor waits where the address goes.
   function wrapLink() {
-    var hadText = composer.selectionEnd > composer.selectionStart
-    var r = root.wrapSelection("[", "]()")
-    if (r.wrapped && hadText) composer.cursorPosition = r.end + 2
+    return ChatComposition.wrapLink({ composer: composer, root: root })
   }
 
   // ---------------------------------------------------------------- suggestions while typing
@@ -1661,118 +886,34 @@ FocusScope {
   Timer { id: suggestLater; interval: 150; onTriggered: root.updateSuggestions() }
 
   function closeSuggestions() {
-    var t = root.suggestionToken
-    root.dismissedToken = t.kind + ":" + t.start + ":" + t.query
-    root.suggestions = []
+    return ChatSuggestions.closeSuggestions({ root: root })
   }
 
   function updateSuggestions() {
-    var token = Model.suggestToken(composer.text, composer.cursorPosition)
-    root.suggestionToken = token
-    if (!root.chat || !composer.activeFocus || !token.kind || token.kind + ":" + token.start + ":" + token.query === root.dismissedToken) {
-      root.suggestions = []
-      return
-    }
-    var chatId = root.chat.id
-    var group = root.chat.kind === "group"
-    var serial = ++root.suggestionSerial
-    if (token.kind === "command") {
-      if (root.botCommands === null) {
-        root.botCommands = []
-        client.request("chat.commands", { chatId: chatId }, function (answer) {
-          if (!root.chat || root.chat.id !== chatId) return
-          root.botCommands = answer.ok ? (answer.result.commands || []) : []
-          if (root.botCommands.length) root.updateSuggestions()
-        })
-      }
-      root.suggestions = Model.matchCommands(root.botCommands, token.query).map(function (c) {
-        return { label: "/" + c.command, detail: c.description + (group && c.bot ? "  ·  @" + c.bot : ""),
-                 insert: Model.commandText(c, group), command: true }
-      })
-      root.suggestionCursor = 0
-    } else if (token.kind === "emoji") {
-      root.suggestions = emojiPanel.suggest(token.query, 6)
-      root.suggestionCursor = 0
-    } else if (token.kind === "mention" && group) {
-      client.request("chat.mentions", root.target({ chatId: chatId, query: token.query }), function (answer) {
-        if (serial !== root.suggestionSerial || !root.chat || root.chat.id !== chatId) return
-        root.suggestions = (answer.ok ? answer.result.people || [] : []).map(function (p) {
-          return { label: p.name, detail: p.username ? "@" + p.username : (p.bot ? "bot" : ""), insert: Model.mentionText(p), command: false }
-        })
-        root.suggestionCursor = 0
-      })
-    } else {
-      root.suggestions = []
-    }
+    return ChatSuggestions.updateSuggestions({ client: client, composer: composer, emojiPanel: emojiPanel, root: root })
   }
 
   // `send`: a bot command goes at once, as picking one does in Telegram's apps.
   function pickSuggestion(index, send) {
-    var item = root.suggestions[index]
-    var token = root.suggestionToken
-    if (!item) return
-    composer.remove(token.start, token.end)
-    composer.insert(token.start, item.insert)
-    composer.cursorPosition = token.start + item.insert.length
-    if (item.emojiKey) emojiPanel.record(item.emojiKey)
-    root.suggestions = []
-    if (send && item.command) root.send()
+    return ChatSuggestions.pickSuggestion({ composer: composer, emojiPanel: emojiPanel, root: root }, index, send)
   }
 
   function suggestionKey(event) {
-    var keys = root.app.shortcuts
-    function is(id) { return Keymap.matchesInText(keys, id, event) }
-    if (is("suggest.next")) root.suggestionCursor = Math.min(root.suggestions.length - 1, root.suggestionCursor + 1)
-    else if (is("suggest.previous")) root.suggestionCursor = Math.max(0, root.suggestionCursor - 1)
-    else if (is("suggest.pick")) root.pickSuggestion(root.suggestionCursor, false)
-    else if (is("suggest.send")) root.pickSuggestion(root.suggestionCursor, true)
-    else if (is("suggest.close")) root.closeSuggestions()
-    else return false
-    return true
+    return ChatSuggestions.suggestionKey({ app: app, root: root }, event)
   }
 
   // Leaving an edit brings back what you were writing before it.
   function finishEdit() {
-    root.editingId = 0
-    root.editingCaption = false
-    root.setComposerText(root.draftBeforeEdit)
-    root.draftBeforeEdit = ""
+    return ChatSuggestions.finishEdit({ root: root })
   }
 
   // d twice deletes: for everyone when Telegram allows it, otherwise only for you.
   function askDelete(message) {
-    if (root.selecting) { root.deleteSelection(); return }
-    if (!message || !root.chat) return
-    if (root.confirmDeleteId === message.id) {
-      root.deleteMessages(Model.albumIds(root.messages, message), root.confirmDeleteRevoke)
-      root.confirmDeleteId = 0
-      return
-    }
-    var id = message.id
-    root.confirmDeleteId = id
-    root.confirmDeleteRevoke = true
-    root.flash("Press again to delete")
-    if (message.sending || message.sendAt) return
-    client.request("message.properties", { chatId: message.chatId, messageId: id }, function (answer) {
-      if (!answer.ok || root.confirmDeleteId !== id) return
-      var p = answer.result
-      root.confirmDeleteRevoke = p.canDeleteForAll
-      if (!p.canDeleteForAll && !p.canDeleteForMe) {
-        root.confirmDeleteId = 0
-        root.flash("This message cannot be deleted")
-      } else {
-        root.flash(p.canDeleteForAll ? "Press again to delete for everyone" : "Press again to delete it for you")
-      }
-    })
+    return ChatSuggestions.askDelete({ client: client, root: root }, message)
   }
 
   function copy(message) {
-    if (root.selecting) {
-      var count = Model.selectedIds(root.messages, root.selection).length
-      root.copyText(Model.selectionText(root.messages, root.selection), count === 1 ? "Copied the message" : "Copied " + count + " messages")
-      return
-    }
-    if (message) root.copyText(root.captionHolder(message).content.text || Model.previewOf(message))
+    return ChatSuggestions.copy({ root: root }, message)
   }
 
   // Plain text only: copied text is never parsed as markup, which would drop tags from a message
@@ -1791,6 +932,7 @@ FocusScope {
 
   ColumnLayout {
     id: chatColumn
+    readonly property var chatOwner: root
     anchors.left: parent.left
     anchors.top: parent.top
     anchors.bottom: parent.bottom
@@ -1799,181 +941,11 @@ FocusScope {
     visible: !!root.chat
 
     // ------------------------------------------------ header
-    Rectangle {
-      Layout.fillWidth: true
-      Layout.preferredHeight: Style.space(56)
-      color: "transparent"
-
-      // md-arrow-left U+F004D: from a topic back to the forum's topics, from scheduled messages to the chat
-      Item {
-        id: backButton
-        readonly property bool shown: root.topicId > 0 || root.scheduledOpen
-        anchors.left: parent.left
-        anchors.leftMargin: Style.space(8)
-        anchors.verticalCenter: parent.verticalCenter
-        width: backButton.shown ? Style.space(32) : 0
-        height: Style.space(32)
-        visible: backButton.shown
-
-        Icon {
-          anchors.centerIn: parent
-          name: "back"
-          color: backArea.containsMouse ? app.foreground : app.muted
-          size: Style.font.title
-        }
-        MouseArea {
-          id: backArea
-          anchors.fill: parent
-          hoverEnabled: true
-          cursorShape: Qt.PointingHandCursor
-          onClicked: {
-            if (!root.scheduledOpen) { app.closeTopic(); return }
-            root.closeScheduled()
-            root.focusComposer()
-          }
-          onContainsMouseChanged: if (containsMouse) root.flash(root.scheduledOpen ? "Back to the chat   " + Keymap.label(Keymap.keysFor(app.shortcuts, "messages.toComposer")[0] || "")
-                                                                : (root.threadOpen ? "Back to the message   " : "Back to the topics   ")
-                                                                  + Keymap.label(Keymap.keysFor(app.shortcuts, "window.topicList")[0] || ""))
-        }
-      }
-
-      Avatar {
-        id: headerAvatar
-        anchors.left: backButton.right
-        anchors.leftMargin: backButton.shown ? Style.space(4) : Style.space(10)
-        anchors.verticalCenter: parent.verticalCenter
-        app: root.app
-        chat: root.chat
-        size: Style.space(38)
-      }
-
-      Column {
-        anchors.left: headerAvatar.right
-        anchors.leftMargin: Style.space(12)
-        anchors.right: headerButtons.left
-        anchors.rightMargin: Style.space(8)
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: Style.space(2)
-
-        RowLayout {
-          width: parent.width
-          spacing: Style.space(8)
-          Text {
-            objectName: "chat-title"
-            Layout.preferredWidth: implicitWidth
-            Layout.minimumWidth: 0
-            Layout.maximumWidth: implicitWidth
-            elide: Text.ElideRight
-            text: root.scheduledOpen ? "Scheduled messages" : (root.topicId ? app.openTopic.name : (root.chat ? Model.chatTitle(root.chat, app.meId) : ""))
-            textFormat: Text.PlainText
-            color: app.foreground
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.title
-            font.bold: true
-          }
-          Text {
-            objectName: "chat-online-status"
-            visible: !root.scheduledOpen && !root.topicId && root.chat && ["private", "secret"].indexOf(root.chat.kind) >= 0 && peerSubtitle.peerStatus === "online"
-            text: "online"
-            color: app.accentText
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            font.bold: true
-          }
-          Item { Layout.fillWidth: true }
-        }
-        Text {
-          id: peerSubtitle
-          objectName: "chat-peer-status"
-          visible: text !== "" && (text !== "online" || root.scheduledOpen || root.topicId)
-          readonly property string peerStatus: root.chat && root.chat.userId !== app.meId && !root.chat.bot
-              ? Model.statusText(app.userStatuses[root.chat.userId] || root.chat.status, root.nowMs) : ""
-          readonly property string activity: !root.chat || root.scheduledOpen ? ""
-              : Model.actionText(Model.activeActions(app.chatActions, root.chat.id, app.clockMs), root.chat.kind === "private" || root.chat.kind === "secret")
-          width: parent.width
-          elide: Text.ElideRight
-          text: !root.chat ? "" : (activity
-              || (root.scheduledOpen ? Model.chatTitle(root.chat, app.meId)
-                  : (root.topicId ? (root.threadOpen ? (app.openTopic.subtitle || Model.chatTitle(root.chat, app.meId))
-                                                     : "Topic in " + Model.chatTitle(root.chat, app.meId))
-                     : (root.chat.kind === "private"
-                        ? (root.chat.userId === app.meId ? "" : (root.chat.bot ? "bot" : peerStatus))
-                        : (root.chat.kind === "secret" ? "Secret chat: " + Model.secretStateText(root.chat) + (peerStatus ? " · " + peerStatus : "")
-                           : (root.forum ? "Topics" : Model.memberCountText(root.chat.memberCount, root.chat.kind === "channel")))))))
-          textFormat: Text.PlainText
-          color: activity || peerStatus === "online" ? app.accentText : app.muted
-          font.family: app.fontFamily
-          font.pixelSize: Style.font.bodySmall
-        }
-      }
-
-      // Search in this chat; its notifications.
-      Row {
-        id: headerButtons
-        anchors.right: parent.right
-        anchors.rightMargin: Style.space(10)
-        anchors.verticalCenter: parent.verticalCenter
-
-        Repeater {
-          // md-magnify U+F0349; md-bell-outline U+F009C, md-bell-off U+F009B; md-information-outline U+F02FD
-          // md-calendar-clock U+F00F0: the chat has scheduled messages
-          model: (root.chat && root.chat.hasScheduled && !root.scheduledOpen && !root.compactControls ? [
-            { glyph: String.fromCodePoint(0xF00F0), action: "scheduled", hint: "Scheduled messages" }
-          ] : []).concat([
-            { glyph: String.fromCodePoint(0xF0349), action: "search",
-              hint: "Search in this chat   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.searchInChat")[0] || "") },
-            { glyph: String.fromCodePoint(0xF02FD), action: "info",
-              hint: "The chat's info   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.chatInfo")[0] || "") },
-            { glyph: String.fromCodePoint(root.chat && root.chat.muted ? 0xF009B : 0xF009C), action: "mute",
-              hint: (root.chat && root.chat.muted ? "Muted" : "Notifications are on") + "   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.mute")[0] || "") }
-          ]).filter(function (entry) {
-            return !root.compactControls || entry.action === "search" || (entry.action === "info" && !root.minimalControls)
-          }).concat(root.compactControls ? [{ glyph: String.fromCodePoint(0xF01D8), action: "overflow", hint: "Chat actions" }] : [])
-          delegate: Item {
-            id: headerButton
-            required property var modelData
-            objectName: "header-action-" + modelData.action
-            activeFocusOnTab: true
-            Accessible.role: Accessible.Button
-            Accessible.name: modelData.hint
-            width: Style.space(36)
-            height: Style.space(36)
-            function activate() {
-              var action = modelData.action
-              if (action === "search") root.searchInChatRequested()
-              else if (action === "info") root.toggleInfo()
-              else if (action === "scheduled") root.openScheduled()
-              else if (action === "overflow") {
-                var at = mapToItem(root, 0, height)
-                headerMenu.open(at.x, at.y)
-              }
-              else root.openMuteMenu(headerButton)
-            }
-            Keys.onReturnPressed: activate()
-            Keys.onSpacePressed: activate()
-            Rectangle { anchors.fill: parent; radius: Style.cornerRadius; color: "transparent"; border.width: parent.activeFocus ? 1 : 0; border.color: app.accent }
-
-            Icon {
-              anchors.centerIn: parent
-              glyph: headerButton.modelData.glyph
-              color: headerArea.containsMouse ? app.foreground : app.muted
-              size: Style.font.title
-            }
-            MouseArea {
-              id: headerArea
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: headerButton.activate()
-              onContainsMouseChanged: if (containsMouse) root.flash(headerButton.modelData.hint)
-            }
-          }
-        }
-      }
-
-      Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: app.border; opacity: 0.35 }
+    ChatHeader {
+      root: chatColumn.chatOwner
+      app: chatColumn.chatOwner.app
+      id: headerView
     }
-
     // ------------------------------------------------ the pinned message
     Rectangle {
       Layout.fillWidth: true
@@ -2178,90 +1150,10 @@ FocusScope {
     }
 
     // ------------------------------------------------ reply / edit / notice bar, and questions
-    Rectangle {
-      Layout.fillWidth: true
-      Layout.preferredHeight: visible ? (root.prompt && root.compactControls ? promptText.implicitHeight + promptButtons.height + Style.space(26) : Style.space(40)) : 0
-      visible: !!root.prompt || root.notice !== "" || (root.composerBlock === "" && (!!root.replyTo || !!root.editing))
-      color: Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.04)
-
-      Rectangle {
-        width: Style.space(3)
-        height: parent.height
-        color: root.prompt ? app.urgent : (root.notice !== "" && !root.replyTo && !root.editing ? app.muted : app.accent)
-      }
-
-      Text {
-        id: promptText
-        readonly property string cancelKey: Keymap.label(Keymap.keysFor(app.shortcuts, "composer.cancel")[0] || "")
-        anchors.left: parent.left
-        anchors.leftMargin: Style.space(18)
-        anchors.right: promptButtons.visible && !root.compactControls ? promptButtons.left : parent.right
-        anchors.rightMargin: Style.space(18)
-        anchors.verticalCenter: root.prompt && root.compactControls ? undefined : parent.verticalCenter
-        anchors.top: root.prompt && root.compactControls ? parent.top : undefined
-        anchors.topMargin: Style.space(10)
-        elide: root.prompt && root.compactControls ? Text.ElideNone : Text.ElideRight
-        wrapMode: root.prompt && root.compactControls ? Text.Wrap : Text.NoWrap
-        textFormat: Text.PlainText
-        color: app.foreground
-        font.family: app.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        text: {
-          if (root.prompt) return root.prompt.text
-          if (root.notice !== "") return root.notice
-          if (root.editing) return (root.editingCaption ? "Editing the caption" : "Editing") + "   " + cancelKey + " to cancel"
-          if (root.replyTo) return "Replying to " + (root.replyTo.outgoing ? "yourself" : (root.replyTo.senderName || "message")) + ": "
-                                   + Model.previewOf(root.replyTo) + "   " + cancelKey + " to cancel"
-          return ""
-        }
-      }
-
-      // A question's answers, with their keys.
-      Row {
-        id: promptButtons
-        visible: !!root.prompt
-        anchors.right: parent.right
-        anchors.rightMargin: Style.space(10)
-        anchors.verticalCenter: root.compactControls ? undefined : parent.verticalCenter
-        anchors.bottom: root.compactControls ? parent.bottom : undefined
-        anchors.bottomMargin: Style.space(6)
-        spacing: Style.space(4)
-
-        Repeater {
-          model: root.prompt ? [
-            { accept: true, label: root.prompt.action + (root.compactControls ? "" : "   " + Keymap.label(Keymap.keysFor(app.shortcuts, "prompt.accept")[0] || "")) },
-            { accept: false, label: "Cancel" + (root.compactControls ? "" : "   " + Keymap.label(Keymap.keysFor(app.shortcuts, "prompt.cancel")[0] || "")) }
-          ] : []
-          delegate: Rectangle {
-            id: promptAnswer
-            required property var modelData
-            width: promptLabel.implicitWidth + Style.space(18)
-            height: Style.space(28)
-            radius: Style.cornerRadius
-            color: promptArea.containsMouse ? Qt.rgba(app.accent.r, app.accent.g, app.accent.b, 0.3)
-                 : (promptAnswer.modelData.accept ? Qt.rgba(app.accent.r, app.accent.g, app.accent.b, 0.14) : "transparent")
-            Text {
-              id: promptLabel
-              anchors.centerIn: parent
-              text: promptAnswer.modelData.label
-              textFormat: Text.PlainText
-              color: app.foreground
-              font.family: app.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: promptAnswer.modelData.accept
-            }
-            MouseArea {
-              id: promptArea
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.runPrompt(promptAnswer.modelData.accept)
-            }
-          }
-        }
-      }
+    ChatPromptBar {
+      root: chatColumn.chatOwner
+      app: chatColumn.chatOwner.app
     }
-
     // ------------------------------------------------ selected messages
     Rectangle {
       Layout.fillWidth: true
@@ -2506,276 +1398,21 @@ FocusScope {
     }
 
     // ------------------------------------------------ files waiting to be sent
-    Rectangle {
-      Layout.fillWidth: true
-      Layout.preferredHeight: visible ? Style.space(82) : 0
-      visible: root.attachments.length > 0 && !root.showTopics
-      color: Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.03)
-
-      Rectangle { width: parent.width; height: 1; color: app.border; opacity: 0.35 }
-
-      ListView {
-        id: attachmentList
-        anchors.left: parent.left
-        anchors.right: attachmentMode.left
-        anchors.leftMargin: Style.space(10)
-        anchors.rightMargin: Style.space(10)
-        anchors.verticalCenter: parent.verticalCenter
-        height: Style.space(64)
-        orientation: ListView.Horizontal
-        spacing: Style.space(8)
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        model: root.attachments
-
-        delegate: Rectangle {
-          id: attachment
-          required property var modelData
-          required property int index
-          width: Style.space(64)
-          height: Style.space(64)
-          radius: Style.cornerRadius
-          color: Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.06)
-          clip: true
-
-          Image {
-            id: thumbnail
-            anchors.fill: parent
-            visible: status === Image.Ready
-            source: attachment.modelData.kind === "photo" ? "file://" + attachment.modelData.path : ""
-            sourceSize.width: 128
-            sourceSize.height: 128
-            asynchronous: true
-            fillMode: Image.PreserveAspectCrop
-          }
-          // What has no picture shows what it is: md-video U+F0567, md-music-note U+F0387, md-file-outline U+F0224
-          Icon {
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: Style.space(10)
-            visible: !thumbnail.visible
-            name: attachment.modelData.kind === "video" ? "video" : (attachment.modelData.kind === "audio" ? "music" : "file")
-            color: app.foreground
-            size: Style.font.title
-          }
-          Text {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.margins: Style.space(4)
-            visible: !thumbnail.visible
-            horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideMiddle
-            text: attachment.modelData.name
-            textFormat: Text.PlainText
-            color: app.muted
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-          // md-close U+F0156: leave this one out
-          Rectangle {
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.margins: Style.space(3)
-            width: Style.space(18)
-            height: width
-            radius: width / 2
-            color: Qt.rgba(0, 0, 0, removeArea.containsMouse ? 0.8 : 0.55)
-            Icon {
-              anchors.centerIn: parent
-              name: "close"
-              color: "white"
-              size: Style.font.caption
-            }
-            MouseArea {
-              id: removeArea
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.removeAttachment(attachment.index)
-            }
-          }
-        }
-      }
-
-      Column {
-        id: attachmentMode
-        anchors.right: parent.right
-        anchors.rightMargin: Style.space(14)
-        anchors.verticalCenter: parent.verticalCenter
-        width: Math.min(Style.space(250), parent.width * 0.45)
-        spacing: Style.space(4)
-
-        // Photos and videos as themselves, or everything as files.
-        Rectangle {
-          width: parent.width
-          height: Style.space(28)
-          radius: Style.cornerRadius
-          color: Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, modeArea.containsMouse ? 0.16 : 0.08)
-          Text {
-            anchors.centerIn: parent
-            width: parent.width - Style.space(12)
-            horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideRight
-            text: root.attachAsMedia ? "As photos and videos" : "As files"
-            textFormat: Text.PlainText
-            color: app.foreground
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-          MouseArea {
-            id: modeArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.attachAsMedia = !root.attachAsMedia
-            onContainsMouseChanged: if (containsMouse) root.flash(root.attachAsMedia ? "Click to send them as files, as they are"
-                                                                                   : "Click to send photos and videos as themselves")
-          }
-        }
-        Text {
-          width: parent.width
-          horizontalAlignment: Text.AlignHCenter
-          elide: Text.ElideRight
-          text: (root.attachments.length === 1 ? "1 file" : root.attachments.length + " files") + "   "
-                + Keymap.label(Keymap.keysFor(app.shortcuts, "composer.cancel")[0] || "") + " takes them away"
-          textFormat: Text.PlainText
-          color: app.muted
-          font.family: app.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-      }
+    ChatAttachmentStrip {
+      root: chatColumn.chatOwner
+      app: chatColumn.chatOwner.app
     }
-
     // ------------------------------------------------ suggestions while typing
-    Rectangle {
-      Layout.fillWidth: true
-      Layout.preferredHeight: visible ? suggestionList.height + Style.space(9) : 0
-      visible: root.suggestions.length > 0 && !root.showTopics
-      color: Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.03)
-
-      Rectangle { width: parent.width; height: 1; color: app.border; opacity: 0.35 }
-
-      ListView {
-        id: suggestionList
-        x: Style.space(10)
-        y: Style.space(5)
-        width: parent.width - Style.space(20)
-        height: Math.min(6, count) * Style.space(34)
-        clip: true
-        interactive: count > 6
-        boundsBehavior: Flickable.StopAtBounds
-        model: root.suggestions
-        currentIndex: root.suggestionCursor
-        onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
-
-        delegate: Rectangle {
-          id: suggestion
-          required property var modelData
-          required property int index
-          width: suggestionList.width
-          height: Style.space(34)
-          radius: Style.cornerRadius
-          color: suggestion.index === root.suggestionCursor ? app.selected
-               : (suggestionArea.containsMouse ? Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.05) : "transparent")
-
-          Text {
-            id: suggestionLabel
-            anchors.left: parent.left
-            anchors.leftMargin: Style.space(10)
-            anchors.verticalCenter: parent.verticalCenter
-            text: suggestion.modelData.label
-            textFormat: Text.PlainText
-            color: app.foreground
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            font.bold: true
-          }
-          Text {
-            anchors.left: suggestionLabel.right
-            anchors.leftMargin: Style.space(12)
-            anchors.right: parent.right
-            anchors.rightMargin: Style.space(10)
-            anchors.verticalCenter: parent.verticalCenter
-            text: suggestion.modelData.detail
-            textFormat: Text.PlainText
-            elide: Text.ElideRight
-            color: app.muted
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-          MouseArea {
-            id: suggestionArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-              root.pickSuggestion(suggestion.index, false)
-              composer.forceActiveFocus()
-            }
-          }
-        }
-      }
+    ChatSuggestionStrip {
+      root: chatColumn.chatOwner
+      app: chatColumn.chatOwner.app
+      composer: composer
     }
-
     // ------------------------------------------------ a link's preview, as it will be sent
-    Rectangle {
-      Layout.fillWidth: true
-      Layout.preferredHeight: visible ? linkPreviewRow.implicitHeight + Style.space(14) : 0
-      visible: !!root.chat && root.composerBlock === "" && !root.editingId
-               && (!!root.linkPreview || (root.linkPreviewMode === "none" && root.linkPreviewLink !== ""))
-      color: Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.03)
-
-      Rectangle { width: Style.space(3); height: parent.height; color: root.linkPreviewMode === "none" ? app.muted : app.accent }
-
-      RowLayout {
-        id: linkPreviewRow
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.leftMargin: Style.space(18)
-        anchors.rightMargin: Style.space(14)
-        spacing: Style.space(12)
-
-        Column {
-          Layout.fillWidth: true
-          spacing: Style.space(1)
-
-          Text {
-            width: parent.width
-            elide: Text.ElideRight
-            textFormat: Text.PlainText
-            text: root.linkPreviewMode === "none" ? "No link preview"
-                : (root.linkPreview ? (root.linkPreview.siteName || root.linkPreview.displayUrl || "Link preview") : "")
-            color: root.linkPreviewMode === "none" ? app.muted : app.accentText
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-          }
-          Text {
-            visible: root.linkPreviewMode !== "none" && text !== ""
-            width: parent.width
-            elide: Text.ElideRight
-            textFormat: Text.PlainText
-            text: root.linkPreview ? (root.linkPreview.title || root.linkPreview.description || "") : ""
-            color: app.foreground
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.bodySmall
-          }
-        }
-
-        Text {
-          readonly property string key: Keymap.label(Keymap.keysFor(app.shortcuts, "composer.linkPreview")[0] || "")
-          text: ({ below: "Under the text", above: "Above the text", none: "Left out" })[root.linkPreviewMode] + (root.compactControls ? "" : "   " + key + " changes it")
-          textFormat: Text.PlainText
-          color: app.muted
-          font.family: app.fontFamily
-          font.pixelSize: Style.font.caption
-
-          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.cycleLinkPreview() }
-        }
-      }
+    ChatLinkPreviewBar {
+      root: chatColumn.chatOwner
+      app: chatColumn.chatOwner.app
     }
-
     // ------------------------------------------------ where you cannot write
     Rectangle {
       Layout.fillWidth: true
@@ -2828,339 +1465,12 @@ FocusScope {
     }
 
     // ------------------------------------------------ composer
-    Rectangle {
-      Layout.fillWidth: true
-      // With scheduled messages listed, only while one of them is being edited.
-      visible: !root.showTopics && (!root.scheduledOpen || root.editingId > 0) && root.composerBlock === ""
-      // 20 of outer margin and 16 of inner padding around the text, plus room for the caret.
-      Layout.preferredHeight: Math.min(Style.space(180), composer.implicitHeight + Style.space(40))
-      color: "transparent"
-
-      Rectangle { width: parent.width; height: 1; color: app.border; opacity: 0.35 }
-
-      Rectangle {
-        objectName: "composer-box"
-        visible: !root.recordingVoice && !root.secretBlocked
-        anchors.left: parent.left
-        anchors.right: composerButtons.left
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.margins: Style.space(10)
-        radius: Style.cornerRadius
-        readonly property bool silent: !!root.chat && root.chat.silent === true
-        color: Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, silent ? 0.02 : 0.05)
-        border.width: Math.max(1, Style.space(1.5))
-        // Silent sending draws the box as an outline, focused or not: a message without sound is never a surprise.
-        border.color: silent ? Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, composer.activeFocus ? 0.55 : 0.3)
-                             : (composer.activeFocus ? app.accent : "transparent")
-
-        Rectangle {
-          id: silentChip
-          visible: parent.silent
-          anchors.left: parent.left
-          anchors.top: parent.top
-          anchors.leftMargin: Style.space(8)
-          anchors.topMargin: Style.space(7)
-          width: silentChipRow.implicitWidth + Style.space(14)
-          height: silentChipRow.implicitHeight + Style.space(6)
-          radius: Style.cornerRadius
-          color: Qt.rgba(app.foreground.r, app.foreground.g, app.foreground.b, 0.08)
-
-          Row {
-            id: silentChipRow
-            anchors.centerIn: parent
-            spacing: Style.space(5)
-
-            Icon {
-              anchors.verticalCenter: parent.verticalCenter
-              name: "bellSleep"
-              color: app.foreground
-              size: Style.font.bodySmall
-            }
-            Text {
-              visible: !root.minimalControls
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Silent"
-              textFormat: Text.PlainText
-              color: app.foreground
-              font.family: app.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-            }
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            cursorShape: Qt.PointingHandCursor
-            onClicked: root.toggleSilent()
-          }
-        }
-
-        Flickable {
-          id: composerFlick
-          anchors.fill: parent
-          anchors.leftMargin: silentChip.visible ? silentChip.width + Style.space(16) : Style.space(12)
-          anchors.rightMargin: Style.space(12)
-          anchors.topMargin: Style.space(8)
-          anchors.bottomMargin: Style.space(8)
-          contentHeight: composer.implicitHeight
-          clip: true
-          boundsBehavior: Flickable.StopAtBounds
-
-          TextEdit {
-            id: composer
-            objectName: "composer-text"
-            width: composerFlick.width
-            wrapMode: TextEdit.Wrap
-            textFormat: TextEdit.PlainText
-            color: app.foreground
-            selectionColor: app.accent
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.body
-            onCursorRectangleChanged: {
-              if (cursorRectangle.y < composerFlick.contentY) composerFlick.contentY = cursorRectangle.y
-              else if (cursorRectangle.y + cursorRectangle.height > composerFlick.contentY + composerFlick.height)
-                composerFlick.contentY = cursorRectangle.y + cursorRectangle.height - composerFlick.height
-            }
-
-            onTextChanged: root.composerEdited()
-            onCursorPositionChanged: suggestLater.restart()
-
-            Keys.onPressed: function (event) {
-              var keys = root.app.shortcuts
-              function is(id) { return Keymap.matchesInText(keys, id, event) }
-              // Suggestions, while they show, take the keys that move through them.
-              if (root.suggestions.length && root.suggestionKey(event)) {
-                event.accepted = true
-                return
-              }
-              // A text box takes Enter before any shortcut can, so a question is answered here.
-              if (root.prompt && is("prompt.accept")) root.runPrompt(true)
-              else if (root.prompt && is("prompt.cancel")) root.runPrompt(false)
-              // Copied files or a copied picture wait to be sent; with neither on the clipboard the text is pasted.
-              else if (event.matches(StandardKey.Paste)) root.pasteFromClipboard(root.attachments.length ? root.attachAsMedia : true)
-              else if (is("composer.pasteFiles")) root.pasteFromClipboard(false)
-              else if (is("composer.sendSilent")) root.send({ silent: true })
-              else if (is("composer.later")) root.openSendMenu(null)
-              else if (is("composer.bold")) root.wrapSelection("**", "**")
-              else if (is("composer.italic")) root.wrapSelection("__", "__")
-              else if (is("composer.strikethrough")) root.wrapSelection("~~", "~~")
-              else if (is("composer.code")) root.wrapSelection("`", "`")
-              else if (is("composer.spoiler")) root.wrapSelection("||", "||")
-              else if (is("composer.link")) root.wrapLink()
-              else if (is("composer.linkPreview")) root.cycleLinkPreview()
-              else if (is("composer.send")) root.send()
-              else if (is("composer.newLine")) composer.insert(composer.cursorPosition, "\n")
-              else if (is("composer.cancel")) {
-                if (root.editingId) {
-                  root.finishEdit()
-                  if (root.scheduledOpen) root.focusMessages()
-                }
-                else if (root.replyToId) root.replyToId = 0
-                else if (root.attachments.length) root.attachments = []
-                else if (root.selecting) root.clearSelection()
-                else root.focusMessages()
-              }
-              else if (is("composer.editLast") && composer.text === "") root.startEdit(Model.lastOwnEditable(root.messages))
-              else if (is("composer.toMessages")) root.focusMessages()
-              else return
-              event.accepted = true
-            }
-
-            Text {
-              width: parent.width
-              elide: Text.ElideRight
-              visible: composer.text === ""
-              text: root.editing ? (root.editingCaption ? "Caption" : "Edit message")
-                  : root.attachments.length && root.compactControls ? "Caption"
-                  : root.attachments.length ? "A caption for the files, if you like   "
-                                              + Keymap.label(Keymap.keysFor(app.shortcuts, "composer.send")[0] || "") + " to send"
-                  : (root.threadOpen ? (app.openTopic.name === "Comments" ? "Comment" : "Reply") : "Message") + (root.compactControls ? "" : "   "
-                    + Keymap.label(Keymap.keysFor(app.shortcuts, "composer.send")[0] || "")
-                    + (root.chat && root.chat.silent ? " to send without sound, " : " to send, ")
-                     + Keymap.label(Keymap.keysFor(app.shortcuts, "composer.newLine")[0] || "") + " for a new line")
-              color: app.muted
-              opacity: 0.7
-              font: composer.font
-            }
-          }
-        }
-      }
-
-      // Attach, stickers, a video message, a voice message.
-      Row {
-        id: composerButtons
-        objectName: "composer-actions"
-        visible: !root.recordingVoice && !root.secretBlocked
-        anchors.right: parent.right
-        anchors.rightMargin: Style.space(8)
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: 0
-
-        Repeater {
-          // md-bell-sleep U+F00A0 (its outline U+F0A93), md-send-clock-outline U+F1164, md-emoticon-outline U+F01F2, md-paperclip U+F03E2,
-          // md-plus-circle-outline U+F0419, md-sticker-emoji U+F0785, md-video U+F0567, md-microphone U+F036C
-          model: [
-            { glyph: String.fromCodePoint(root.chat && root.chat.silent ? 0xF00A0 : 0xF0A93), action: "silent",
-              hint: (root.chat && root.chat.silent ? "Silent sending is on: messages here go without sound" : "Silent sending in this chat")
-                    + "   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.silent")[0] || "") },
-            { glyph: String.fromCodePoint(0xF1164), action: "later",
-              hint: "Send later or without sound   " + Keymap.label(Keymap.keysFor(app.shortcuts, "composer.later")[0] || "") },
-            { glyph: String.fromCodePoint(0xF01F2), action: "emoji", hint: "Emoji   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.emoji")[0] || "") },
-            { glyph: String.fromCodePoint(0xF03E2), action: "attach", hint: "Attach photos or files   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.attach")[0] || "") },
-            { glyph: String.fromCodePoint(0xF0419), action: "more", hint: "A poll, dice, a contact card or a location   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.more")[0] || "") },
-            { glyph: String.fromCodePoint(0xF0785), action: "stickers", hint: "Stickers   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.stickers")[0] || "") },
-            { glyph: String.fromCodePoint(0xF0567), action: "video", hint: "Video message   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.videoNote")[0] || "") },
-            { glyph: String.fromCodePoint(0xF036C), action: "voice", hint: "Voice message   " + Keymap.label(Keymap.keysFor(app.shortcuts, "window.voice")[0] || "") }
-          ].filter(function (entry) {
-            return !root.compactControls || entry.action === "voice" || (!root.minimalControls && (entry.action === "emoji" || entry.action === "attach"))
-          }).map(function (entry) {
-            if (entry.action === "voice" && (composer.text.trim() !== "" || root.attachments.length || root.editingId))
-              return { glyph: String.fromCodePoint(0xF048A), action: "send", hint: root.editingId ? "Save edit" : "Send message" }
-            return entry
-          }).concat(root.compactControls ? [{ glyph: String.fromCodePoint(0xF01D8), action: "overflow", hint: "Message actions" }] : [])
-          delegate: Item {
-            id: composerButton
-            required property var modelData
-            objectName: "composer-action-" + modelData.action
-            activeFocusOnTab: true
-            Accessible.role: Accessible.Button
-            Accessible.name: modelData.hint
-            width: Style.space(38)
-            height: Style.space(38)
-            Keys.onReturnPressed: root.composerAction(modelData.action, composerButton)
-            Keys.onSpacePressed: root.composerAction(modelData.action, composerButton)
-            Rectangle { anchors.fill: parent; radius: Style.cornerRadius; color: "transparent"; border.width: parent.activeFocus ? 1 : 0; border.color: app.accent }
-
-            Icon {
-              anchors.centerIn: parent
-              glyph: composerButton.modelData.glyph
-              color: buttonArea.containsMouse || (composerButton.modelData.action === "stickers" && root.stickersOpen)
-                     || (composerButton.modelData.action === "silent" && !!root.chat && root.chat.silent) ? app.foreground : app.muted
-              size: Style.font.title
-            }
-            MouseArea {
-              id: buttonArea
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: {
-                root.composerAction(composerButton.modelData.action, composerButton)
-              }
-              onContainsMouseChanged: if (containsMouse) root.flash(composerButton.modelData.hint)
-            }
-          }
-        }
-      }
-
-      // A secret chat not set up yet, or ended: why nothing can be written.
-      Row {
-        visible: root.secretBlocked
-        anchors.centerIn: parent
-        spacing: Style.space(8)
-
-        // md-lock-outline U+F0341
-        Icon {
-          anchors.verticalCenter: parent.verticalCenter
-          name: "lock"
-          color: app.muted
-          size: Style.font.body
-        }
-        Text {
-          readonly property string stateText: Model.secretStateText(root.chat)
-          anchors.verticalCenter: parent.verticalCenter
-          text: stateText.charAt(0).toUpperCase() + stateText.slice(1)
-          textFormat: Text.PlainText
-          color: app.muted
-          font.family: app.fontFamily
-          font.pixelSize: Style.font.body
-        }
-      }
-
-      // Recording a voice message: replaces the composer until it is sent or cancelled.
-      Rectangle {
-        objectName: "voice-recording-bar"
-        visible: root.recordingVoice
-        anchors.fill: parent
-        anchors.margins: Style.space(10)
-        radius: Style.cornerRadius
-        color: Qt.rgba(app.urgent.r, app.urgent.g, app.urgent.b, 0.1)
-        border.width: Math.max(1, Style.space(1.5))
-        border.color: app.urgent
-
-        Row {
-          anchors.left: parent.left
-          anchors.leftMargin: Style.space(14)
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(10)
-
-          Rectangle {
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(10)
-            height: width
-            radius: width / 2
-            color: app.urgent
-            SequentialAnimation on opacity {
-              running: root.recordingVoice
-              loops: Animation.Infinite
-              NumberAnimation { to: 0.25; duration: 600 }
-              NumberAnimation { to: 1; duration: 600 }
-            }
-          }
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            objectName: "voice-recording-label"
-            text: "Recording  " + Model.formatDuration(root.recordingSeconds)
-            color: app.foreground
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.body
-          }
-          Text {
-            visible: !root.compactControls
-            anchors.verticalCenter: parent.verticalCenter
-            text: Keymap.label(Keymap.keysFor(app.shortcuts, "voice.send")[0] || "") + " sends  ·  "
-                  + Keymap.label(Keymap.keysFor(app.shortcuts, "voice.cancel")[0] || "") + " cancels"
-            color: app.muted
-            font.family: app.fontFamily
-            font.pixelSize: Style.font.caption
-          }
-        }
-
-        Row {
-          objectName: "voice-recording-actions"
-          anchors.right: parent.right
-          anchors.rightMargin: Style.space(6)
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(4)
-
-          Repeater {
-            // md-close U+F0156, md-send U+F048A
-            model: [
-              { glyph: String.fromCodePoint(0xF0156), send: false },
-              { glyph: String.fromCodePoint(0xF048A), send: true }
-            ]
-            delegate: Item {
-              id: recordButton
-              required property var modelData
-              width: Style.space(38)
-              height: Style.space(38)
-              Icon {
-                anchors.centerIn: parent
-                glyph: recordButton.modelData.glyph
-                color: recordButton.modelData.send ? app.accentText : (recordArea.containsMouse ? app.urgent : app.muted)
-                size: Style.font.title
-              }
-              MouseArea {
-                id: recordArea
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.stopVoice(recordButton.modelData.send)
-              }
-            }
-          }
-        }
-      }
+    ChatComposer {
+      root: chatColumn.chatOwner
+      app: chatColumn.chatOwner.app
+      id: composerView
+      client: chatColumn.chatOwner.client
+      videoNote: videoNote
     }
   }
 

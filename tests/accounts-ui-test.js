@@ -26,8 +26,10 @@ const client = { accountId: "first", accountGeneration: 1, nextId: 1, callbacks:
   measure(name, value) { this.metrics[name] = Math.max(this.metrics[name] || 0, value); },
   sock: { connected: true, write(value) { this.last = JSON.parse(value); }, flush() {} } };
 const ctx = vm.createContext({ client, JSON });
-vm.runInContext("function request(cmd,args,callback) {" + body("app/OmagramClient.qml", "function request(") + "}", ctx);
-vm.runInContext("function handleLine(line) {" + body("app/OmagramClient.qml", "function handleLine(") + "}", ctx);
+vm.runInContext("function deliver(callback,message) {" + body("app/TelebarClient.qml", "function deliver(") + "}", ctx);
+client.deliver = ctx.deliver;
+vm.runInContext("function request(cmd,args,callback) {" + body("app/TelebarClient.qml", "function request(") + "}", ctx);
+vm.runInContext("function handleLine(line) {" + body("app/TelebarClient.qml", "function handleLine(") + "}", ctx);
 let applied = 0;
 ctx.request("chat.history", {}, () => applied++);
 assert.equal(client.sock.last.account, "first");
@@ -69,7 +71,8 @@ console.log("Account UI checks passed: stale callbacks, control responses, cross
 let resets = 0;
 const snapshotApp = { activeAccount: "first", accountRevision: 2,
   resetAccountView() { resets++; } };
-const snapshots = vm.createContext({ omagram: snapshotApp, screen: { active: true }, chatFlush: { stop() {} } });
+const snapshots = vm.createContext({ omagram: snapshotApp, screen: { active: true }, chatFlush: { stop() {} },
+  MainAccounts: require("./qml-logic").loadLogic("MainAccounts") });
 vm.runInContext("function applyAccountSnapshot(result) {" + body("app/Main.qml", "function applyAccountSnapshot(") + "}", snapshots);
 snapshots.applyAccountSnapshot({ activeAccount: "second", accountRevision: 3, auth: { state: "password" },
   allChats: [], calls: [], stories: [] });
@@ -98,7 +101,7 @@ const quitState = { quitting: false, stopped: false };
 let quitCallback, quitCalls = 0, restartStopped = false;
 const quitContext = vm.createContext({ service: quitState, restart: { stop() { restartStopped = true; } },
   console, client: { request(cmd, args, callback) { assert.equal(cmd, "app.quit"); quitCalls++; quitCallback = callback; } } });
-vm.runInContext("function quit() {" + body("shell/Service.qml", "function quit(") + "}", quitContext);
+vm.runInContext("function quit() {" + body("shell/TelebarService.qml", "function quit(") + "}", quitContext);
 quitContext.quit();
 assert.equal(quitState.quitting, true);
 assert.equal(quitState.stopped, false, "Do not kill the daemon before the request has been delivered");

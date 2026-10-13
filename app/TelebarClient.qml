@@ -13,7 +13,8 @@ Item {
   // Where the service listens. Without XDG_RUNTIME_DIR there is no telling whose runtime
   // directory it is, so nothing is guessed and no connection is made.
   readonly property string runtimeDir: Quickshell.env("XDG_RUNTIME_DIR") || ""
-  // Explicit inert socket injection; production keeps its existing default.
+  // The default remains the production socket. Explicit isolated consumers
+  // can provide a task-owned path before creation, without contacting accounts.
   property string socketPath: client.runtimeDir.charAt(0) === "/" ? client.runtimeDir + "/omagram/omagram.sock" : ""
   readonly property bool connected: !!client.sock && client.sock.connected
 
@@ -117,6 +118,11 @@ Item {
     }
   }
 
+  function deliver(callback, message) {
+    try { callback(message) }
+    catch (error) { console.warn("Telebar: callback failed") }
+  }
+
   function handleLine(line) {
     var started = Date.now()
     client.metrics.rx_lines++
@@ -132,14 +138,17 @@ Item {
         client.measure("response_max_ms", elapsed)
         if (elapsed > 250) client.metrics.response_slow_count++
         if (pending.control || (pending.account === client.accountId && pending.generation === client.accountGeneration))
-          pending.callback(message)
+          client.deliver(pending.callback, message)
       }
       var handled = Date.now() - started
       client.measure("handler_max_ms", handled)
       if (handled > 50) client.metrics.handler_slow_count++
       return
     }
-    if (typeof message.event === "string") client.serviceEvent(message.event, message)
+    if (typeof message.event === "string") {
+      try { client.serviceEvent(message.event, message) }
+      catch (error) { console.warn("Telebar: event handler failed") }
+    }
     var handled = Date.now() - started
     client.measure("handler_max_ms", handled)
     if (handled > 50) client.metrics.handler_slow_count++
@@ -162,7 +171,7 @@ Item {
       if (age > 180000) {
         delete client.callbacks[id]
         if (pending.control || (pending.account === client.accountId && pending.generation === client.accountGeneration))
-          pending.callback({ ok: false, error: "The service did not answer within three minutes" })
+          client.deliver(pending.callback, { ok: false, error: "The service did not answer within three minutes" })
         // Command name only: never log request arguments or Telegram errors.
         console.warn("Telebar diagnostics: request timeout " + pending.command)
       }
@@ -202,7 +211,7 @@ Item {
     for (var id in pending) {
       var entry = pending[id]
       if (entry.control || (entry.account === client.accountId && entry.generation === client.accountGeneration))
-        entry.callback({ ok: false, error: "The connection to Telebar's service was lost" })
+        client.deliver(entry.callback, { ok: false, error: "The connection to Telebar's service was lost" })
     }
   }
 

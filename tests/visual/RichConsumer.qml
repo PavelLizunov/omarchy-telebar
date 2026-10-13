@@ -61,7 +61,7 @@ Rectangle {
   }
   Component {
     id: quickScene
-    Shell.QuickView {
+    Shell.TelebarQuickView {
       service: model
       opened: true
       compact: true

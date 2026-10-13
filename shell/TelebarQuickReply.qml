@@ -19,6 +19,7 @@ Item {
   property var manifest: null
   property var service: null
   property bool opened: false
+  property int openSerial: 0
 
   readonly property string pluginId: (manifest && manifest.id) || "io.github.pavellizunov.telebar"
   readonly property var borderSpec: Border.surfaceSpec("menu", "border", Commons.Color.menu.border, Math.max(1, Style.space(2)))
@@ -41,22 +42,23 @@ Item {
   // ---------------------------------------------------------------- shell contract
 
   function open(payloadJson) {
+    var serial = ++overlay.openSerial
     var payload = {}
     try { payload = JSON.parse(payloadJson || "{}") || {} } catch (e) { payload = {} }
     overlay.findService()
     overlay.opened = true
     if (payload.account && overlay.service && payload.account !== overlay.service.activeAccount) {
       overlay.service.request("account.switch", { accountId: payload.account }, function (answer) {
-        if (answer.ok) {
-          overlay.service.applyAccountSnapshot(answer.result)
+        if (answer.ok) overlay.service.applyAccountSnapshot(answer.result)
+        if (answer.ok && overlay.opened && serial === overlay.openSerial)
           view.reset(payload.chatId, payload.messageId)
-        }
       })
     } else view.reset(payload.chatId, payload.messageId)
   }
 
   function close() {
     if (!overlay.opened) return   // the shell can ask a closed overlay to close: nothing to put away then
+    overlay.openSerial++
     overlay.opened = false
     view.leave()
   }
@@ -106,7 +108,7 @@ Item {
       // Clicks on the card stay on the card.
       MouseArea { anchors.fill: parent }
 
-      QuickView {
+      TelebarQuickView {
         id: view
         anchors.fill: parent
         anchors.topMargin: card.contentTopInset

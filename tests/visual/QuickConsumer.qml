@@ -78,5 +78,5 @@ Rectangle {
       preview.longMessageReady = true
     }
   }
-  Shell.QuickView { id: quick; objectName: "review-content"; anchors.fill: parent; anchors.margins: 12; compact: preview.compactMode; opened: true; service: model; background: model.background; foreground: model.foreground; accent: model.accent; urgent: model.urgent }
+  Shell.TelebarQuickView { id: quick; objectName: "review-content"; anchors.fill: parent; anchors.margins: 12; compact: preview.compactMode; opened: true; service: model; background: model.background; foreground: model.foreground; accent: model.accent; urgent: model.urgent }
 }

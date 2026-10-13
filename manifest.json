@@ -13,9 +13,9 @@
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "service": "shell/Service.qml",
+    "service": "shell/TelebarService.qml",
     "barWidget": "shell/BarWidget.qml",
-    "overlay": "shell/QuickReply.qml"
+    "overlay": "shell/TelebarQuickReply.qml"
   },
   "barWidget": {
     "displayName": "Telebar",

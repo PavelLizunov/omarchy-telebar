@@ -3,6 +3,12 @@ import QtQuick.Layouts
 import qs.Commons
 import "Model.js" as Model
 import "Keymap.js" as Keymap
+import "SettingsRows.js" as SettingsRows
+import "SettingsProfile.js" as SettingsProfile
+import "SettingsSecurity.js" as SettingsSecurity
+import "SettingsFolders.js" as SettingsFolders
+import "SettingsProxies.js" as SettingsProxies
+import "SettingsActions.js" as SettingsActions
 
 // Settings: your profile (name, username, bio, photo), your account (what Omagram keeps on this
 // computer, the devices signed in, signing out), every keyboard shortcut in Omagram, and the
@@ -47,297 +53,96 @@ FocusScope {
   signal closed()
 
   function loadVisibleSettings() {
-    if (!settings.visible) return
-    settings.recording = ""
-    settings.error = ""
-    settings.confirm = null
-    settings.editing = null
-    settings.flow = null
-    settings.editorError = ""
-    settings.folderOpen = null
-    settings.nowMs = Date.now()
-    settings.forceActiveFocus()
-    settings.loadProfile()
-    settings.loadPrivacy()
-    settings.loadNotifications()
-    settings.loadProxies()
-    settings.loadFolders()
-    settings.loadStorage()
-    settings.loadSessions()
+    return SettingsRows.loadVisibleSettings({ settings: settings })
   }
   onVisibleChanged: settings.loadVisibleSettings()
   Component.onCompleted: settings.loadVisibleSettings()
 
   function loadProfile() {
-    settings.app.request("profile.get", {}, function (answer) { if (answer.ok) settings.profile = answer.result })
+    return SettingsRows.loadProfile({ app: app, settings: settings })
   }
 
   function loadStorage() {
-    settings.app.request("storage.stats", {}, function (answer) { if (answer.ok) settings.storage = answer.result })
+    return SettingsRows.loadStorage({ app: app, settings: settings })
   }
 
   function loadSessions() {
-    settings.app.request("sessions.list", {}, function (answer) { if (answer.ok) settings.sessions = answer.result.sessions || [] })
+    return SettingsRows.loadSessions({ app: app, settings: settings })
   }
 
   function buildRows() {
-    if (settings.folderOpen) return settings.folderRows()
-    var out = [{ kind: "header", title: "Profile", note: "" },
-               { kind: "profilePhoto", label: "Photo" },
-               { kind: "profileField", field: "firstName", label: "First name" },
-               { kind: "profileField", field: "lastName", label: "Last name" },
-               { kind: "profileField", field: "username", label: "Username" },
-               { kind: "profileField", field: "bio", label: "Bio" },
-               { kind: "profilePhone", label: "Phone number" },
-               { kind: "header", title: "Privacy and security", note: "" },
-               { kind: "privacy", id: "status", label: "Last seen and online" },
-               { kind: "privacy", id: "photo", label: "Profile photo" },
-               { kind: "privacy", id: "phone", label: "Phone number" },
-               { kind: "privacy", id: "findByPhone", label: "Finding you by your number" },
-               { kind: "privacy", id: "bio", label: "Bio" },
-               { kind: "privacy", id: "birthdate", label: "Date of birth" },
-               { kind: "privacy", id: "forwards", label: "Your name on messages others forward" },
-               { kind: "privacy", id: "calls", label: "Calls" },
-               { kind: "privacy", id: "invites", label: "Adding you to groups and channels" },
-               { kind: "blocked", label: "Blocked" }]
-    if (settings.blockedOpen && settings.blocked)
-      for (var b = 0; b < settings.blocked.senders.length; b++) out.push({ kind: "blockedSender", sender: settings.blocked.senders[b] })
-    out.push({ kind: "password", label: "Two-step verification" })
-    if (settings.password && settings.password.emailCodePattern) out.push({ kind: "passwordCode", label: "Type the code from the email" })
-    if (settings.password && settings.password.hasPassword) out.push({ kind: "passwordOff", label: "Turn two-step verification off" })
-    out.push({ kind: "accountTtl", label: "Delete my account if I am away for" },
-             { kind: "autoDelete", label: "Auto-delete messages in chats you start" },
-             { kind: "header", title: "Notifications", note: "For chats that have no notification setting of their own" },
-             { kind: "scope", id: "private", label: "Private chats" },
-             { kind: "scope", id: "groups", label: "Groups" },
-             { kind: "scope", id: "channels", label: "Channels" },
-             { kind: "previews", label: "Message text in notifications" },
-             { kind: "sound", label: "A sound of their own for each person" },
-             { kind: "soundHear", label: "Hear yours" },
-             { kind: "header", title: "Chats", note: "" },
-             { kind: "reactionsSeen", label: "Reactions to your messages" },
-             { kind: "showStories", label: "Show Telegram stories" },
-             { kind: "header", title: "Automatic downloads", note: "Stickers and voice messages always download: they are small" },
-             { kind: "download", id: "photos", label: "Photos" },
-             { kind: "download", id: "gifs", label: "GIFs and round video messages" },
-             { kind: "download", id: "videos", label: "Videos" },
-             { kind: "download", id: "files", label: "Files and music" },
-             { kind: "header", title: "Chat folders", note: "Enter opens a folder  ·  [ and ] move it earlier or later" })
-    for (var f = 0; f < settings.folders.length; f++) out.push({ kind: "folder", folder: settings.folders[f], label: settings.folders[f].name })
-    out.push({ kind: "newFolder", label: "New folder" },
-             { kind: "header", title: "Connection",
-               note: (Model.connectionText(settings.app.connection) ? Model.connectionText(settings.app.connection) + "  ·  " : "")
-                     + "Enter uses a proxy or stops using it  ·  Backspace removes it" })
-    for (var p = 0; p < settings.proxies.length; p++)
-      out.push({ kind: "proxy", proxy: settings.proxies[p], label: settings.proxies[p].server + ":" + settings.proxies[p].port })
-    out.push({ kind: "bridge", label: "Built-in MTProto → WebSocket bridge" },
-             { kind: "bridgeTest", label: "Test the built-in bridge without switching" },
-             { kind: "proxyAdd", type: "socks5", label: "Add a SOCKS5 proxy" },
-             { kind: "proxyAdd", type: "mtproto", label: "Add an MTProto proxy" },
-             { kind: "proxyAdd", type: "http", label: "Add an HTTP proxy" },
-             { kind: "proxyAdd", type: "link", label: "Add a proxy from its link" },
-             { kind: "header", title: "Account", note: "" },
-             { kind: "storage", label: "Storage on this computer" },
-             { kind: "sessions", label: "Devices signed in" })
-    if (settings.sessionsOpen) {
-      for (var i = 0; i < settings.sessions.length; i++) out.push({ kind: "session", session: settings.sessions[i] })
-      if (settings.sessions.some(function (s) { return !s.current })) out.push({ kind: "otherSessions", label: "Sign out every other device" })
-    }
-    out.push({ kind: "logout", label: "Sign out of Telegram on this computer" })
-    out.push({ kind: "header", title: "Shortcuts that work anywhere",
-               note: "Registered with Hyprland, never written into your config. They need Super, Ctrl or Alt." },
-             { kind: "global", id: "global.quickReply", label: "The quick view, as an overlay" },
-             { kind: "global", id: "global.panel", label: "The quick view, in the bar's panel" },
-             { kind: "global", id: "global.openWindow", label: "Open Telebar" })
-    for (var s = 0; s < Keymap.SECTIONS.length; s++) {
-      var section = Keymap.SECTIONS[s]
-      out.push({ kind: "header", title: section.title,
-                 note: section.app === "shell" ? "In Omarchy's shell" : "" })
-      for (var a = 0; a < Keymap.ACTIONS.length; a++) {
-        var action = Keymap.ACTIONS[a]
-        if (action.id.split(".")[0] === section.id) out.push({ kind: "action", id: action.id, label: action.label })
-      }
-    }
-    return out
+    return SettingsRows.buildRows({ app: app, settings: settings })
   }
 
   function move(delta) {
-    var i = Math.max(0, Math.min(settings.rows.length - 1, settings.cursor + delta))
-    var dir = delta < 0 ? -1 : 1
-    while (settings.rows[i] && settings.rows[i].kind === "header" && i + dir >= 0 && i + dir < settings.rows.length) i += dir
-    while (settings.rows[i] && settings.rows[i].kind === "header" && i - dir >= 0 && i - dir < settings.rows.length) i -= dir
-    settings.cursor = i
-    list.positionViewAtIndex(i, ListView.Contain)
+    return SettingsRows.move({ ListView: ListView, list: list, settings: settings }, delta)
   }
 
   function editable(row) {
-    return !!row && (row.kind === "action" || row.kind === "global")
+    return SettingsRows.editable({  }, row)
   }
 
   function keysOf(row) {
-    if (!settings.editable(row)) return []
-    if (row.kind === "global") return settings.globals[row.id] ? [settings.globals[row.id]] : []
-    return Keymap.keysFor(settings.overrides, row.id)
+    return SettingsRows.keysOf({ settings: settings }, row)
   }
 
   function changed(row) {
-    if (!settings.editable(row)) return false
-    if (row.kind === "global") return !!settings.globals[row.id]
-    return Object.prototype.hasOwnProperty.call(settings.overrides, row.id)
+    return SettingsRows.changed({ settings: settings }, row)
   }
 
   function startRecording(adds) {
-    var row = settings.current
-    if (!settings.editable(row)) return
-    settings.error = ""
-    settings.recordingAdds = adds && row.kind === "action"
-    settings.recording = row.id
+    return SettingsRows.startRecording({ settings: settings }, adds)
   }
 
   function send(overrides, globals) {
-    settings.error = ""
-    settings.app.request("settings.set", { settings: { shortcuts: overrides, globalShortcuts: globals } }, function (answer) {
-      if (!answer.ok) settings.error = answer.error || "The settings could not be saved"
-    })
+    return SettingsRows.send({ app: app, settings: settings }, overrides, globals)
   }
 
   function withGlobal(id, combo) {
-    var next = {}
-    for (var k in settings.globals) if (k !== id) next[k] = settings.globals[k]
-    if (combo) next[id] = combo
-    return next
+    return SettingsRows.withGlobal({ settings: settings }, id, combo)
   }
 
   function capture(event) {
-    var mods = event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.ShiftModifier | Qt.MetaModifier)
-    if (event.key === Qt.Key_Escape && !mods) {
-      settings.recording = ""
-      return
-    }
-    var sequence = Keymap.fromEvent(event.key, event.modifiers)
-    if (sequence === "") return   // a modifier on its own: wait for the key
-    var id = settings.recording
-    settings.recording = ""
-    if (id.indexOf("global.") === 0) {
-      var combo = Keymap.toHyprland(sequence)
-      if (!combo) {
-        settings.error = Keymap.label(sequence) + " cannot work anywhere: use Super, Ctrl or Alt with a letter, digit or named key"
-        return
-      }
-      settings.send(settings.overrides, settings.withGlobal(id, combo))
-      return
-    }
-    var keys = settings.recordingAdds ? Keymap.keysFor(settings.overrides, id).concat([sequence]) : [sequence]
-    settings.send(Keymap.withKeys(settings.overrides, id, keys), settings.globals)
+    return SettingsRows.capture({ settings: settings }, event)
   }
 
   function removeLast() {
-    var row = settings.current
-    if (row && row.kind === "profilePhoto") { settings.askRemovePhoto(); return }
-    if (row && row.kind === "proxy") { settings.askRemoveProxy(row.proxy); return }
-    if (!settings.editable(row)) return
-    if (row.kind === "global") {
-      settings.send(settings.overrides, settings.withGlobal(row.id, ""))
-      return
-    }
-    var keys = Keymap.keysFor(settings.overrides, row.id)
-    keys.pop()
-    settings.send(Keymap.withKeys(settings.overrides, row.id, keys), settings.globals)
+    return SettingsRows.removeLast({ settings: settings })
   }
 
   function reset() {
-    var row = settings.current
-    if (!settings.editable(row)) return
-    if (row.kind === "global") settings.send(settings.overrides, settings.withGlobal(row.id, ""))
-    else settings.send(Keymap.withKeys(settings.overrides, row.id, Keymap.defaultsFor(row.id)), settings.globals)
+    return SettingsRows.reset({ settings: settings })
   }
 
   function statusText(id) {
-    var state = settings.globalStatus[id] || "off"
-    if (!settings.globals[id]) return "Not set"
-    return ({ active: "Active", taken: "Taken by another Hyprland binding", failed: "Hyprland refused it",
-              unavailable: "Only inside Hyprland", off: "Not active" })[state] || state
+    return SettingsRows.statusText({ settings: settings }, id)
   }
 
   // ---------------------------------------------------------------- your profile
 
   function startEditing(row) {
-    if (!settings.profile) { settings.error = "Your profile is still loading"; return }
-    settings.error = ""
-    settings.confirm = null
-    settings.editing = { field: row.field, label: row.label }
-    editor.text = settings.profile[row.field] || ""
-    editor.forceActiveFocus()
+    return SettingsProfile.startEditing({ editor: editor, settings: settings }, row)
   }
 
   function cancelEditing() {
-    settings.editing = null
-    settings.flow = null          // with what was typed for two-step verification
-    settings.editorError = ""
-    editor.text = ""
-    list.forceActiveFocus()
+    return SettingsProfile.cancelEditing({ editor: editor, list: list, settings: settings })
   }
 
   function saveEditing() {
-    if (settings.flow) { settings.flowNext(); return }
-    if (settings.editing && settings.editing.field === "folderName") {
-      var folderName = editor.text.trim()
-      if (Model.profileProblem("folderName", folderName) !== "") return   // the field shows what is wrong
-      settings.changeFolder({ name: folderName })
-      settings.cancelEditing()
-      return
-    }
-    var editing = settings.editing
-    var profile = settings.profile
-    if (!editing || !profile) return
-    var text = editor.text.trim()
-    if (Model.profileProblem(editing.field, text) !== "") return   // the field shows what is wrong
-    var command = "profile.setBio"
-    var args = { bio: text }
-    if (editing.field === "firstName" || editing.field === "lastName") {
-      command = "profile.setName"
-      args = { firstName: editing.field === "firstName" ? text : profile.firstName,
-               lastName: editing.field === "lastName" ? text : profile.lastName }
-    } else if (editing.field === "username") {
-      text = text.replace(/^@/, "")
-      command = "profile.setUsername"
-      args = { username: text }
-    }
-    settings.cancelEditing()
-    if (text === (profile[editing.field] || "")) return
-    settings.app.request(command, args, function (answer) {
-      var problem = answer.ok ? "" : Model.profileError(answer.error)
-      if (problem !== "") settings.error = problem
-      settings.loadProfile()
-    })
+    return SettingsProfile.saveEditing({ app: app, editor: editor, settings: settings })
   }
 
   function urlToPath(url) {
-    var s = String(url)
-    return s.indexOf("file://") === 0 ? decodeURIComponent(s.slice(7)) : ""
+    return SettingsProfile.urlToPath({  }, url)
   }
 
   // Telegram takes a square JPEG: the service cuts one from the middle of the picture.
   function setPhoto(path) {
-    settings.forceActiveFocus()
-    if (!path) return
-    settings.error = ""
-    settings.photoBusy = true
-    settings.app.request("profile.setPhoto", { path: path }, function (answer) {
-      settings.photoBusy = false
-      if (!answer.ok) settings.error = Model.profileError(answer.error)
-      settings.loadProfile()
-    })
+    return SettingsProfile.setPhoto({ app: app, settings: settings }, path)
   }
 
   function askRemovePhoto() {
-    if (!settings.profile || !(settings.profile.photo || settings.profile.photoId)) return
-    settings.ask("Remove your profile photo? If you had earlier ones, the one before it shows instead.", function () {
-      settings.app.request("profile.deletePhoto", {}, function (answer) {
-        if (!answer.ok) settings.error = Model.profileError(answer.error)
-        settings.loadProfile()
-      })
-    })
+    return SettingsProfile.askRemovePhoto({ app: app, settings: settings })
   }
 
   // ---------------------------------------------------------------- privacy and security
@@ -350,104 +155,49 @@ FocusScope {
   property int defaultAutoDelete: -1 // seconds; -1 until Telegram has said
   property var flow: null            // two-step verification being changed, or a proxy added: { kind, steps, step, values }
   property string editorError: ""
+  property int flowSerial: 0
+  property int folderSerial: 0
 
   function loadPrivacy() {
-    settings.app.request("privacy.get", {}, function (answer) { if (answer.ok) settings.privacy = answer.result.settings || ({}) })
-    settings.app.request("password.get", {}, function (answer) { if (answer.ok) settings.password = answer.result })
-    settings.app.request("account.ttl", {}, function (answer) { if (answer.ok) settings.accountTtl = answer.result.days || 0 })
-    settings.app.request("autoDelete.default", {}, function (answer) { if (answer.ok) settings.defaultAutoDelete = answer.result.seconds })
-    settings.loadBlocked()
+    return SettingsSecurity.loadPrivacy({ app: app, settings: settings })
   }
 
   function loadBlocked() {
-    settings.app.request("blocked.list", {}, function (answer) { if (answer.ok) settings.blocked = answer.result })
+    return SettingsSecurity.loadBlocked({ app: app, settings: settings })
   }
 
   function changePrivacy(row) {
-    var current = settings.privacy[row.id]
-    if (!current) { settings.error = "Telegram has not said who can see that yet"; return }
-    settings.error = ""
-    settings.app.request("privacy.set", { setting: row.id, base: Model.nextPrivacy(row.id, current.base) }, function (answer) {
-      if (!answer.ok) { settings.error = answer.error || "Telegram did not take the change"; return }
-      var next = {}
-      for (var k in settings.privacy) next[k] = settings.privacy[k]
-      next[row.id] = answer.result
-      settings.privacy = next
-    })
+    return SettingsSecurity.changePrivacy({ app: app, settings: settings }, row)
   }
 
   function askUnblock(sender) {
-    settings.ask("Unblock " + sender.name + "?", function () {
-      settings.app.request("blocked.unblock", { type: sender.type, id: sender.id }, function (answer) {
-        if (!answer.ok) settings.error = answer.error || "Could not unblock"
-        settings.loadBlocked()
-      })
-    })
+    return SettingsSecurity.askUnblock({ app: app, settings: settings }, sender)
   }
 
   function changeAccountTtl() {
-    settings.app.request("account.setTtl", { days: Model.nextTtl(settings.accountTtl) }, function (answer) {
-      if (answer.ok) settings.accountTtl = answer.result.days
-      else settings.error = answer.error || "Telegram did not take the change"
-    })
+    return SettingsSecurity.changeAccountTtl({ app: app, settings: settings })
   }
 
   function changeDefaultAutoDelete() {
-    if (settings.defaultAutoDelete < 0) return
-    settings.app.request("autoDelete.setDefault", { seconds: Model.nextAutoDelete(settings.defaultAutoDelete) }, function (answer) {
-      if (answer.ok) settings.defaultAutoDelete = answer.result.seconds
-      else settings.error = answer.error || "Telegram did not take the change"
-    })
+    return SettingsSecurity.changeDefaultAutoDelete({ app: app, settings: settings })
   }
 
   // Two-step verification is changed one field at a time in the bar above the list; what is typed
   // is kept only until it is sent, or the change is left with Esc.
   function startPasswordFlow(kind) {
-    settings.error = ""
-    settings.confirm = null
-    settings.flow = { kind: kind, steps: Model.passwordSteps(kind), step: 0, values: {} }
-    settings.showFlowStep()
+    return SettingsSecurity.startPasswordFlow({ settings: settings }, kind)
   }
 
   function showFlowStep() {
-    var step = settings.flow.steps[settings.flow.step]
-    settings.editorError = ""
-    settings.editing = { field: step.key, label: step.label, secret: step.secret === true, placeholder: step.placeholder || "" }
-    editor.text = ""
-    editor.forceActiveFocus()
+    return SettingsSecurity.showFlowStep({ editor: editor, settings: settings })
   }
 
   function flowNext() {
-    var flow = settings.flow
-    var step = flow.steps[flow.step]
-    var problem = flow.kind === "proxy" ? Model.proxyStepProblem(step, editor.text) : Model.passwordStepProblem(step, editor.text, flow.values)
-    if (problem !== "") { settings.editorError = problem; return }
-    flow.values[step.key] = step.secret ? editor.text : editor.text.trim()
-    if (flow.step + 1 < flow.steps.length) {
-      flow.step++
-      settings.showFlowStep()
-      return
-    }
-    var values = flow.values
-    var kind = flow.kind
-    settings.cancelEditing()
-    if (kind === "proxy") {
-      settings.addProxy(flow.proxyType, values)
-      return
-    }
-    if (kind === "code") {
-      settings.app.request("password.checkEmailCode", { code: values.code }, settings.passwordAnswered)
-      return
-    }
-    var args = { oldPassword: values.oldPassword || "", newPassword: kind === "off" ? "" : values.newPassword, hint: values.hint || "" }
-    if (values.email) args.email = values.email
-    settings.app.request("password.set", args, settings.passwordAnswered)
+    return SettingsSecurity.flowNext({ app: app, editor: editor, settings: settings })
   }
 
-  function passwordAnswered(answer) {
-    if (!answer.ok) { settings.error = Model.passwordError(answer.error); return }
-    settings.password = answer.result
-    if (answer.result.emailCodePattern) settings.startPasswordFlow("code")
+  function passwordAnswered(answer, serial) {
+    return SettingsSecurity.passwordAnswered({ settings: settings }, answer, serial)
   }
 
   // ---------------------------------------------------------------- notifications
@@ -455,28 +205,16 @@ FocusScope {
   property var scopes: ({})          // "private", "groups", "channels" -> { muted, preview }, or null
 
   function loadNotifications() {
-    settings.app.request("notifications.get", {}, function (answer) { if (answer.ok) settings.scopes = answer.result.scopes || ({}) })
+    return SettingsFolders.loadNotifications({ app: app, settings: settings })
   }
 
   function changeScope(scope, change) {
-    if (!settings.scopes[scope]) { settings.error = "Telegram has not said these notifications yet"; return }
-    settings.error = ""
-    var args = { scope: scope }
-    for (var key in change) args[key] = change[key]
-    settings.app.request("notifications.set", args, function (answer) {
-      if (!answer.ok) { settings.error = answer.error || "Telegram did not take the change"; return }
-      var next = {}
-      for (var s in settings.scopes) next[s] = settings.scopes[s]
-      next[scope] = { muted: answer.result.muted, preview: answer.result.preview }
-      settings.scopes = next
-    })
+    return SettingsFolders.changeScope({ app: app, settings: settings }, scope, change)
   }
 
   // One row for message text in the notifications of every type of chat: shown everywhere, unless it already is.
   function togglePreviews() {
-    var show = Model.previewsText(settings.scopes) !== "Shown"
-    var all = ["private", "groups", "channels"]
-    for (var i = 0; i < all.length; i++) settings.changeScope(all[i], { preview: show })
+    return SettingsFolders.togglePreviews({ settings: settings })
   }
 
   // ---------------------------------------------------------------- chat folders
@@ -487,123 +225,55 @@ FocusScope {
   readonly property bool pickerOpen: chatPicker.visible
 
   function loadFolders() {
-    settings.app.request("folders.get", {}, function (answer) { if (answer.ok) settings.folders = answer.result.folders || [] })
+    return SettingsFolders.loadFolders({ app: app, settings: settings })
   }
 
   // A folder's own page: its name, the kinds of chats it takes, what it leaves out, the chats always and never
   // in it, then saving or deleting it.
   function folderRows() {
-    var f = settings.folderOpen
-    var out = [{ kind: "header", title: f.id ? "Folder “" + f.name + "”" : "New folder", note: "Enter changes a row  ·  Esc goes back without saving" },
-               { kind: "folderName", label: "Name" },
-               { kind: "header", title: "The chats it takes", note: "" }]
-    for (var k = 0; k < Model.FOLDER_KINDS.length; k++) out.push({ kind: "folderFlag", key: Model.FOLDER_KINDS[k][0], label: Model.FOLDER_KINDS[k][1] })
-    out.push({ kind: "header", title: "What it leaves out", note: "" })
-    var leaves = [["excludeMuted", "Muted chats"], ["excludeRead", "Read chats"], ["excludeArchived", "Archived chats"]]
-    for (var l = 0; l < leaves.length; l++) out.push({ kind: "folderFlag", key: leaves[l][0], label: leaves[l][1] })
-    var lists = [["included", "Always in it", "Enter on a chat takes it out"], ["excluded", "Never in it", "Enter on a chat takes it off this list"]]
-    for (var i = 0; i < lists.length; i++) {
-      out.push({ kind: "header", title: lists[i][1], note: lists[i][2] })
-      var ids = Model.toList(f[lists[i][0]])
-      for (var j = 0; j < ids.length; j++) out.push({ kind: "folderChat", list: lists[i][0], chatId: ids[j] })
-      out.push({ kind: "folderAdd", list: lists[i][0], label: "Add a chat…" })
-    }
-    out.push({ kind: "header", title: "", note: "" }, { kind: "folderSave", label: f.id ? "Save the folder" : "Create the folder" })
-    if (f.id) out.push({ kind: "folderDelete", label: "Delete the folder" })
-    return out
+    return SettingsFolders.folderRows({ list: list, settings: settings })
   }
 
   function openFolder(folder) {
-    settings.cancelEditing()
-    settings.error = ""
-    var copy = Model.newFolder()
-    if (folder) for (var key in copy) if (folder[key] !== undefined) copy[key] = Model.isList(folder[key]) ? Model.toList(folder[key]).slice() : folder[key]
-    settings.folderOpen = copy
-    settings.cursor = 1
-    list.positionViewAtBeginning()
+    return SettingsFolders.openFolder({ list: list, settings: settings }, folder)
   }
 
   function closeFolder() {
-    settings.cancelEditing()
-    settings.folderOpen = null
-    settings.cursor = 1
+    return SettingsFolders.closeFolder({ settings: settings })
   }
 
   // The folder being edited, changed: a new object, so the rows see it.
   function changeFolder(change) {
-    var next = {}
-    for (var key in settings.folderOpen) next[key] = settings.folderOpen[key]
-    for (var c in change) next[c] = change[c]
-    settings.folderOpen = next
+    return SettingsFolders.changeFolder({ settings: settings }, change)
   }
 
   function startEditingFolderName() {
-    settings.error = ""
-    settings.editing = { field: "folderName", label: "The folder's name, up to 12 characters" }
-    editor.text = settings.folderOpen.name || ""
-    editor.forceActiveFocus()
+    return SettingsFolders.startEditingFolderName({ editor: editor, settings: settings })
   }
 
   function startAddingChat(listName) {
-    settings.pickerFor = listName
-    chatPicker.open(0, [])
+    return SettingsFolders.startAddingChat({ chatPicker: chatPicker, settings: settings }, listName)
   }
 
   // A chat goes on one list and off the other: a chat cannot be both always and never in a folder.
   function addFolderChat(chatId) {
-    var f = settings.folderOpen
-    if (!f || !settings.pickerFor) return
-    var other = settings.pickerFor === "included" ? "excluded" : "included"
-    var change = {}
-    change[settings.pickerFor] = Model.toList(f[settings.pickerFor]).filter(function (id) { return id !== chatId }).concat([chatId])
-    change[other] = Model.toList(f[other]).filter(function (id) { return id !== chatId })
-    settings.changeFolder(change)
-    settings.forceActiveFocus()
+    return SettingsFolders.addFolderChat({ settings: settings }, chatId)
   }
 
   function removeFolderChat(listName, chatId) {
-    var change = {}
-    change[listName] = Model.toList(settings.folderOpen[listName]).filter(function (id) { return id !== chatId })
-    if (listName === "included") change.pinned = Model.toList(settings.folderOpen.pinned).filter(function (id) { return id !== chatId })
-    settings.changeFolder(change)
+    return SettingsFolders.removeFolderChat({ settings: settings }, listName, chatId)
   }
 
   function saveFolder() {
-    var f = settings.folderOpen
-    var problem = Model.folderProblem(f)
-    if (problem !== "") { settings.error = problem; return }
-    var args = {}
-    for (var key in f) if (key !== "id" && key !== "icon") args[key] = f[key]
-    args.name = String(f.name).trim()
-    if (f.icon) args.icon = f.icon
-    if (f.id) args.id = f.id
-    settings.app.request("folder.save", args, function (answer) {
-      if (!answer.ok) { settings.error = answer.error || "Telegram did not take the folder"; return }
-      settings.closeFolder()
-      settings.loadFolders()
-    })
+    return SettingsFolders.saveFolder({ app: app, settings: settings })
   }
 
   function askDeleteFolder() {
-    var f = settings.folderOpen
-    if (!f || !f.id) return
-    settings.ask("Delete the folder “" + f.name + "”? The chats in it stay where they are.", function () {
-      settings.app.request("folder.delete", { id: f.id }, function (answer) {
-        if (!answer.ok) { settings.error = answer.error || "Could not delete the folder"; return }
-        settings.closeFolder()
-        settings.loadFolders()
-      })
-    })
+    return SettingsFolders.askDeleteFolder({ app: app, settings: settings })
   }
 
   function moveFolder(folderId, delta) {
-    var ids = settings.folders.map(function (f) { return f.id })
-    var moved = Model.movedFolders(ids, folderId, delta)
-    if (moved.join(",") === ids.join(",")) return
-    settings.app.request("folders.reorder", { ids: moved }, function (answer) {
-      if (!answer.ok) settings.error = answer.error || "Could not move the folder"
-      settings.loadFolders()
-    })
+    return SettingsFolders.moveFolder({ app: app, settings: settings }, folderId, delta)
   }
 
   FilePicker {
@@ -636,205 +306,47 @@ FocusScope {
   property var proxyPings: ({})      // proxy id -> { seconds } or { error: true }
 
   function loadProxies() {
-    settings.app.request("bridge.status", {}, function (answer) { if (answer.ok) settings.bridge = answer.result })
-    settings.app.request("proxies.list", {}, function (answer) {
-      if (!answer.ok) return
-      settings.proxies = answer.result.proxies || []
-      settings.proxies.forEach(function (p) { settings.pingProxy(p.id) })
-    })
+    return SettingsProxies.loadProxies({ app: app, settings: settings })
   }
 
   function toggleBridge() {
-    if (settings.bridgeBusy) return
-    settings.bridgeBusy = true
-    settings.app.request("bridge.set", { enabled: !settings.bridge.enabled }, function (answer) {
-      settings.bridgeBusy = false
-      if (!answer.ok) settings.error = answer.error || "Could not change the built-in bridge"
-      settings.loadProxies()
-    })
+    return SettingsProxies.toggleBridge({ app: app, settings: settings })
   }
 
   function pingProxy(id) {
-    settings.app.request("proxy.ping", { id: id }, function (answer) {
-      var pings = Object.assign({}, settings.proxyPings)
-      pings[id] = answer.ok ? { seconds: answer.result.seconds } : { error: true }
-      settings.proxyPings = pings
-    })
+    return SettingsProxies.pingProxy({ app: app, settings: settings }, id)
   }
 
   // Enter on a proxy: use it, or stop using it.
   function toggleProxy(proxy) {
-    settings.error = ""
-    settings.app.request(proxy.enabled ? "proxy.disable" : "proxy.enable", proxy.enabled ? {} : { id: proxy.id }, function (answer) {
-      if (!answer.ok) settings.error = answer.error || "Telegram did not take the change"
-      settings.loadProxies()
-    })
+    return SettingsProxies.toggleProxy({ app: app, settings: settings }, proxy)
   }
 
   function askRemoveProxy(proxy) {
-    settings.ask("Remove the proxy " + proxy.server + ":" + proxy.port + "?", function () {
-      settings.app.request("proxy.remove", { id: proxy.id }, function (answer) {
-        if (!answer.ok) settings.error = answer.error || "Telegram did not take the change"
-        settings.loadProxies()
-      })
-    })
+    return SettingsProxies.askRemoveProxy({ app: app, settings: settings }, proxy)
   }
 
   // A proxy is added one field at a time in the bar above the list, as two-step verification is changed.
   function startProxyFlow(kind) {
-    settings.error = ""
-    settings.confirm = null
-    settings.flow = { kind: "proxy", proxyType: kind, steps: Model.proxySteps(kind), step: 0, values: {} }
-    settings.showFlowStep()
+    return SettingsProxies.startProxyFlow({ settings: settings }, kind)
   }
 
   function addProxy(kind, values) {
-    var args
-    if (kind === "link") {
-      args = { link: Model.proxyLinkUrl(values.link) }
-    } else {
-      var address = Model.parseProxyAddress(values.address)
-      args = { type: kind, server: address.server, port: address.port }
-      if (kind === "mtproto") args.secret = values.secret.trim()
-      else { args.username = values.username || ""; args.password = values.password || "" }
-    }
-    settings.app.request(kind === "link" ? "proxy.addLink" : "proxy.add", args, function (answer) {
-      if (!answer.ok) settings.error = answer.error || "Telegram did not take the proxy"
-      settings.loadProxies()
-    })
+    return SettingsProxies.addProxy({ app: app, settings: settings }, kind, values)
   }
 
   // ---------------------------------------------------------------- the account
 
   function ask(text, run) {
-    settings.error = ""
-    settings.confirm = { text: text, run: run }
-    list.forceActiveFocus()
+    return SettingsActions.ask({ list: list, settings: settings }, text, run)
   }
 
   function answer(yes) {
-    var question = settings.confirm
-    settings.confirm = null
-    if (yes && question) question.run()
+    return SettingsActions.answer({ settings: settings }, yes)
   }
 
   function activate(row) {
-    if (!row) return
-    if (row.kind === "profileField") {
-      settings.startEditing(row)
-    } else if (row.kind === "profilePhoto") {
-      settings.error = ""
-      photoDialog.open()
-    } else if (row.kind === "profilePhone") {
-      settings.error = "Your phone number is changed in Telegram's app on your phone."
-    } else if (row.kind === "privacy") {
-      settings.changePrivacy(row)
-    } else if (row.kind === "blocked") {
-      settings.blockedOpen = !settings.blockedOpen
-      if (settings.blockedOpen) settings.loadBlocked()
-    } else if (row.kind === "blockedSender") {
-      settings.askUnblock(row.sender)
-    } else if (row.kind === "password") {
-      settings.startPasswordFlow(settings.password && settings.password.hasPassword ? "change" : "on")
-    } else if (row.kind === "passwordOff") {
-      settings.ask("Turn two-step verification off? Signing in on a new device then takes only the code Telegram sends.",
-                   function () { settings.startPasswordFlow("off") })
-    } else if (row.kind === "passwordCode") {
-      settings.startPasswordFlow("code")
-    } else if (row.kind === "accountTtl") {
-      settings.changeAccountTtl()
-    } else if (row.kind === "autoDelete") {
-      settings.changeDefaultAutoDelete()
-    } else if (row.kind === "proxy") {
-      settings.toggleProxy(row.proxy)
-    } else if (row.kind === "bridge") {
-      settings.toggleBridge()
-    } else if (row.kind === "bridgeTest") {
-      if (settings.bridgeBusy) return
-      settings.bridgeBusy = true
-      settings.bridgeTestResult = "Testing…"
-      settings.app.request("bridge.test", {}, function (answer) {
-        settings.bridgeBusy = false
-        settings.bridgeTestResult = answer.ok ? "Telegram responded in " + Math.round(answer.result.seconds * 1000) + " ms" : (answer.error || "Could not reach Telegram through the bridge")
-        settings.loadProxies()
-      })
-    } else if (row.kind === "proxyAdd") {
-      settings.startProxyFlow(row.type)
-    } else if (row.kind === "reactionsSeen") {
-      settings.app.request("settings.reactions", { seen: !settings.app.reactionsSeen }, function (answer) {
-        if (!answer.ok) settings.error = answer.error || "The setting could not be saved"
-      })
-    } else if (row.kind === "sound") {
-      settings.app.request("settings.sounds", { style: Model.nextSoundStyle(settings.app.soundStyle) }, function (answer) {
-        if (!answer.ok) settings.error = answer.error || "The setting could not be saved"
-      })
-    } else if (row.kind === "showStories") {
-      settings.app.request("settings.set", { settings: { showStories: !settings.app.showStories } }, function (answer) {
-        if (!answer.ok) settings.error = answer.error || "Could not change story visibility"
-        else settings.app.showStories = answer.result.settings.showStories
-      })
-    } else if (row.kind === "soundHear") {
-      settings.app.request("sounds.play", { userId: settings.app.meId }, function () {})
-    } else if (row.kind === "scope") {
-      settings.changeScope(row.id, { muted: !(settings.scopes[row.id] && settings.scopes[row.id].muted) })
-    } else if (row.kind === "previews") {
-      settings.togglePreviews()
-    } else if (row.kind === "download") {
-      settings.app.setAutoDownload(Model.nextDownloadRule(settings.app.autoDownloadRules, row.id))
-    } else if (row.kind === "folder") {
-      settings.openFolder(row.folder)
-    } else if (row.kind === "newFolder") {
-      settings.openFolder(null)
-    } else if (row.kind === "folderName") {
-      settings.startEditingFolderName()
-    } else if (row.kind === "folderFlag") {
-      var flag = {}
-      flag[row.key] = !settings.folderOpen[row.key]
-      settings.changeFolder(flag)
-    } else if (row.kind === "folderChat") {
-      settings.removeFolderChat(row.list, row.chatId)
-    } else if (row.kind === "folderAdd") {
-      settings.startAddingChat(row.list)
-    } else if (row.kind === "folderSave") {
-      settings.saveFolder()
-    } else if (row.kind === "folderDelete") {
-      settings.askDeleteFolder()
-    } else if (row.kind === "storage") {
-      settings.ask("Clear the cache? Downloaded photos, videos and files are deleted from this computer; they download again when you open them.", function () {
-        settings.app.request("storage.clear", {}, function (answer) {
-          if (!answer.ok) { settings.error = answer.error || "The cache could not be cleared"; return }
-          settings.app.clearFileStates()
-          settings.loadStorage()
-        })
-      })
-    } else if (row.kind === "sessions") {
-      settings.sessionsOpen = !settings.sessionsOpen
-      if (settings.sessionsOpen) settings.loadSessions()
-    } else if (row.kind === "session") {
-      if (row.session.current) { settings.error = "That is this computer: to sign out here, use the last row of the account."; return }
-      settings.ask("Sign out " + Model.sessionTitle(row.session) + (row.session.device ? " on " + row.session.device : "") + "?", function () {
-        settings.app.request("session.terminate", { id: row.session.id }, function (answer) {
-          if (!answer.ok) settings.error = answer.error || "That device could not be signed out"
-          settings.loadSessions()
-        })
-      })
-    } else if (row.kind === "otherSessions") {
-      settings.ask("Sign out every device except this computer?", function () {
-        settings.app.request("sessions.terminateOthers", {}, function (answer) {
-          if (!answer.ok) settings.error = answer.error || "The other devices could not be signed out"
-          settings.loadSessions()
-        })
-      })
-    } else if (row.kind === "logout") {
-      settings.ask("Sign out of Telegram here? Your local profile and encryption key stay available for signing in again.", function () {
-        settings.app.request("auth.logout", {}, function (answer) {
-          if (!answer.ok) settings.error = answer.error || "Could not sign out"
-          else settings.closed()
-        })
-      })
-    } else if (settings.editable(row)) {
-      settings.startRecording(false)
-    }
+    return SettingsActions.activate({ app: app, list: list, photoDialog: photoDialog, settings: settings }, row)
   }
 
   Keys.onPressed: function (event) {
@@ -1301,7 +813,7 @@ FocusScope {
         MouseArea {
           id: rowArea
           anchors.fill: parent
-          enabled: !row.header
+          enabled: !row.header && !settings.confirm && !settings.editing && settings.recording === ""
           hoverEnabled: true
           acceptedButtons: Qt.LeftButton | Qt.RightButton
           cursorShape: Qt.PointingHandCursor

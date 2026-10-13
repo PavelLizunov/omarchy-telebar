@@ -16,6 +16,7 @@ Item {
   property var shell: null
   property var manifest: null
 
+  readonly property int implementationRevision: 20261009
   readonly property string binDir: decodeURIComponent(String(Qt.resolvedUrl("../bin/")).replace("file://", ""))
 
   property var auth: ({ state: "connecting" })
@@ -124,12 +125,13 @@ Item {
 
   // ---------------------------------------------------------------- the connection
 
-  OmagramClient {
+  TelebarClient {
     id: client
     binDir: service.binDir
     autoStart: false
     accountId: service.activeAccount
-    uiContext: ({ chats: service.chats.length, files: Object.keys(service.files).length })
+    uiContext: ({ chats: service.chats.length, files: Object.keys(service.files).length,
+      implementation_revision: service.implementationRevision })
 
     onHello: function (result) {
       service.applyAccountSnapshot(result)
@@ -150,7 +152,11 @@ Item {
       if (name === "auth") {
         if (!e.account || e.account === service.activeAccount) {
           service.auth = e.auth
-          if (e.auth.state !== "ready") service.chats = []
+          if (e.auth.state !== "ready") {
+            client.accountGeneration++
+            client.failPending()
+            service.resetAccountView()
+          }
         }
         accountsDelay.restart()
       } else if (name === "accountSwitched") {
@@ -238,6 +244,20 @@ Item {
     id: accountsDelay
     interval: 100
     onTriggered: service.refreshAccounts()
+  }
+
+  function resetAccountView() {
+    service.accountChanging()
+    chatFlush.stop()
+    service.pendingChats = ({})
+    service.chats = []
+    service.files = ({})
+    service.playing = { fileId: 0 }
+    service.recording = { state: "idle" }
+    service.recordedSend = null
+    service.quickChatId = 0
+    service.quickDraft = ""
+    service.quickClosedAt = 0
   }
 
   function applyAccountSnapshot(result) {

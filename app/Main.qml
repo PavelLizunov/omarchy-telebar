@@ -7,6 +7,9 @@ import qs.Commons
 import qs.Commons as Commons
 import "Model.js" as Model
 import "Keymap.js" as Keymap
+import "MainFiles.js" as MainFiles
+import "MainAccounts.js" as MainAccounts
+import "MainNavigation.js" as MainNavigation
 
 // Omagram's window: sign-in first, then chats on the left and the open chat on the right.
 //
@@ -15,8 +18,8 @@ import "Keymap.js" as Keymap
 Scope {
   id: omagram
 
+  readonly property int implementationRevision: 20261010
   readonly property string binDir: decodeURIComponent(String(Qt.resolvedUrl("../bin/")).replace("file://", ""))
-
   // Explicit consumer context keeps offscreen acceptance away from live IPC.
   // Normal launch retains the same socket and service-start behavior.
   property bool autoStart: true
@@ -201,11 +204,16 @@ Scope {
     pendingLink = ""
     screen.item.openLink(url)
   }
-  function openFromService(target) {
+  property int serviceOpenSerial: 0
+
+  function openFromService(target, serial) {
+    if (serial === undefined) serial = ++omagram.serviceOpenSerial
+    if (serial !== omagram.serviceOpenSerial) return
     if (!target || (!target.chatId && !target.url)) return
     if (target.account && target.account !== omagram.activeAccount) {
       service.request("account.switch", { accountId: target.account }, function (answer) {
-        if (answer.ok) { omagram.applyAccountSnapshot(answer.result); omagram.openFromService(target) }
+        if (answer.ok) omagram.applyAccountSnapshot(answer.result)
+        if (answer.ok && serial === omagram.serviceOpenSerial) omagram.openFromService(target, serial)
       })
       return
     }
@@ -216,7 +224,10 @@ Scope {
     }
     if (target.messageId) omagram.openChatAt(target.chatId, target.messageId)
     else omagram.openChatById(target.chatId, false)
-    if (screen.item && screen.item.focusComposer) Qt.callLater(function () { screen.item.focusComposer() })
+    var view = screen.item
+    Qt.callLater(function () {
+      if (serial === omagram.serviceOpenSerial && screen.item === view && view && view.focusComposer) view.focusComposer()
+    })
   }
 
   property var files: ({})
@@ -226,86 +237,40 @@ Scope {
   // A file's latest known state: from a download answer or a progress event if there has
   // been one, otherwise as its message described it.
   function fileState(file) {
-    omagram.filesRevision
-    if (!file) return null
-    return omagram.files[file.id] || file
+    return MainFiles.fileState({ omagram: omagram }, file)
   }
 
   function setFile(view) {
-    if (!view || !view.id) return
-    if (!omagram.files[view.id] && Object.keys(omagram.files).length >= 4000) {
-      // Bounded: only downloads still running are kept; the rest come back from their messages.
-      var kept = {}
-      for (var id in omagram.files) if (omagram.files[id].active) kept[id] = omagram.files[id]
-      omagram.files = kept
-    }
-    omagram.files[view.id] = view
-    omagram.filesRevision++
+    return MainFiles.setFile({ omagram: omagram }, view)
   }
 
   function download(fileId, priority) {
-    service.request("file.download", { fileId: fileId, priority: priority || 16 }, function (answer) {
-      if (answer.ok) omagram.setFile(answer.result)
-    })
+    return MainFiles.download({ omagram: omagram, service: service }, fileId, priority)
   }
 
   // Animated stickers need their Lottie JSON, which the service unpacks once per sticker.
   function lottiePath(fileId, callback) {
-    if (omagram.lottieCache[fileId]) { callback(omagram.lottieCache[fileId]); return }
-    service.request("sticker.lottie", { fileId: fileId }, function (answer) {
-      var path = answer.ok && answer.result && answer.result.path ? answer.result.path : ""
-      if (path) {
-        if (Object.keys(omagram.lottieCache).length >= 2000) omagram.lottieCache = ({})
-        omagram.lottieCache[fileId] = path
-      }
-      callback(path)
-    })
+    return MainFiles.lottiePath({ omagram: omagram, service: service }, fileId, callback)
   }
 
   // The images of custom emoji, by id: a file:// URL for each whose sticker is downloaded and can
   // be drawn still (a WebP sticker, or the still thumbnail of an animated one).
   function customEmojiImages(ids) {
-    omagram.customEmojiRevision
-    omagram.filesRevision
-    var images = {}
-    for (var i = 0; i < ids.length; i++) {
-      var still = Model.stillStickerFile(omagram.customEmoji[ids[i]])
-      var file = still ? omagram.fileState(still) : null
-      if (file && file.path) images[ids[i]] = Model.fileUrl(file.path)
-    }
-    return images
+    return MainFiles.customEmojiImages({ omagram: omagram }, ids)
   }
 
   function requestCustomEmoji(ids) {
-    if (omagram.auth.state !== "ready") return
-    if (Object.keys(omagram.customEmoji).length > 3000) omagram.customEmoji = ({})
-    var missing = ids.filter(function (id) { return !(id in omagram.customEmoji) }).slice(0, 200)
-    if (!missing.length) return
-    missing.forEach(function (id) { omagram.customEmoji[id] = null })
-    service.request("customEmoji.get", { ids: missing }, function (answer) {
-      var stickers = answer.ok ? answer.result.emoji || [] : []
-      stickers.forEach(function (sticker) {
-        omagram.customEmoji[sticker.id] = sticker
-        var still = Model.stillStickerFile(sticker)
-        if (still && !still.path) omagram.download(still.id, 1)
-      })
-      omagram.customEmojiRevision++
-    })
+    return MainFiles.requestCustomEmoji({ omagram: omagram, service: service }, ids)
   }
 
   function declineCall(callId) {
-    service.request("call.decline", { callId: callId }, function (answer) {
-      if (!answer.ok && screen.item && screen.item.notify) screen.item.notify(answer.error || "Could not decline the call")
-    })
+    return MainFiles.declineCall({ screen: screen, service: service }, callId)
   }
 
   // A chat's stories from its first unread one; with no chat given, the first chat with unread
   // stories, or the first with any.
   function openStories(chatId) {
-    if (!omagram.showStories) return
-    var list = omagram.storyChats
-    var active = chatId ? Model.findStories(list, chatId) : (list.filter(Model.storiesUnread)[0] || list[0])
-    if (active) storyViewer.show(active.chatId, Model.firstStoryId(active))
+    return MainFiles.openStories({ omagram: omagram, storyViewer: storyViewer }, chatId)
   }
 
   // Histories are kept by Model.historyKey: a chat's id, "chat:topic" for a topic of a forum, and
@@ -314,13 +279,11 @@ Scope {
                                                      !!omagram.openTopic && omagram.openTopic.thread === true)
 
   function messagesFor(chatId) {
-    omagram.messagesRevision
-    return omagram.messages[chatId === omagram.openChatId ? omagram.openKey : Model.historyKey(chatId, 0)] || []
+    return MainFiles.messagesFor({ omagram: omagram }, chatId)
   }
 
   function setMessages(key, list) {
-    omagram.messages[key] = list
-    omagram.messagesRevision++
+    return MainFiles.setMessages({ omagram: omagram }, key, list)
   }
 
   // Every history of a chat that is loaded: its own and its topics'.
@@ -363,57 +326,11 @@ Scope {
   property int accountRevision: -1
 
   function resetAccountView() {
-    chatFlush.stop()
-    omagram.pendingChats = ({})
-    if (screen.item && screen.item.leaveAccount) screen.item.leaveAccount()
-    service.request("ui.focus", { chatId: 0 })
-    omagram.accountTransition = true
-    screen.active = false
-    omagram.settingsOpen = false
-    omagram.viewerMessageId = 0
-    storyViewer.finish()
-    omagram.openChatId = 0
-    omagram.openTopic = null
-    omagram.messages = ({})
-    omagram.messagesRevision++
-    omagram.files = ({})
-    omagram.filesRevision++
-    omagram.lottieCache = ({})
-    omagram.customEmoji = ({})
-    omagram.customEmojiRevision++
-    omagram.noOlder = ({})
-    omagram.historyOrder = []
-    omagram.loadedLists = ({})
-    omagram.loadingOlder = false
-    omagram.listKey = "main"
-    omagram.chatActions = ({})
-    omagram.userStatuses = ({})
-    omagram.recording = { state: "idle" }
+    return MainAccounts.resetAccountView({ chatFlush: chatFlush, omagram: omagram, screen: screen, service: service, storyViewer: storyViewer })
   }
 
   function applyAccountSnapshot(result) {
-    if (result.accountRevision !== undefined && result.accountRevision < omagram.accountRevision) return
-    omagram.accountRevision = result.accountRevision === undefined ? omagram.accountRevision : result.accountRevision
-    var changed = result.activeAccount && result.activeAccount !== omagram.activeAccount
-    if (changed) omagram.resetAccountView()
-    chatFlush.stop()
-    omagram.pendingChats = ({})
-    omagram.activeAccount = result.activeAccount || omagram.activeAccount
-    omagram.auth = result.auth || { state: "starting" }
-    omagram.meId = result.meId || 0
-    omagram.connection = result.connection || ""
-    omagram.recordedSend = result.recordedSend || null
-    omagram.chats = result.allChats || result.chats || []
-    omagram.folders = result.folders || []
-    omagram.mainPosition = result.mainPosition || 0
-    if (result.accounts) omagram.accounts = result.accounts
-    var calls = {}, stories = {}
-    for (var c = 0; c < (result.calls || []).length; c++) calls[result.calls[c].id] = result.calls[c]
-    for (var s = 0; s < (result.stories || []).length; s++) stories[result.stories[s].chatId] = result.stories[s]
-    omagram.calls = calls
-    omagram.activeStories = stories
-    omagram.accountTransition = false
-    screen.active = true
+    return MainAccounts.applyAccountSnapshot({ chatFlush: chatFlush, omagram: omagram, screen: screen }, result)
   }
 
   function reloadAccount() {
@@ -457,7 +374,7 @@ Scope {
 
   // ---------------------------------------------------------------- service
 
-  OmagramClient {
+  TelebarClient {
     id: service
     binDir: omagram.binDir
     autoStart: omagram.autoStart
@@ -467,7 +384,8 @@ Scope {
     uiContext: ({ focused: omagram.windowFocused, visible: window.visible, width: window.width,
       height: window.height, chat_list_width: omagram.chatListWidth, chats: omagram.chats.length,
       messages: omagram.openChatId ? omagram.messagesFor(omagram.openChatId).length : 0,
-      files: Object.keys(omagram.files).length, stories: omagram.storyChats.length })
+      files: Object.keys(omagram.files).length, stories: omagram.storyChats.length,
+      implementation_revision: omagram.implementationRevision })
 
     onHello: function (result) {
       omagram.applyAccountSnapshot(result)
@@ -510,6 +428,10 @@ Scope {
       if (!e.account || e.account === omagram.activeAccount) {
         omagram.auth = e.auth
         if (e.auth.state !== "ready") {
+          if (screen.item && screen.item.leaveAccount) screen.item.leaveAccount()
+          service.accountGeneration++
+          service.failPending()
+          omagram.resetAccountView()
           omagram.chats = []
           omagram.messages = ({})
           omagram.activeStories = ({})
@@ -704,76 +626,26 @@ Scope {
 
   // A message found by search: open its chat, load the messages around it, put the cursor on it.
   function openChatAt(chatId, messageId) {
-    omagram.openChatById(chatId, false)
-    var topic = omagram.openTopic && omagram.openTopic.chatId === chatId ? omagram.openTopic : null
-    var args = { chatId: chatId, fromMessageId: messageId, offset: -20, limit: 40 }
-    service.request(omagram.historyCommand(topic, args), args, function (answer) {
-      if (!answer.ok || chatId !== omagram.openChatId) return
-      var found = (answer.result.messages || []).filter(function (m) { return m.id === messageId })[0]
-      var chat = Model.findChat(omagram.chats, chatId)
-      // A message of a forum opens in its topic.
-      if (!topic && found && found.topicId && chat && chat.forum) {
-        omagram.selectTopic({ id: found.topicId, chatId: chatId, name: "Topic", draft: "" })
-        omagram.openChatAt(chatId, messageId)
-        return
-      }
-      var key = Model.historyKey(chatId, topic ? topic.id : 0, !!topic && topic.thread === true)
-      if (key !== omagram.openKey) return
-      omagram.setMessages(key, Model.mergeMessages(omagram.messages[key] || [], answer.result.messages || []))
-      Qt.callLater(function () { if (screen.item && screen.item.focusMessage) screen.item.focusMessage(messageId) })
-    })
+    return MainNavigation.openChatAt({ omagram: omagram, screen: screen, service: service }, chatId, messageId)
   }
 
   function selectTopic(topic) {
-    if (!topic || topic.chatId !== omagram.openChatId) return
-    omagram.openTopic = topic
-    omagram.keepMessagesOf(omagram.openKey)
-    omagram.loadHistory(topic.chatId, 0)
+    return MainNavigation.selectTopic({ omagram: omagram }, topic)
   }
 
   // The comments under a channel post, or the replies to a message: they open as a thread of the
   // chat they live in (a channel's discussion group), and the way back leads to the message.
   function openThread(chatId, messageId) {
-    service.request("thread.open", { chatId: chatId, messageId: messageId }, function (answer) {
-      if (!answer.ok) {
-        if (screen.item && screen.item.notify) screen.item.notify(answer.error || "Could not open the comments")
-        return
-      }
-      var t = answer.result
-      if (t.chat) omagram.knowChat(t.chat)
-      var from = Model.findChat(omagram.chats, chatId)
-      var channel = !!from && from.kind === "channel"
-      omagram.openChatById(t.chatId, false, {
-        thread: true, id: t.threadId, chatId: t.chatId, name: channel ? "Comments" : "Replies",
-        subtitle: from ? Model.chatTitle(from, omagram.meId) : "", draft: t.draft || "", root: t.messages || [],
-        from: { chatId: chatId, messageId: messageId }
-      })
-    })
+    return MainNavigation.openThread({ omagram: omagram, screen: screen, service: service }, chatId, messageId)
   }
 
   // Which command loads a history, with what it needs: a chat's own, a forum topic's, a thread's.
   function historyCommand(topic, args) {
-    if (!topic) return "chat.history"
-    if (topic.thread) {
-      args.threadId = topic.id
-      return "thread.history"
-    }
-    args.topicId = topic.id
-    return "topic.history"
+    return MainNavigation.historyCommand({  }, topic, args)
   }
 
   function closeTopic() {
-    var topic = omagram.openTopic
-    omagram.openTopic = null
-    // From comments back to the post they are under, from replies back to the message.
-    if (topic && topic.thread && topic.from) {
-      if (topic.from.chatId === omagram.openChatId) omagram.keepMessagesOf(omagram.openKey)
-      omagram.openChatAt(topic.from.chatId, topic.from.messageId)
-      return
-    }
-    // The forum view is now visible again; refresh it even when the chat itself did not change.
-    if (omagram.openChat && omagram.openChat.forum) omagram.topicsChanged(omagram.openChatId)
-    Qt.callLater(function () { if (screen.item && screen.item.focusMessages) screen.item.focusMessages() })
+    return MainNavigation.closeTopic({ omagram: omagram, screen: screen })
   }
 
   property real viewerMessageId: 0
@@ -782,74 +654,26 @@ Scope {
   onViewerMessageIdChanged: if (!viewerMessageId) { viewerFileId = 0; viewerBlock = null }
 
   function openPhoto(message) {
-    if (message && message.id) {
-      omagram.viewerBlock = message
-      omagram.viewerFileId = message.content && message.content.media && message.content.media.file ? message.content.media.file.id : 0
-      omagram.viewerMessageId = message.id
-    }
+    return MainNavigation.openPhoto({ omagram: omagram }, message)
   }
 
   // `topic`: a forum's topic or a thread to open the chat at.
   function openChatById(chatId, force, topic) {
-    if (!chatId || (chatId === omagram.openChatId && !force && !topic)) return
-    omagram.viewerMessageId = 0
-    if (chatId !== omagram.openChatId || topic) omagram.openTopic = topic || null
-    if (omagram.openChatId && omagram.openChatId !== chatId) service.request("chat.close", { chatId: omagram.openChatId })
-    omagram.openChatId = chatId
-    service.request("chat.open", { chatId: chatId }, function (answer) {
-      if (answer.ok && answer.result.chat) omagram.knowChat(answer.result.chat)
-    })
-    var chat = Model.findChat(omagram.chats, chatId)
-    if (chat && chat.forum && !omagram.openTopic) return   // a forum opens on its topics
-    omagram.keepMessagesOf(omagram.openKey)
-    omagram.loadHistory(chatId, 0)
+    return MainNavigation.openChatById({ omagram: omagram, service: service }, chatId, force, topic)
   }
 
   function loadHistory(chatId, fromMessageId) {
-    var topic = chatId === omagram.openChatId && omagram.openTopic && omagram.openTopic.chatId === chatId ? omagram.openTopic : null
-    var thread = !!topic && topic.thread === true
-    var key = Model.historyKey(chatId, topic ? topic.id : 0, thread)
-    if (fromMessageId && (omagram.loadingOlder || omagram.noOlder[key])) return
-    if (fromMessageId) omagram.loadingOlder = true
-    var args = { chatId: chatId, fromMessageId: fromMessageId, limit: 50 }
-    service.request(omagram.historyCommand(topic, args), args, function (answer) {
-      if (fromMessageId) omagram.loadingOlder = false
-      if (!answer.ok) {
-        if (key === omagram.openKey && screen.item && screen.item.notify)
-          screen.item.notify(answer.error || "Could not load messages")
-        return
-      }
-      var incoming = answer.result.messages || []
-      var before = (omagram.messages[key] || []).length
-      var merged = Model.mergeMessages(omagram.messages[key] || [], incoming)
-      // Nothing older came: the history is whole. A thread starts from its post or message, on top.
-      var whole = fromMessageId ? merged.length === before : thread && incoming.length === 0
-      if (whole && thread) merged = Model.mergeMessages(merged, topic.root || [])
-      omagram.setMessages(key, merged)
-      if (whole) omagram.noOlder[key] = true
-      if (key !== omagram.openKey) return
-      // TDLib answers the first page from its local cache, which may be short; a thread's first page
-      // is asked to go on to its start, so the post it is about shows above a few comments.
-      if (!fromMessageId && merged.length > 0 && merged.length < (thread ? 50 : 20)) omagram.loadHistory(chatId, Model.oldestId(merged))
-      omagram.markOpenChatRead()
-    })
+    return MainNavigation.loadHistory({ omagram: omagram, screen: screen, service: service }, chatId, fromMessageId)
   }
 
   // Only while you can see it: a chat opened from a notification is read once the window has focus.
   // A thread's comments do not count in its chat's unread: what a thread shows is read.
   function markOpenChatRead() {
-    var chat = omagram.openChat
-    var topic = chat && omagram.openTopic && omagram.openTopic.chatId === chat.id ? omagram.openTopic : null
-    var thread = !!topic && topic.thread === true
-    if (!chat || !omagram.windowFocused || !(chat.unread > 0 || topic)) return
-    omagram.markRead(chat.id, Model.incomingIds(omagram.messages[omagram.openKey] || [], 100), topic ? topic.id : 0, thread)
+    return MainNavigation.markOpenChatRead({ omagram: omagram })
   }
 
   function markRead(chatId, ids, topicId, thread) {
-    if (!ids.length) return
-    var args = { chatId: chatId, messageIds: ids }
-    if (topicId) args[thread ? "threadId" : "topicId"] = topicId
-    service.request("chat.read", args)
+    return MainNavigation.markRead({ service: service }, chatId, ids, topicId, thread)
   }
 
   // ---------------------------------------------------------------- window

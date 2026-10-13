@@ -234,7 +234,7 @@ class DesktopEntry(Sandbox):
         self.assertNotIn("error", report.lower(), report)
 
     def test_the_shell_service_refreshes_it_when_it_starts(self):
-        self.assertIn('service.binDir + "omagram", "--desktop-entry"]', (ROOT / "shell" / "Service.qml").read_text())
+        self.assertIn('service.binDir + "omagram", "--desktop-entry"]', (ROOT / "shell" / "TelebarService.qml").read_text())
 
 
 if __name__ == "__main__":

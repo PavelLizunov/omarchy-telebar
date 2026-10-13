@@ -36,7 +36,7 @@ class TelebarIdentity(unittest.TestCase):
             self.assertTrue((ROOT / path).is_file(), path)
         for path in ("bin/omagram", "bin/omagramd", "bin/omagram_settings.py", "bin/omagram-menu-install"):
             self.assertEqual(constants((ROOT / path).read_text())["PLUGIN_ID"], PLUGIN_ID, path)
-        for path in ("shell/BarWidget.qml", "shell/QuickReply.qml", "shell/Panel.qml", "menu.jsonc"):
+        for path in ("shell/BarWidget.qml", "shell/TelebarQuickReply.qml", "shell/Panel.qml", "menu.jsonc"):
             text = (ROOT / path).read_text()
             self.assertIn(PLUGIN_ID, text, path)
             self.assertNotIn("reidenxerx.omagram", text, path)

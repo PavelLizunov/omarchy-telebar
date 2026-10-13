@@ -28,7 +28,7 @@ assert.equal(applied.length, 0, "A previous story's download must not overwrite 
 const main = fs.readFileSync(path.join(__dirname, "../app/Main.qml"), "utf8");
 const storyBinding = main.slice(main.indexOf("readonly property var storyChats:"), main.indexOf("Timer {", main.indexOf("readonly property var storyChats:")));
 assert.ok(storyBinding.includes("if (!omagram.showStories) return []"), "Hidden stories must never populate the visible strip");
-const openStories = main.slice(main.indexOf("function openStories("), main.indexOf("// Histories are kept", main.indexOf("function openStories(")));
+const openStories = fs.readFileSync(path.join(__dirname, "../app/MainFiles.js"), "utf8");
 assert.ok(openStories.includes("if (!omagram.showStories) return"), "Hidden stories cannot be opened by a caller");
 const widthBinding = main.match(/Layout.minimumWidth: (Math\.min\(omagram\.chatListWidth, mainScope\.width \* 0\.45\))/);
 assert.ok(widthBinding, "The chat list must have a hard width bound");

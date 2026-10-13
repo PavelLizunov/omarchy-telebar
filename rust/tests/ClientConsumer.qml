@@ -1,5 +1,5 @@
 import QtQuick
-import "." as App
+import "../../app" as App
 
 // Actual client/SplitParser/Socket. The renderer applies an isolated socket path
 // before creation. This is a protocol fixture, not a reconstructed product UI.
@@ -9,8 +9,9 @@ Rectangle {
   height: 180
   color: "#101315"
   property string fixtureSocket: ""
-  property bool ready: false
+  property bool settled: false
   property string failure: ""
+  readonly property bool ready: settled && failure === ""
   property string stage: "Connecting to the isolated Rust socket"
   property var order: []
   function require(condition, reason) { if (!condition) { failure = reason; throw new Error(reason) } }
@@ -19,7 +20,7 @@ Rectangle {
     require(answer.result.globalStatus["global.panel"] === "unavailable", "unexpected shortcut status")
     fixture.order.push("reply")
   }
-  App.CandidateClient {
+  App.TelebarClient {
     id: client
     autoStart: false
     socketPath: fixture.fixtureSocket
@@ -38,7 +39,7 @@ Rectangle {
         fixture.require(answer.ok && answer.result.allChats.length === 0 && answer.result.stories.length === 0, "incompatible window hello")
         fixture.require(Object.keys(client.callbacks).length === 0, "pending callbacks remain")
         fixture.stage = "Actual QML client connected. Rust protocol checks passed."
-        fixture.ready = true
+        fixture.settled = true
       })
     }
   }

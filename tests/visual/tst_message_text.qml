@@ -11,7 +11,7 @@ TestCase {
   visible: true
   width: 650
   height: 700
-  Component { id: serviceScene; Shell.Service {} }
+  Component { id: serviceScene; Shell.TelebarService {} }
   Component { id: quickScene; QuickConsumer {} }
   Component { id: richScene; RichConsumer {} }
   Component { id: chatScene; App.ChatView { width: 600; height: 650; app: model; client: model; chat: model.chats[0]; history: model.history } }

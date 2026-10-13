@@ -52,7 +52,8 @@ const omagram = { openChat: { id: -10, unread: 0, forum: true },
   openTopic: { id: 5, chatId: -10, unread: 4 }, windowFocused: true,
   openKey: "-10:5", messages: { "-10:5": [{ id: 9, outgoing: false }, { id: 10, outgoing: true }] },
   markRead(...args) { read.push(args); } };
-const reading = vm.createContext({ omagram, Model: model });
+const reading = vm.createContext({ omagram, Model: model,
+  MainNavigation: require("./qml-logic").loadLogic("MainNavigation") });
 vm.runInContext("function markOpenChatRead() {" + handler("app/Main.qml", "function markOpenChatRead(") + "}", reading);
 reading.markOpenChatRead();
 assert.deepEqual(JSON.parse(JSON.stringify(read)), [[-10, [9], 5, false]],
@@ -67,7 +68,7 @@ const pendingHistory = [];
 const quick = { opened: true, shownChatId: -10, historySerial: 2, history: [],
   service: { activeAccount: "default", request(cmd, args, cb) { pendingHistory.push(cb); } } };
 const history = vm.createContext({ quick, Model: model, Qt: { callLater() {} }, messageList: { positionViewAtEnd() {} } });
-vm.runInContext("function fetchHistory(chatId, fromMessageId, serial) {" + handler("shell/QuickView.qml", "function fetchHistory(") + "}", history);
+vm.runInContext("function fetchHistory(chatId, fromMessageId, serial) {" + handler("shell/TelebarQuickView.qml", "function fetchHistory(") + "}", history);
 for (const change of [() => quick.opened = false, () => quick.shownChatId = -20,
   () => quick.service.activeAccount = "work", () => quick.historySerial++]) {
   quick.opened = true;

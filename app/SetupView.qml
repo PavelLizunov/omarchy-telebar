@@ -14,6 +14,7 @@ FocusScope {
   property string error: ""
 
   function submit() {
+    if (view.busy) return
     var id = apiId.text.trim()
     var hash = apiHash.text.trim()
     apiId.error = Model.validApiId(id) ? "" : "The API id is a number."

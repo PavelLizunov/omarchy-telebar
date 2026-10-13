@@ -38,7 +38,7 @@ Panel {
     contentWidth: panel.fittedContentWidth(Style.space(460))
     contentHeight: panel.fittedContentHeight(root.viewHeight)
 
-    QuickView {
+    TelebarQuickView {
       id: view
       width: parent.width
       height: Math.max(Style.space(240), panel.contentHeight - panel.verticalContentInset)

@@ -1,5 +1,5 @@
 import QtQuick
-import "." as App
+import "../../app" as App
 
 // Actual product client and Quickshell socket. Only an explicit disposable
 // no-native owner is allowed; all test operations are local or rejected.
@@ -9,11 +9,13 @@ Rectangle {
   height: 180
   color: "#101315"
   property string fixtureSocket: ""
-  property bool ready: false
+  property bool settled: false
+  property string failure: ""
+  readonly property bool ready: settled && failure === ""
   property string stage: "Connecting to the isolated no-library owner"
   property var order: []
-  function require(condition, reason) { if (!condition) throw new Error(reason) }
-  App.CandidateClient {
+  function require(condition, reason) { if (!condition) { failure = reason; throw new Error(reason) } }
+  App.TelebarClient {
     id: client
     autoStart: false
     socketPath: fixture.fixtureSocket
@@ -35,7 +37,7 @@ Rectangle {
           fixture.require(answer.ok && answer.result.auth.state === "noLibrary","peer lost after refused query")
           fixture.require(Object.keys(client.callbacks).length === 0,"local callbacks remain")
           fixture.stage = "Actual QML client stays usable without TDLib. Checks passed."
-          fixture.ready = true
+          fixture.settled = true
         })
       })
     }

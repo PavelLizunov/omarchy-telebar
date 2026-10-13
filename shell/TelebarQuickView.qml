@@ -328,8 +328,11 @@ Item {
       return
     }
     var chatId = quick.replyChatId
+    var account = quick.service.activeAccount
+    var serial = quick.sendSerial
+    var text = composer.text
     quick.service.request("clipboard.files", {}, function (answer) {
-      if (quick.replyChatId !== chatId) return
+      if (serial !== quick.sendSerial || account !== quick.service.activeAccount || !quick.opened || !quick.ready || quick.replyChatId !== chatId || composer.text !== text || quick.sending || quick.recordingHere) return
       var found = answer.ok && answer.result ? answer.result : { paths: [], skipped: 0 }
       var paths = Array.isArray(found.paths) ? found.paths : []
       quick.status = !(found.skipped > 0) ? ""
@@ -667,7 +670,10 @@ Item {
     var id = media && media.file ? media.file.id : 0
     if (!id || !quick.service || !quick.ready || quick.noteAnimations[id] !== undefined) return
     quick.setNoteAnimation(id, {})
+    var serial = quick.historySerial
+    var account = quick.service.activeAccount
     quick.service.request("videonote.animation", { fileId: id }, function (answer) {
+      if (serial !== quick.historySerial || account !== quick.service.activeAccount || !quick.opened) return
       if (answer.ok && answer.result && answer.result.path) quick.setNoteAnimation(id, { path: answer.result.path, fps: answer.result.fps || 20 })
       else quick.setNoteAnimation(id, undefined)
     })

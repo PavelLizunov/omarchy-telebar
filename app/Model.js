@@ -1686,7 +1686,7 @@ function pollProblem(poll) {
   var seen = {}
   for (var i = 0; i < answers.length; i++) {
     var key = answers[i].toLowerCase()
-    if (seen[key]) return "Two answers are the same"
+    if (Object.prototype.hasOwnProperty.call(seen, key)) return "Two answers are the same"
     seen[key] = true
   }
   if (poll.quiz) {
