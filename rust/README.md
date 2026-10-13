@@ -354,8 +354,46 @@ connected. `tests/MainConsumer.qml` also loads the complete actual Main with
 `autoStart: false`, an explicit socket and `surfaceVisible: false`, and reparents
 its real content subtree for offscreen inspection. Tested noLibrary and
 needCredentials do not establish ready chats, compositor or live authorization
-acceptance. Use the reviewed native Commons tokens with inert local Process/
-FileView imports, never replace the actual native Socket with a mock.
+acceptance. Use the reviewed native Commons tokens and keep the actual native
+Socket/SplitParser. Commons' local inert import does not replace Process/FileView
+in application or shell files that directly import Quickshell.Io.
+
+`tests/preview_io.py` builds an explicit, new development-only source overlay.
+It admits every QML input before output, changes only the reviewed service's two
+Process bindings and EmojiPanel's three FileView bindings to `PreviewIo`, and
+blanks the client's default socket until the fixture sets its explicit private
+path. This prevents a nested service client from briefly contacting the production
+socket during construction. It records source/preview hashes. Other bytes,
+including native Socket/SplitParser, stay unchanged; no runtime
+helpers or Python application are copied. `tests/ServiceConsumer.qml` then loads
+the selected service/quick type pair using an explicit plugin root and private
+socket. It asserts that both service Process objects are inert before settled
+readiness. The overlay is not an installed plugin or an execution sandbox.
+
+```sh
+python3 -B rust/tests/preview_io_test.py
+python3 -B rust/tests/preview_io.py /absolute/reviewed-source /absolute/new/preview-root
+```
+
+The current Telebar Main and service/quick consumers were checked against a
+frozen local UI composite, not substituted with this checkpoint's older UI tree.
+Ready, no-library, composer refusal/acceptance, retained recording/resolution and
+quick history use native Socket; radius zero/nonzero images were inspected.
+The first service preview incorrectly used native Process and rewrote the managed
+host launcher to the candidate path. Its safety claim is revoked. The installed
+launcher was restored using its supported desktop-entry route. The explicit
+PreviewIo rerender asserts zero executions and preserves the restored desktop
+hash; its pixels match the earlier layout. The earlier nested client may also
+have issued a read-only hello to its default production socket before overriding
+that path; no account mutation is inferred. Final fixtures assert a blank and
+disconnected default before setting the explicit socket. Host devices, compositor interaction,
+working-account cutover and whole-UI/manual acceptance remain unverified.
+
+The compatible `tests/consumer_socket.py` also checks diagnostics.ui/status through
+the normal shared socket consumer: numeric redaction, immediate rate-limit refusal,
+process/peer identity, continued hello usability, and durable private log redaction.
+These no-library and official pre-parameter sessions use disposable roots with no
+credential startup or database parameters, not production watchdog acceptance.
 
 `tests/inert_td.c` is a fixed synthetic four-symbol JSON-ABI consumer fixture,
 not official TDLib. Build it in a new private `lib/` directory with

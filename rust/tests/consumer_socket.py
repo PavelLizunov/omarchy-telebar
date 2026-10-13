@@ -87,12 +87,33 @@ with tempfile.TemporaryDirectory(prefix="telebar-consumer-") as name:
             assert replies[2]["result"] == replies[1]["result"]
             assert replies[0]["result"]["globalStatus"]["global.openWindow"] == "unavailable"
             assert next(i for i, frame in enumerate(ordered) if frame.get("id") == 8) < next(i for i, frame in enumerate(ordered) if frame.get("event") == "settings" and frame["settings"]["globalShortcuts"].get("global.openWindow") == "CTRL + O")
+            # Use the compatible shared consumer, not the older fixture.snapshot
+            # route. Redaction, rate limiting and peer identity must hold here.
+            report = request(24, "diagnostics.ui", {"window": True, "pending": 3,
+                "password": "PRIVATE-CONTENT", "files": "PRIVATE-CONTENT",
+                "width": -1, "height": 1e100})
+            assert report["ok"]
+            limited = request(25, "diagnostics.ui", {"pending": 99})
+            assert limited["error"] == "diagnostic reports are rate limited"
+            status = request(26, "diagnostics.status")
+            assert status["ok"]
+            diagnostic = status["result"]
+            assert diagnostic["clients"] == 1 and diagnostic["account_count"] == 2
+            assert diagnostic["pending_ipc"] == 0 and diagnostic["process"]["pid"] == process.pid
+            assert diagnostic["migration_complete"] is False
+            assert any(row["metrics"] == {"pending": 3} and row["surface"] == "window"
+                       for row in diagnostic["ui"])
+            assert "PRIVATE-CONTENT" not in json.dumps(diagnostic) and "password" not in json.dumps(diagnostic)
+            assert request(27, "hello")["ok"]
             assert request(5, "app.quit")["ok"]
             assert process.wait(timeout=7) == 0
         assert not (root / "migration.sock").exists()
         assert not list(root.glob(".local/share/omagram/**/database"))
         assert not list(root.glob(".local/share/omagram/**/db.sqlite"))
-        print(json.dumps({"compatible_hello": True, "window_shape": True, "catalog_order": True, "switch": True, "shutdown": True, "parameters_sent": False, "profile_opened": False, "no_library": no_library, "frames": len(captured)}))
+        records = (root / ".local/state/omagram/diagnostics/trace.jsonl").read_text()
+        assert "PRIVATE-CONTENT" not in records and "password" not in records
+        assert any(json.loads(line)["event"] == "ui_sample" for line in records.splitlines())
+        print(json.dumps({"compatible_hello": True, "window_shape": True, "catalog_order": True, "switch": True, "shutdown": True, "diagnostics": True, "diagnostic_redaction": True, "parameters_sent": False, "profile_opened": False, "no_library": no_library, "frames": len(captured)}))
     finally:
         if process.poll() is None:
             process.terminate()
