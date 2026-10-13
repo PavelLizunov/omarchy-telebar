@@ -18,7 +18,7 @@ import "MainNavigation.js" as MainNavigation
 Scope {
   id: omagram
 
-  readonly property int implementationRevision: 20261010
+  readonly property int implementationRevision: 20261013
   readonly property string binDir: decodeURIComponent(String(Qt.resolvedUrl("../bin/")).replace("file://", ""))
   // Explicit consumer context keeps offscreen acceptance away from live IPC.
   // Normal launch retains the same socket and service-start behavior.
@@ -828,6 +828,9 @@ Scope {
     id: mainView
     FocusScope {
       id: mainScope
+      // A tiled window can be narrower than minimumSize. Keep the detailed list
+      // reachable there without covering the handle or changing compositor rules.
+      readonly property real maximumChatListWidth: Model.sidebarMaximumWidth(mainScope.width, Style.space(40))
 
       function focusComposer() { chatView.focusComposer() }
       function focusList() { chatList.focusList() }
@@ -890,7 +893,7 @@ Scope {
           id: chatList
           app: omagram
           menuHost: mainScope
-          Layout.minimumWidth: Math.min(omagram.chatListWidth, mainScope.width * 0.45)
+          Layout.minimumWidth: Math.min(omagram.chatListWidth, mainScope.maximumChatListWidth)
           Layout.preferredWidth: Layout.minimumWidth
           Layout.maximumWidth: Layout.minimumWidth
           Layout.fillHeight: true
@@ -929,7 +932,7 @@ Scope {
           app: omagram
           compact: chatList.compact
           currentWidth: chatList.width
-          maximumWidth: Math.min(1200, mainScope.width * 0.45)
+          maximumWidth: mainScope.maximumChatListWidth
           onWidthEdited: function (value) { omagram.chatListWidth = value }
           onWidthCommitted: {
             if (omagram.chatListWidth < 180) omagram.chatListWidth = 72

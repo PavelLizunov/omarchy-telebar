@@ -35,6 +35,24 @@ TestCase {
     Host.Style.barOverrides={"icon-canvas":20}
     compare(mark.size,20)
   }
+  function test_hover_and_press_preserve_icon_geometry_and_ink() {
+    var view=createTemporaryObject(scene,tests)
+    tryCompare(view,"ready",true)
+    var button=findChild(view,"telebar-icon-button")
+    var mark=findChild(view,"telebar-ring-mark")
+    var color=mark.color
+    mouseMove(button,button.width/2,button.height/2)
+    compare(button.tooltipHovered,true)
+    compare(mark.size,16)
+    compare(mark.color,color)
+    mousePress(button,button.width/2,button.height/2,Qt.LeftButton)
+    compare(view.widget.opened,false)
+    compare(mark.size,16)
+    compare(mark.color,color)
+    mouseRelease(button,button.width/2,button.height/2,Qt.LeftButton)
+    compare(view.widget.opened,true)
+    compare(mark.color,color)
+  }
   function test_actual_pointer_routes() {
     var view=createTemporaryObject(scene,tests)
     tryCompare(view,"ready",true)

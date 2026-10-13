@@ -34,6 +34,13 @@ function isObject(value) {
   return value !== null && typeof value === "object" && !isList(value)
 }
 
+// A compositor can tile below the requested minimum window size. Reserve
+// handle space, but do not cap an expanded list below its detail breakpoint.
+function sidebarMaximumWidth(windowWidth, reservedWidth) {
+  return Math.min(1200, Math.max(windowWidth * 0.45,
+    Math.min(300, Math.max(0, windowWidth - reservedWidth))))
+}
+
 // ---------------------------------------------------------------- chats
 
 // Chat order is an int64 sent as a decimal string and compared as text: a JavaScript

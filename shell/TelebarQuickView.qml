@@ -1241,6 +1241,7 @@ Item {
         }
         // md-open-in-new U+F03CC
         Icon {
+          objectName: "quick-open-chat-window"
           visible: quick.shownChatId !== 0
           name: "window"
           color: openArea.containsMouse ? quick.text : quick.muted

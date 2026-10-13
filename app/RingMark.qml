@@ -1,8 +1,8 @@
 import QtQuick
 import QtQuick.Shapes
 
-// Telebar's ring and speech tail in the host wordmark's stepped vocabulary.
-// One filled vector keeps the same silhouette from a native bar canvas up.
+// An original stepped paper plane for Telebar, not the official Telegram logo.
+// The legacy component name keeps existing native consumers compatible.
 Item {
   id: mark
 
@@ -26,7 +26,7 @@ Item {
       fillRule: ShapePath.OddEvenFill
       strokeColor: "transparent"
       PathSvg {
-        path: "M4 1H12V2H13V3H14V11H13V12H12V13H6V14H4V15H2V3H3V2H4Z M5 3H11V4H12V10H11V11H5V10H4V4H5Z"
+        path: "M1 6H3V5H6V4H9V3H12V2H15V5H14V9H13V13H12V15H11V14H9V13H7V12H6V14H5V9H3V8H1Z M5 8H7V7H9V6H11V5H12V4H13V5H12V6H11V7H10V8H9V9H8V10H7V11H6V9H5Z"
       }
     }
   }

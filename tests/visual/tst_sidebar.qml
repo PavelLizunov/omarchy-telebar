@@ -68,6 +68,40 @@ TestCase {
     mouseRelease(tests, at.x + 35, at.y)
     tryCompare(view, "sidebarWidth", 215)
   }
+  function test_narrow_expand_pointer_keyboard_and_resize_data() {
+    return [{ tag: "tiled-249-square", width: 249, radius: 0 },
+            { tag: "tiled-320-rounded", width: 320, radius: 8 },
+            { tag: "normal-640-square", width: 640, radius: 0 },
+            { tag: "normal-900-rounded", width: 900, radius: 8 }]
+  }
+  function test_narrow_expand_pointer_keyboard_and_resize(data) {
+    var view = createTemporaryObject(scene, tests, { width: data.width, sidebarWidth: 72, themeRadius: data.radius })
+    tryCompare(view, "ready", true)
+    tryCompare(view, "actualCompact", true)
+    var draft = findChild(view, "composer-text")
+    verify(draft !== null)
+    draft.text = "Synthetic unsent narrow-window composition"
+    var grip = findChild(view, "sidebar-grip-hit")
+    mouseClick(grip, grip.width / 2, grip.height / 2)
+    tryCompare(view, "sidebarWidth", 300)
+    tryCompare(view, "actualCompact", false)
+    verify(view.actualListWidth >= 180, "Expanded list must reach its detail breakpoint")
+    verify(view.actualListWidth <= view.width - Style.space(40), "Handle remains inside the narrow window")
+    view.width = 900
+    tryCompare(view, "actualListWidth", 300)
+    view.width = data.width
+    tryCompare(view, "actualCompact", false)
+    var button = findChild(view, "sidebar-button")
+    button.forceActiveFocus()
+    keyClick(Qt.Key_Space)
+    tryCompare(view, "sidebarWidth", 72)
+    tryCompare(view, "actualCompact", true)
+    button.forceActiveFocus()
+    keyClick(Qt.Key_Space)
+    tryCompare(view, "sidebarWidth", 300)
+    tryCompare(view, "actualCompact", false)
+    compare(draft.text, "Synthetic unsent narrow-window composition")
+  }
   function test_theme_radius_updates_without_recreating_surfaces() {
     var view = createTemporaryObject(scene, tests)
     var row = createTemporaryObject(rowComponent, tests)

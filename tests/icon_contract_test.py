@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class IconContract(unittest.TestCase):
-    def test_qml_and_desktop_share_one_bounded_stepped_contour(self):
+    def test_qml_and_desktop_share_one_bounded_stepped_plane(self):
         mark = (ROOT/'app/RingMark.qml').read_text()
         svg = ET.fromstring((ROOT/'assets/omagram.svg').read_bytes())
         self.assertEqual(svg.attrib['viewBox'],'0 0 16 16')
@@ -17,6 +17,9 @@ class IconContract(unittest.TestCase):
         vector = paths[0].attrib['d']
         self.assertEqual(re.search(r'path: "([^"]+)"',mark).group(1),vector)
         self.assertRegex(vector,r'^[MHVZ0-9 ]+$')
+        self.assertIn('H15V5H14',vector)  # Upper-right tip and descending main wing.
+        self.assertIn('H6V14H5V9',vector)  # Folded tail, not the previous speech ring.
+        self.assertEqual(vector.count('M'),2)  # Filled plane plus transparent fold.
         self.assertTrue(all(0 <= int(value) <= 16 for value in re.findall(r'\d+',vector)))
         self.assertEqual(paths[0].attrib['fill-rule'],'evenodd')
         self.assertIn('ShapePath.OddEvenFill',mark)

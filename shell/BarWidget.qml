@@ -129,7 +129,7 @@ BarWidget {
     anchors.fill: parent
     bar: root.bar
     // The native optical canvas owns visible size; WidgetButton owns the hit area.
-    // Preserve Telebar's ring/speech identity rather than Telegram's paper plane.
+    // Original stepped plane; theme ink and unread state stay separate.
     foreground: root.bar ? root.bar.barForeground : Commons.Color.foreground
     iconComponent: Component {
       Item {

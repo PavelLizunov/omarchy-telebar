@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import qs.Commons
 import "../../app" as App
+import "../../app/Model.js" as Model
 
 Rectangle {
   id: preview
@@ -11,6 +12,9 @@ Rectangle {
   property int themeRadius: 0
   property int fontSize: 12
   property real sidebarWidth: 300
+  readonly property real maximumChatListWidth: Model.sidebarMaximumWidth(preview.width, Style.space(40))
+  readonly property real actualListWidth: sidebar.width
+  readonly property bool actualCompact: sidebar.compact
   property bool focusHandle: false
   property bool ready: false
   FixtureApp {
@@ -36,7 +40,7 @@ Rectangle {
     spacing: 0
     App.ChatList {
       id: sidebar
-      Layout.minimumWidth: Math.min(preview.sidebarWidth, preview.width * 0.45)
+      Layout.minimumWidth: Math.min(preview.sidebarWidth, preview.maximumChatListWidth)
       Layout.preferredWidth: Layout.minimumWidth
       Layout.maximumWidth: Layout.minimumWidth
       Layout.fillHeight: true
@@ -58,7 +62,7 @@ Rectangle {
       app: model
       compact: sidebar.compact
       currentWidth: sidebar.width
-      maximumWidth: preview.width * 0.45
+      maximumWidth: preview.maximumChatListWidth
       onWidthEdited: function (value) { preview.sidebarWidth = value }
       onWidthCommitted: if (preview.sidebarWidth < 180) preview.sidebarWidth = 72
       onToggleRequested: preview.sidebarWidth = sidebar.compact ? 300 : 72

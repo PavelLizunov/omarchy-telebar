@@ -1,5 +1,31 @@
 # Consumer visual review
 
+## Narrow-window list expansion
+
+`MainSidebarConsumer.qml` constructs the actual complete Main with `autoStart: false`,
+`socketPath: ""` and native surfaces unshown. It reparents only the real content
+subtree and injects synthetic accounts/chats. `prepare_sidebar_fixture.py` reuses
+the reviewed explicit Process/FileView overlay and native inert Commons adapter.
+It never constructs a production service or starts another shell.
+
+```sh
+node tests/sidebar-layout-test.js
+python3 -B tests/visual/prepare_sidebar_fixture.py /absolute/new/sidebar-fixture
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_sidebar.qml -import tests/visual/imports -import tests/visual/imports/inert
+```
+
+The complete-Main MCP consumer checks the resulting detailed ChatList at width 249.
+Pass the generated `imports/qs` and fixture root, explicit dependencies, locale,
+DPR and `readyProperty: ready`. Native offscreen Hyprland initialization reports
+`$HYPRLAND_INSTANCE_SIGNATURE is unset. Cannot connect to hyprland.`; only that
+known warning is an explicitly reviewed report-policy exception, not a clean
+strict-warning pass. Sidebar QtTest separately exercises pointer and keyboard
+collapse/expand at widths 249, 320, 640 and 900, plus resizing, radius and drag
+controls. Complete Main activation is a signal/state check, not physical input.
+Very narrow expanded lists intentionally leave less conversation space; collapse
+restores it. These checks do not establish the separate quick-panel launcher
+failure, compositor minimum-size enforcement, live draft retention or every theme.
+
 ## Native Telebar mark
 
 `prepare_icon_fixture.py` creates a new private fixture with the actual RingMark,

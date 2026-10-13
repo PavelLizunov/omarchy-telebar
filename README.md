@@ -81,7 +81,9 @@ The image above predates the Telebar rename.
   post's comments and the replies to a message open the same way (`c`, or the bar under it).
   Click the handle between the chat list and conversation to collapse or expand the
   list; drag that same handle or the divider to resize it. With the handle focused,
-  Left/Right adjust its width and Enter/Space toggle it.
+  Left/Right adjust its width and Enter/Space toggle it. In a narrow tiled window,
+  expanding lets the detailed list use more of the window instead of trapping it
+  below its 180-unit breakpoint. Collapse it again to give the conversation more space.
 - **Chat info** — a panel (`Ctrl+I`) with a person's bio, username and phone, or a group's
   description and invite link; its members; and everything shared in it: photos and videos,
   files, links, voice messages, music and GIFs. Leave a group, or clear or delete a chat, from it.
@@ -371,11 +373,11 @@ attachments and the profile-photo image filter retain their existing behavior.
 
 Service controls use the original 24-unit SVG drawings in `app/Icons.js`, rendered through
 `Icon.qml`. Existing action glyph codes are aliases, not a font dependency for drawing.
-Telebar's ring and speech tail use a filled, stepped contour inspired by the
-Omarchy wordmark. The bar mark follows the native optical canvas and theme text
-color; its unread dot and click target retain their separate roles. The desktop
-SVG shares that silhouette without a fixed background tile. User-provided
-emoji/sticker artwork is unchanged.
+Telebar uses an original stepped paper-plane drawing, with the native Omarchy
+optical canvas and theme text color. It is not Telegram's official logo and has
+no blue-circle branding. The unread dot and click target keep their separate
+roles. The desktop SVG shares the plane contour without a fixed background tile.
+User-provided emoji/sticker artwork is unchanged.
 Icons pulse briefly on a state change; loading spinners run only while visible. SVGs are
 rasterized by Qt at a stable small size and shared by its image cache.
 The simplified drawings use 2.4-unit rounded strokes. Play/pause and the sidebar arrow
@@ -626,6 +628,7 @@ python3 tests/settings_test.py  # settings and global shortcuts, with Hyprland f
 python3 tests/install_test.py   # the menu entries, the window's runtime root, the launcher entry
 python3 tests/rename_test.py    # Telebar identity, attribution and legacy account/runtime compatibility
 node tests/model-test.js        # the window's list, message and menu logic
+node tests/sidebar-layout-test.js # narrow-window expansion bounds and actual Main bindings
 node tests/keymap-test.js       # shortcuts: parsing, matching, clashes
 node tests/accounts-ui-test.js  # account event filters, stale callbacks and snapshots
 node tests/topics-ui-test.js    # forum load errors, stale replies and pagination progress

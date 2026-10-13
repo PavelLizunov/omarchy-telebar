@@ -12,8 +12,43 @@ TestCase {
   height: 700
   Component { id: scene; QuickConsumer {} }
   SignalSpy { id: dismissSpy; signalName: "dismissRequested" }
+  SignalSpy { id: openSpy; signalName: "openInWindowRequested" }
   function init() { failOnWarning(/DelegateModel::cancel/) }
-  function cleanup() { dismissSpy.target = null; dismissSpy.clear(); Style.fontBaseSize = 12; Style.cornerRadius = 0 }
+  function cleanup() { dismissSpy.target = null; dismissSpy.clear(); openSpy.target = null; openSpy.clear(); Style.fontBaseSize = 12; Style.cornerRadius = 0 }
+  function test_compact_open_window_pointer_and_keys_keep_composition() {
+    var view = createTemporaryObject(scene, tests, { compactMode: true })
+    tryCompare(view, "ready", true)
+    var quick = view.consumer
+    var input = findChild(view, "quick-composer")
+    var opener = findChild(view, "quick-open-chat-window")
+    openSpy.target = quick
+    input.text = "Synthetic unsent window handoff"
+    quick.addAttachments([view.serviceModel.imagePath], true)
+    mouseClick(opener, opener.width / 2, opener.height / 2)
+    compare(openSpy.count, 1)
+    compare(openSpy.signalArguments[0][0], 101)
+    input.forceActiveFocus()
+    keyClick(Qt.Key_O, Qt.ControlModifier)
+    compare(openSpy.count, 2)
+    compare(openSpy.signalArguments[1][0], 101)
+    compare(input.text, "Synthetic unsent window handoff")
+    compare(quick.attachments.length, 1)
+    // No parent dismissal or production launcher is executed by this signal check.
+    quick.back()
+    compare(quick.attachments.length, 0)
+    compare(quick.replyChatId, 101, "First Escape removes attachments without leaving the chat")
+    quick.back()
+    tryCompare(quick, "replyChatId", 0)
+    wait(30)
+    var general = findChild(view, "openOmagram")
+    mouseClick(general, general.width / 2, general.height / 2)
+    compare(openSpy.count, 3)
+    compare(openSpy.signalArguments[2][0], 0)
+    quick.focusItem.forceActiveFocus()
+    keyClick(Qt.Key_O, Qt.ControlModifier)
+    compare(openSpy.count, 4)
+    verify(openSpy.signalArguments[3][0] !== 0)
+  }
   function test_enter_keeps_open_and_failure_retains_draft() {
     var view = createTemporaryObject(scene, tests)
     tryCompare(view, "ready", true)
