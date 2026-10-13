@@ -188,6 +188,16 @@ raw inputs. One synthetic native send leaves playback bytes intact after close
 and unsent recovery. The graph uses finite Managed owners inside the existing
 identity-preserving confinement; root tool checks remain unchanged. This tests
 silent synthetic audio, not a physical microphone, audible output or Telegram.
+Normal Driver polling also retires spontaneous recorder completion or its finite
+helper deadline. It keeps the original raw input and persists `prepareFailed`
+for explicit retry/discard, with no automatic preparation or send. Changed
+input/root identities become `unknown`, retaining the pinned original identity
+and refusing retry; neither replacement is deleted. A checkpoint write failure
+still exposes truthful live recovery. Synthetic early-exit/substitution/failure
+checks verify the stopped transition and retained bytes. Explicit recording
+retry opens the checkpoint's pinned original inode before worker admission;
+pathname replacement cannot supply different bytes and be hidden by restoring
+the original before native dispatch.
 
 ```sh
 bash rust/tests/run-voice-driver.sh /absolute/exact/send_driver-test \

@@ -37,6 +37,7 @@ pub struct Capture {
     keep_input: bool,
     ended: bool,
     reservation: Option<File>,
+    recovery_token: String,
 }
 fn remove(storage: &Storage, path: &str, file: &File) {
     use std::os::unix::fs::MetadataExt;
@@ -218,6 +219,7 @@ impl Capture {
             keep_input: false,
             ended: false,
             reservation: Some(reservation),
+            recovery_token: serial,
         })
     }
     pub fn finish(&mut self, cancel: &AtomicBool) -> Result<()> {
@@ -338,6 +340,30 @@ impl Capture {
             return Err("the retained recording is not available".into());
         }
         Ok(())
+    }
+    /// Natural/error/deadline completion never sends or discards recorded bytes.
+    pub(crate) fn retain_stopped(&mut self) -> crate::recorded_send::Recording {
+        self.keep_input = true;
+        let _ = self.helper.cancel(); // A polling error still owns an exact live child.
+        let valid = self.file.sync_all().is_ok() && self.verify_input(&self.file).is_ok();
+        crate::recorded_send::Recording {
+            token: self.recovery_token.clone(),
+            kind: self.kind.clone(),
+            path: self.path.to_string_lossy().into_owned(),
+            source: None,
+            chat: self.chat,
+            args: serde_json::json!({}),
+            content: None,
+            status: if valid {
+                crate::recorded_send::Status::PrepareFailed
+            } else {
+                crate::recorded_send::Status::Unknown
+            },
+            input: None,
+        }
+    }
+    pub(crate) fn owned_file(&self) -> &File {
+        &self.file
     }
     pub fn pid(&self) -> u32 {
         self.helper.pid()

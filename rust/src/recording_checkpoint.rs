@@ -101,6 +101,38 @@ impl Checkpoint {
             .insert(path.into(), identity.clone());
         Ok(identity)
     }
+    pub(crate) fn open_input(&self, path: &str) -> io::Result<std::fs::File> {
+        let (store, root, relative) = self.scope(path)?;
+        if !Storage::open(root)?.same_root(store)? {
+            return Err(io::Error::other("recording root changed"));
+        }
+        let expected = self
+            .identities
+            .borrow()
+            .get(path)
+            .cloned()
+            .ok_or_else(|| io::Error::other("recording input identity missing"))?;
+        let file = store.open_read(&relative)?;
+        let m = file.metadata()?;
+        if expected["missing"] == true
+            || expected["dev"].as_u64() != Some(m.dev())
+            || expected["ino"].as_u64() != Some(m.ino())
+            || m.nlink() != 1
+            || m.mode() & 0o022 != 0
+        {
+            return Err(io::Error::other("recording input changed"));
+        }
+        Ok(file)
+    }
+    pub(crate) fn pin_capture(&self, path: &str, file: &std::fs::File) -> io::Result<()> {
+        self.scope(path)?;
+        let m = file.metadata()?;
+        self.identities.borrow_mut().insert(
+            path.into(),
+            json!({"path":path,"dev":m.dev(),"ino":m.ino()}),
+        );
+        Ok(())
+    }
     pub fn admit(&self, record: &Recording) -> io::Result<()> {
         self.remembered(&record.path)?;
         if let Some(source) = &record.source {

@@ -178,14 +178,34 @@ pub fn plan(
         } else {
             record.source.as_deref().unwrap_or(&record.path)
         };
-        let source = owned_input(path, runtime).or_else(|_| {
-            let sent = if account == "default" {
-                home.join(".local/share/omagram/sent")
-            } else {
-                home.join(format!(".local/share/omagram/accounts/{account}/sent"))
-            };
-            owned_input(path, &sent)
-        })?;
+        let source = match state
+            .retained
+            .open_input(path)
+            .map_err(|_| "the retained recording is not available")?
+        {
+            Some(file) => {
+                let size = file
+                    .metadata()
+                    .map_err(|_| "the retained recording is not available")?
+                    .len();
+                if size == 0 || size > 512 * 1024 * 1024 {
+                    return Err("the retained recording is not available".into());
+                }
+                Upload {
+                    path: path.into(),
+                    size,
+                    file,
+                }
+            }
+            None => owned_input(path, runtime).or_else(|_| {
+                let sent = if account == "default" {
+                    home.join(".local/share/omagram/sent")
+                } else {
+                    home.join(format!(".local/share/omagram/accounts/{account}/sent"))
+                };
+                owned_input(path, &sent)
+            })?,
+        };
         let options = crate::sending::options(&record.args, state, now)?;
         return if record.status == Status::Rejected {
             Ok(Action::Recorded {

@@ -15,12 +15,14 @@ Rectangle {
   property bool resolveRecord: false
   property bool resolutionRequested: false
   property int themeRadius: 0
-  property bool ready: false
+  property bool settled: false
+  property string failure: ""
+  readonly property bool ready: settled && failure === ""
   property var main: null
   property var surface: null
   property int checks: 0
   property bool openRequested: false
-  function require(condition,reason) { if (!condition) throw new Error(reason); checks++ }
+  function require(condition,reason) { if (!condition) {failure=reason;throw new Error(reason)} checks++ }
   function findVisual(item,name) {
     if (item.objectName === name) return item
     for (var i=0;i<item.children.length;i++) {var found=findVisual(item.children[i],name);if(found)return found}
@@ -73,7 +75,7 @@ Rectangle {
       fixture.require(surface.visible === false,"Main surface must stay unshown")
       fixture.require(surface.contentItem.parent === fixture,"actual Main content subtree")
       fixture.require(app.accounts.length === 1 && app.activeAccount === "default","account snapshot missing")
-      fixture.ready = true
+      fixture.settled = true
       stop()
     }
   }

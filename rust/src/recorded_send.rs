@@ -77,6 +77,25 @@ impl Retained {
         let _ = self.persist(); // Keep live explicit resolution even on disk failure.
         Ok(())
     }
+    pub(crate) fn recover_capture(&mut self, record: Recording, file: &std::fs::File) {
+        if self.record.is_some() || self.recovery_error {
+            return; // Keep the original unresolved owner; caller retains raw bytes.
+        }
+        if self
+            .checkpoint
+            .as_ref()
+            .is_some_and(|c| c.pin_capture(&record.path, file).is_err())
+        {
+            self.recovery_error = true;
+            return;
+        }
+        // Unknown here means path/durability uncertainty, never native dispatch.
+        // Persist the pinned original identity even when the visible name changed.
+        self.dispatched
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.record = Some(record);
+        let _ = self.persist(); // Truthful live resolution survives a write failure.
+    }
     pub fn fail_preparation(&mut self, token: &str) {
         if let Some(record) = self.record.as_mut().filter(|r| r.token == token) {
             record.status = if self.dispatched.load(std::sync::atomic::Ordering::Relaxed) {
@@ -164,6 +183,12 @@ impl Retained {
             .as_mut()
             .filter(|r| r.token == token)
             .ok_or("that recorded message is no longer available")
+    }
+    pub(crate) fn open_input(&self, path: &str) -> std::io::Result<Option<std::fs::File>> {
+        self.checkpoint
+            .as_ref()
+            .map(|c| c.open_input(path))
+            .transpose()
     }
     pub fn retry(&mut self, token: &str) -> Result<bool, &'static str> {
         let r = self.checked(token)?;

@@ -1961,6 +1961,26 @@ impl Driver {
                 json!({"event":"recording","state":"idle","account":account}),
             ));
         }
+        if self
+            .capture
+            .as_mut()
+            .is_some_and(crate::capture::Capture::poll)
+        {
+            let mut capture = self.capture.take().expect("polled capture");
+            let account = capture.account.clone();
+            let record = capture.retain_stopped();
+            if let Some(owner) = self.runtime.engine.accounts.get_mut(&account) {
+                owner
+                    .state
+                    .retained
+                    .recover_capture(record, capture.owned_file());
+                effects.replies.push((
+                    0,
+                    json!({"event":"recording","state":"idle","account":account}),
+                ));
+                effects.replies.push((0, json!({"event":"recordedSend","account":account,"recordedSend":owner.state.retained.view(&account)})));
+            }
+        }
         self.file_openers.retain_mut(|(helper, _)| {
             !self.runtime.stopping && helper.poll().is_ok_and(|out| out.is_none())
         });
@@ -2285,6 +2305,372 @@ mod tests {
         );
         app.bridge.running = None;
         assert!(!Path::new(&format!("/proc/{new}")).exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn spontaneous_capture_exit_is_polled_retained_and_never_sent() {
+        let root =
+            std::env::temp_dir().join(format!("telebar-capture-exit-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let home = crate::storage::Storage::open(&root).unwrap();
+        let mut app = crate::application::Application::load(&home).unwrap();
+        let context = crate::session::Context::new(
+            root.clone(),
+            root.clone(),
+            Default::default(),
+            "en".into(),
+        )
+        .unwrap();
+        context.configure_application(&mut app).unwrap();
+        let mut driver = Driver::without_native("default".into(), "en".into());
+        driver
+            .register("default".into(), "Synthetic".into(), vec![])
+            .unwrap();
+        let account = driver.runtime.engine.accounts.get_mut("default").unwrap();
+        account.client = 41;
+        account.ready = true;
+        account
+            .state
+            .retained
+            .attach(crate::recording_checkpoint::Checkpoint::open(&root, &root, "default").unwrap())
+            .unwrap();
+        let capture = crate::capture::Capture::start_with(
+            &crate::capture::Context {
+                home: root.clone(),
+                runtime: root.clone(),
+                environment: Default::default(),
+            },
+            "default".into(),
+            1,
+            "voice",
+            101,
+            Some(
+                [
+                    "-re",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:duration=0.4",
+                ]
+                .map(str::to_owned)
+                .to_vec(),
+            ),
+        )
+        .unwrap();
+        let path = capture.path.clone();
+        let pid = capture.pid();
+        driver.capture = Some(capture);
+        let until = Instant::now() + Duration::from_secs(2);
+        let mut frames = Vec::new();
+        loop {
+            let effects = driver
+                .tick_application(&mut app, &home, &mut |_| panic!("no startup"))
+                .unwrap();
+            assert!(
+                effects.native.is_empty() && effects.work.is_empty(),
+                "natural exit must not send or prepare"
+            );
+            frames.extend(effects.replies.into_iter().map(|(_, frame)| frame));
+            if driver.capture.is_none() {
+                break;
+            }
+            assert!(
+                Instant::now() < until,
+                "spontaneous recorder exit remained recording"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame["event"] == "recording" && frame["state"] == "idle")
+        );
+        assert_eq!(app.diagnostic_runtime["recording"], false);
+        assert!(path.exists());
+        assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        let view = driver.runtime.engine.accounts["default"]
+            .state
+            .retained
+            .view("default");
+        assert_eq!(view["state"], "prepareFailed");
+        assert_eq!(view["chatId"], 101);
+        let token = view["token"].as_str().unwrap();
+        let original = path.with_extension("original");
+        std::fs::rename(&path, &original).unwrap();
+        std::fs::write(&path, b"substituted retry bytes").unwrap();
+        let plan = crate::recording_jobs::plan(
+            "recording.retry",
+            &json!({"token":token}),
+            &driver.runtime.engine.accounts["default"].state,
+            root.clone(),
+            &root,
+            "default",
+            0.0,
+        );
+        assert!(
+            plan.is_err(),
+            "retry admitted a substituted input descriptor"
+        );
+        assert!(
+            driver.jobs.active() == 0,
+            "no preparation or native send at rejection"
+        );
+        std::fs::remove_file(&path).unwrap();
+        std::fs::rename(&original, &path).unwrap();
+        assert!(
+            crate::recording_jobs::plan(
+                "recording.retry",
+                &json!({"token":token}),
+                &driver.runtime.engine.accounts["default"].state,
+                root.clone(),
+                &root,
+                "default",
+                0.0
+            )
+            .is_ok(),
+            "unchanged original can be explicitly retried"
+        );
+        let restored = crate::recording_checkpoint::Checkpoint::open(&root, &root, "default")
+            .unwrap()
+            .load()
+            .unwrap()
+            .unwrap();
+        assert_eq!(restored.token, token);
+        assert_eq!(restored.path, path.to_str().unwrap());
+        let request = Request::parse(
+            json!({"id":1,"cmd":"recording.discard","args":{"token":token}})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        let discarded = driver
+            .request_application(&mut app, &home, 7, request)
+            .unwrap();
+        assert!(
+            discarded
+                .replies
+                .iter()
+                .any(|(_, frame)| frame["id"] == 1 && frame["ok"] == true)
+        );
+        assert!(!path.exists());
+        if let Some(fixture) = std::env::var_os("TELEBAR_CAPTURE_EXIT_EXPORT") {
+            // Explicit development fixture preserves the exact Driver-generated
+            // checkpoint for native Socket/Main recovery checks, never dispatch.
+            let root = std::path::PathBuf::from(fixture);
+            let store = crate::storage::Storage::open(&root).unwrap();
+            let mut owner = Driver::without_native("default".into(), "en".into());
+            owner
+                .register("default".into(), "Synthetic UI".into(), vec![])
+                .unwrap();
+            let account = owner.runtime.engine.accounts.get_mut("default").unwrap();
+            account.client = 41;
+            account.ready = true;
+            account
+                .state
+                .retained
+                .attach(
+                    crate::recording_checkpoint::Checkpoint::open(&root, &root, "default").unwrap(),
+                )
+                .unwrap();
+            owner.capture = Some(
+                crate::capture::Capture::start_with(
+                    &crate::capture::Context {
+                        home: root.clone(),
+                        runtime: root.clone(),
+                        environment: Default::default(),
+                    },
+                    "default".into(),
+                    1,
+                    "voice",
+                    101,
+                    Some(
+                        [
+                            "-re",
+                            "-f",
+                            "lavfi",
+                            "-i",
+                            "sine=frequency=440:duration=0.2",
+                        ]
+                        .map(str::to_owned)
+                        .to_vec(),
+                    ),
+                )
+                .unwrap(),
+            );
+            let until = Instant::now() + Duration::from_secs(2);
+            while owner.capture.is_some() {
+                let effects = owner.tick(&mut |_| panic!("no startup")).unwrap();
+                assert!(effects.native.is_empty() && effects.work.is_empty());
+                assert!(Instant::now() < until);
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert_eq!(
+                owner.runtime.engine.accounts["default"]
+                    .state
+                    .retained
+                    .view("default")["state"],
+                "prepareFailed"
+            );
+            assert!(
+                store
+                    .read(".local/share/omagram/retained-recording-v1.json", 32768)
+                    .unwrap()
+                    .is_some()
+            );
+            owner
+                .runtime
+                .engine
+                .accounts
+                .get_mut("default")
+                .unwrap()
+                .client = 0;
+            owner.close(Duration::ZERO).unwrap();
+        }
+        let mut pids = vec![];
+        for fault in ["input", "root", "checkpoint"] {
+            let context = crate::capture::Context {
+                home: root.clone(),
+                runtime: root.clone(),
+                environment: Default::default(),
+            };
+            let capture = crate::capture::Capture::start_with(
+                &context,
+                "default".into(),
+                1,
+                "voice",
+                101,
+                Some(
+                    [
+                        "-re",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        "sine=frequency=440:duration=0.15",
+                    ]
+                    .map(str::to_owned)
+                    .to_vec(),
+                ),
+            )
+            .unwrap();
+            let relative = capture.path.strip_prefix(&root).unwrap().to_owned();
+            let raw = capture.path.clone();
+            let moved = root.with_extension("moved");
+            let mut original = None;
+            if fault == "input" {
+                let saved = raw.with_extension("original");
+                std::fs::rename(&raw, &saved).unwrap();
+                std::fs::write(&raw, b"foreign replacement").unwrap();
+                original = Some(saved);
+            } else if fault == "root" {
+                std::fs::rename(&root, &moved).unwrap();
+                std::fs::create_dir(&root).unwrap();
+                crate::storage::Storage::open(&root)
+                    .unwrap()
+                    .write(relative.to_str().unwrap(), b"foreign root", 0o600)
+                    .unwrap();
+            } else {
+                std::fs::remove_file(root.join(".local/share/omagram/retained-recording-v1.json"))
+                    .unwrap();
+                home.ensure_dir(".local/share/omagram/retained-recording-v1.json")
+                    .unwrap();
+            }
+            pids.push(capture.pid());
+            driver.capture = Some(capture);
+            let until = Instant::now() + Duration::from_secs(2);
+            while driver.capture.is_some() {
+                let effects = driver
+                    .tick_application(&mut app, &home, &mut |_| panic!("no startup"))
+                    .unwrap();
+                assert!(effects.native.is_empty() && effects.work.is_empty());
+                assert!(Instant::now() < until);
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let view = driver.runtime.engine.accounts["default"]
+                .state
+                .retained
+                .view("default");
+            let token = view["token"].as_str().unwrap();
+            if fault != "checkpoint" {
+                assert_eq!(view["state"], "unknown");
+                if fault == "input" {
+                    assert_eq!(
+                        crate::recording_checkpoint::Checkpoint::open(&root, &root, "default")
+                            .unwrap()
+                            .load()
+                            .unwrap()
+                            .unwrap()
+                            .status,
+                        crate::recorded_send::Status::Unknown
+                    );
+                } else {
+                    let saved: Value = serde_json::from_slice(
+                        &home
+                            .read(".local/share/omagram/retained-recording-v1.json", 32768)
+                            .unwrap()
+                            .unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(saved["state"], "unknown");
+                    assert_eq!(saved["input"]["path"], raw.to_str().unwrap());
+                    assert!(saved["input"]["ino"].as_u64().is_some());
+                }
+                assert_eq!(
+                    std::fs::read(&raw).unwrap(),
+                    if fault == "root" {
+                        b"foreign root".as_slice()
+                    } else {
+                        b"foreign replacement".as_slice()
+                    }
+                );
+            } else {
+                assert_eq!(view["state"], "prepareFailed");
+                assert!(raw.exists());
+                std::fs::remove_dir(root.join(".local/share/omagram/retained-recording-v1.json"))
+                    .unwrap();
+                driver.runtime.engine.accounts["default"]
+                    .state
+                    .retained
+                    .persist()
+                    .unwrap();
+            }
+            let request = Request::parse(
+                json!({"id":2,"cmd":"recording.discard","args":{"token":token}})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            let result = driver
+                .request_application(&mut app, &home, 7, request)
+                .unwrap();
+            assert!(
+                result
+                    .replies
+                    .iter()
+                    .any(|(_, f)| f["id"] == 2 && f["ok"] == true)
+            );
+            if fault == "checkpoint" {
+                assert!(!raw.exists());
+            }
+            if let Some(original) = original {
+                assert!(original.exists());
+            }
+            if fault == "root" {
+                assert!(moved.join(&relative).exists());
+                std::fs::remove_dir_all(&root).unwrap();
+                std::fs::rename(&moved, &root).unwrap();
+            }
+        }
+        for pid in pids {
+            assert!(!Path::new(&format!("/proc/{pid}")).exists());
+        }
+        driver
+            .runtime
+            .engine
+            .accounts
+            .get_mut("default")
+            .unwrap()
+            .client = 0;
+        driver.close(Duration::ZERO).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
