@@ -401,6 +401,25 @@ fn serve_daemon(with_parent: bool) -> io::Result<()> {
         false,
     )
 }
+fn refresh_loop_diagnostics(
+    app: &mut telebar_runtime::application::Application,
+    ipc_requests: u64,
+    socket_in_bytes: usize,
+    socket_out_bytes: usize,
+) {
+    // The socket owner must not reset the Driver's settled capture/worker/native
+    // state before a queued diagnostics.status request reads that state.
+    if !app.diagnostic_runtime.is_object() {
+        app.diagnostic_runtime = json!({});
+    }
+    app.diagnostic_runtime["event_queue"] = json!(0);
+    app.diagnostic_runtime["socket_in_bytes"] = json!(socket_in_bytes);
+    app.diagnostic_runtime["socket_out_bytes"] = json!(socket_out_bytes);
+    if !app.diagnostic_runtime["counts"].is_object() {
+        app.diagnostic_runtime["counts"] = json!({});
+    }
+    app.diagnostic_runtime["counts"]["ipc_requests"] = json!(ipc_requests);
+}
 fn serve_mode(
     directory: &Path,
     with_engine: bool,
@@ -666,7 +685,15 @@ fn serve_mode(
             Err(error) => return Err(error),
         }
         if let Some((_, app)) = &mut application {
-            app.diagnostic_runtime = json!({"event_queue":0,"task_queue":0,"recording":false,"oldest_td_ms":null,"td_idle_ms":null,"counts":{"ipc_requests":ipc_requests},"socket_in_bytes":peers.iter().map(|p|p.inbox.len()).sum::<usize>(),"socket_out_bytes":peers.iter().map(|p|p.outbox.len().saturating_sub(p.written)).sum::<usize>()});
+            refresh_loop_diagnostics(
+                app,
+                ipc_requests,
+                peers.iter().map(|p| p.inbox.len()).sum(),
+                peers
+                    .iter()
+                    .map(|p| p.outbox.len().saturating_sub(p.written))
+                    .sum(),
+            );
             if let Some(log) = &app.diagnostics {
                 log.progress(telebar_runtime::diagnostics::Phase::Ipc);
             }
@@ -773,4 +800,55 @@ fn serve_mode(
         driver.close(Duration::from_secs(5))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn socket_refresh_preserves_driver_diagnostics_for_normal_status_request() {
+        let root =
+            std::env::temp_dir().join(format!("telebar-loop-diagnostics-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let home = telebar_runtime::storage::Storage::open(&root).unwrap();
+        let mut app = telebar_runtime::application::Application::load(&home).unwrap();
+        let mut runtime = telebar_runtime::authorization::Runtime::new("default".into());
+        runtime
+            .register(
+                "default".into(),
+                "Synthetic".into(),
+                41,
+                vec![],
+                Instant::now(),
+            )
+            .unwrap();
+        app.diagnostic_runtime = json!({"recording":true,"playing":true,"jobs":2,"children":3,"task_queue":4,"td_idle_ms":27,"oldest_td_ms":11,"counts":{"td_events":9}});
+        refresh_loop_diagnostics(&mut app, 7, 12, 13);
+        let request = Request::parse(br#"{"id":1,"cmd":"diagnostics.status","args":{}}"#).unwrap();
+        let effects = app.request(&home, &mut runtime, 7, request);
+        let answer = &effects
+            .replies
+            .iter()
+            .find(|(_, r)| r["id"] == 1)
+            .unwrap()
+            .1;
+        assert_eq!(answer["ok"], true);
+        let view = &answer["result"];
+        for key in ["recording", "playing"] {
+            assert_eq!(view[key], true, "loop reset Driver-owned {key}");
+        }
+        for (key, value) in [
+            ("jobs", 2),
+            ("children", 3),
+            ("task_queue", 4),
+            ("td_idle_ms", 27),
+            ("oldest_td_ms", 11),
+            ("socket_in_bytes", 12),
+            ("socket_out_bytes", 13),
+        ] {
+            assert_eq!(view[key], value, "loop reset Driver-owned {key}");
+        }
+        assert_eq!(view["counts"], json!({"td_events":9,"ipc_requests":7}));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

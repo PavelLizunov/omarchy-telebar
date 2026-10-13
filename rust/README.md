@@ -413,6 +413,12 @@ the normal shared socket consumer: numeric redaction, immediate rate-limit refus
 process/peer identity, continued hello usability, and durable private log redaction.
 These no-library and official pre-parameter sessions use disposable roots with no
 credential startup or database parameters, not production watchdog acceptance.
+The socket loop refreshes only its own numeric counters. It does not replace
+Driver-owned recording, playback, helper-queue or native-event fields before
+processing status requests. An old-reset regression through the normal Application
+status consumer fails with `recording=false` despite settled owner state; the
+corrected incremental refresh preserves that state and both counter owners.
+This checks snapshot fidelity, not physical capture or every kernel timing path.
 
 `tests/inert_td.c` is a fixed synthetic four-symbol JSON-ABI consumer fixture,
 not official TDLib. Build it in a new private `lib/` directory with
