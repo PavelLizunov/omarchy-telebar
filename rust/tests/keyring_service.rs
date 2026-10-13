@@ -312,7 +312,70 @@ fn actual_private_keyring_and_driver_startup_preserve_account_key_identity() {
             .nonempty_directory(&format!(".local/share/omagram/accounts/{id}/database"))
             .unwrap()
     );
-    assert!(keyring.database_key(&id, &storage).is_ok());
+    let added_key = keyring.database_key(&id, &storage).unwrap();
+    let old_client = reopened.runtime.engine.accounts[&id].client;
+    let old_generation = reopened.runtime.engine.accounts[&id].generation;
+    let catalog = app.catalog.clone();
+    let untouched =
+        ["default", "other"].map(|account| reopened.runtime.engine.accounts[account].client);
+    let request = telebar_runtime::wire::Request::parse(
+        json!({"id":30,"cmd":"account.logout","args":{"accountId":id}})
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    let mut effects = reopened
+        .request_application(&mut app, &storage, 7, request)
+        .unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut acknowledged = false;
+    loop {
+        for (_, frame) in effects.replies {
+            if frame["id"] == 30 {
+                assert_eq!(
+                    frame["ok"], true,
+                    "official disposable logout reply {frame}"
+                );
+                acknowledged = true;
+            }
+        }
+        let account = &reopened.runtime.engine.accounts[&id];
+        if acknowledged
+            && account.client != old_client
+            && account.generation == old_generation + 1
+            && reopened.runtime.metadata[&id].auth["state"] == "phone"
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "official disposable closed client/reopen"
+        );
+        effects = reopened
+            .tick_application(&mut app, &storage, &mut |_| panic!("private async owner"))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(keyring.database_key(&id, &storage).unwrap(), added_key);
+    assert_eq!(app.catalog["active"], catalog["active"]);
+    assert_eq!(
+        app.catalog["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].clone())
+            .collect::<Vec<_>>(),
+        catalog["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        ["default", "other"].map(|account| reopened.runtime.engine.accounts[account].client),
+        untouched
+    );
     reopened.close(Duration::from_secs(5)).unwrap();
     assert_eq!(keyring.database_key("default", &storage).unwrap(), default);
     assert_eq!(keyring.database_key("other", &storage).unwrap(), other);
@@ -325,7 +388,7 @@ fn actual_private_keyring_and_driver_startup_preserve_account_key_identity() {
     let _ = (daemon_pid, bus_pid);
     println!(
         "{}",
-        json!({"actualSecretTool":true,"privateSecretService":true,"accountKeysPreserved":true,"asynchronousOfficialStartupAccounts":3,"sequentialDatabaseReopen":true,"accountAdd":true,"credentialsSetDriver":true,"replyBeforeRoutedStartup":true,"invalidSavePreservesCredentials":true,"authorization":"phone","workingProfiles":false,"realUserSecrets":false,"helpersReaped":true,"landlockFileUnixDeviceDenial":true,"systemHelperRootIdentity":true})
+        json!({"actualSecretTool":true,"privateSecretService":true,"accountKeysPreserved":true,"asynchronousOfficialStartupAccounts":3,"sequentialDatabaseReopen":true,"accountAdd":true,"credentialsSetDriver":true,"replyBeforeRoutedStartup":true,"invalidSavePreservesCredentials":true,"disposableLogoutAndRecreate":true,"logoutKeyCatalogIdentityPreserved":true,"authorization":"phone","workingProfiles":false,"realUserSecrets":false,"helpersReaped":true,"landlockFileUnixDeviceDenial":true,"systemHelperRootIdentity":true})
     );
     fs::remove_dir_all(root).unwrap();
 }

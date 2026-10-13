@@ -116,7 +116,11 @@ keys, sequentially reopen disposable databases and add a third account through
 the actual catalog/Driver. Both profiles first reach `needCredentials`; normal
 `credentials.set` requests use the real worker/keyring and acknowledge before
 restarting only the routed profile. Each then reaches `phone`, and malformed
-save input leaves the private stored credentials unchanged. A task-owned user service enforces AF_UNIX-only sockets;
+save input leaves the private stored credentials unchanged. Normal `account.logout`
+then closes only the third unauthorized disposable client; the Driver recreates
+its native client with a new generation, retains the same key/catalog identity
+and reaches `phone` again. This never signs out a working account. A task-owned
+user service enforces AF_UNIX-only sockets;
 the test verifies that IPv4/IPv6 socket creation fails. An identity-preserving
 Landlock ABI 9 launcher additionally denies file/device/pathname Unix sockets
 outside the new private tree. Existing external sentinel/socket and inert device
