@@ -986,11 +986,20 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           width: Style.space(28)
           height: Style.space(28)
+          activeFocusOnTab: true
+          Accessible.role: Accessible.Button
+          Accessible.name: "Open Telebar"
+          Accessible.onPressAction: quick.openInWindowRequested(0)
+          Keys.onReturnPressed: quick.openInWindowRequested(0)
+          Keys.onEnterPressed: quick.openInWindowRequested(0)
+          Keys.onSpacePressed: quick.openInWindowRequested(0)
 
           Rectangle {
             anchors.fill: parent
             radius: Style.cornerRadius
-            color: openOmagramArea.containsMouse ? Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.08) : "transparent"
+            border.width: openOmagram.activeFocus ? 1 : 0
+            border.color: quick.accent
+            color: openOmagramArea.containsMouse || openOmagramHintArea.containsMouse || openOmagram.activeFocus ? Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.08) : "transparent"
           }
           RingMark {
             anchors.centerIn: parent
@@ -1007,7 +1016,8 @@ Item {
         }
 
         Rectangle {
-          visible: openOmagramArea.containsMouse
+          objectName: "quick-open-window-label"
+          visible: openOmagramArea.containsMouse || openOmagramHintArea.containsMouse || openOmagram.activeFocus
           z: 2
           anchors.right: openOmagram.left
           anchors.rightMargin: Style.space(6)
@@ -1027,6 +1037,15 @@ Item {
             color: quick.text
             font.family: quick.fontFamily
             font.pixelSize: Style.font.caption
+          }
+          MouseArea {
+            id: openOmagramHintArea
+            anchors.fill: parent
+            // Include the gap to the mark so the hint remains clickable while crossing it.
+            anchors.rightMargin: -Style.space(6)
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: quick.openInWindowRequested(0)
           }
         }
 
@@ -1883,10 +1902,10 @@ Item {
 
       RecordedSendBar {
         Layout.fillWidth: true
-        visible: !!quick.service.recordedSend
+        visible: !!quick.service && !!quick.service.recordedSend
         app: quick
         client: quick.service
-        record: quick.service.recordedSend
+        record: quick.service ? quick.service.recordedSend : null
         onNotice: function (text) { quick.status = text }
       }
 

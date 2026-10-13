@@ -13,6 +13,7 @@ BarWidget {
   moduleName: "io.github.pavellizunov.telebar"
 
   readonly property string pluginId: "io.github.pavellizunov.telebar"
+  readonly property string iconRevision: "plane-v1"
 
   // The plugin's service entry, found through the bar's shell facade. The shell may create
   // services after bar widgets, so the lookup is retried until it succeeds.

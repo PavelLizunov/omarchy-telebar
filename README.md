@@ -176,7 +176,10 @@ The image above predates the Telebar rename.
   to it, and photos, videos and GIFs show as small sharp pictures that open
   over the whole screen (a video plays in your own video player). Scroll up for older messages.
   Close it in a chat and for the next hour it opens there again, with anything you had not sent;
-  Telebar's mark in its corner opens the whole window.
+  Telebar's mark in its corner and its visible **Open Telebar** label open the
+  whole window. Tab can focus the mark; Enter or Space activates it. In the compact
+  bar panel, a pending attachment, send or recording keeps the panel open so that
+  opening the window does not discard that composition.
   Sending text, files or recordings keeps the quick view open for another reply.
   Long messages remain scrollable in compact mode. Drag across message text and
   press `Ctrl+C` to copy only that fragment, including captions and rich-post text.
@@ -248,12 +251,35 @@ For an existing installation, save window and quick-reply compositions first.
 Preserve a code-only rollback outside watched plugin directories. Quit the exact
 backend through its supported route while it still owns its native clients,
 wait for process/socket retirement and verify the exclusive lock is available
-before opening those same profiles with Rust. Disabling a plugin can destroy its
-Process immediately; it is not proof of graceful TDLib shutdown. Stage outside
+before opening those same profiles with Rust. This single-owner handoff is for a
+backend/runtime migration, not a QML-only update of an unchanged Rust executable.
+Disabling a plugin can destroy its Process immediately; it is not proof of graceful
+TDLib shutdown. Stage outside
 the recursive plugin watcher and replace only the checked code coherently. Never
 copy live databases, run both owners, or restart the shared shell just to stop
 Telebar. Retain separate Qt recovery adaptations when present. Check installed
 hashes, loaded executable identity, account readiness and UI connections afterward.
+
+For a QML-only update on this host, `keepLoaded` can retain the previous QML service
+and same-URL module types after a rescan. Build a content-bound UI generation from
+the checked native package before installing the visual update:
+
+```sh
+python3 -B scripts/native_ui_generation.py "$HOME/telebar-native-package" "$HOME/telebar-native-ui-package"
+omarchy plugin validate "$HOME/telebar-native-ui-package"
+python3 -B tests/native_ui_generation_test.py
+```
+
+The generated package contains one unchanged Rust ELF and a hash-named QML visual
+closure. It is still Python-free; the Python script is a development packaging tool,
+not an installed application. Its manifest uses generation-specific QML entry
+points. Preserve the installed `bin/` inode, accounts and recovery adaptations.
+If an old QML service remains, recreate only the Telebar plugin through supported
+disable/enable after confirming that its pending work and drafts are empty or
+saved, restoring its original bar position. The independently managed Rust owner
+need not restart. Verify `io.github.pavellizunov.telebar.action status`, the native
+window-opening route and current account/lock identity; a successful copy is not
+proof that the generation is loaded. This tool neither installs nor reloads anything.
 
 The build takes about ten minutes and roughly 2 GB of memory per parallel job (it picks the
 job count from your memory). Nothing is installed system-wide and nothing needs root:

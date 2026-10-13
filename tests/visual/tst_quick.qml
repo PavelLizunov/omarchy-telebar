@@ -49,6 +49,31 @@ TestCase {
     compare(openSpy.count, 4)
     verify(openSpy.signalArguments[3][0] !== 0)
   }
+  function test_open_label_click_routes_same_action_as_mark() {
+    var view = createTemporaryObject(scene, tests, { compactMode: true })
+    tryCompare(view, "ready", true)
+    var quick = view.consumer
+    quick.back()
+    tryCompare(quick, "replyChatId", 0)
+    wait(30)
+    var mark = findChild(view, "openOmagram")
+    var label = findChild(view, "quick-open-window-label")
+    verify(label !== null)
+    openSpy.target = quick
+    mouseMove(mark, mark.width / 2, mark.height / 2)
+    tryCompare(label, "visible", true)
+    mouseClick(label, label.width / 2, label.height / 2)
+    compare(openSpy.count, 1, "The visible Open Telebar label must open the window")
+    compare(openSpy.signalArguments[0][0], 0)
+    mouseClick(mark, mark.width / 2, mark.height / 2)
+    compare(openSpy.count, 2)
+    compare(openSpy.signalArguments[1][0], 0)
+    mark.forceActiveFocus()
+    keyClick(Qt.Key_Space)
+    compare(openSpy.count, 3)
+    keyClick(Qt.Key_Return)
+    compare(openSpy.count, 4)
+  }
   function test_enter_keeps_open_and_failure_retains_draft() {
     var view = createTemporaryObject(scene, tests)
     tryCompare(view, "ready", true)

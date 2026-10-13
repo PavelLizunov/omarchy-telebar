@@ -1,5 +1,35 @@
 # Consumer visual review
 
+## Compact open-window action
+
+`prepare_panel_action_fixture.py` loads the actual Panel, its native controller
+and QuickView with synthetic requests. Only KeyboardPanel's window boundary and
+Commons I/O are inert; no production socket, launcher, devices or compositor
+is constructed. `tst_panel_action.qml` checks the pictured Open Telebar label and
+mark through the real parent handler, unavailable service, draft/attachment and
+pending-send retention. `tst_quick.qml` also covers Tab-focus activation, Enter
+and Space. These are fixture pointer/key checks, not physical user input.
+
+```sh
+python3 -B tests/visual/prepare_panel_action_fixture.py /absolute/new/action-fixture
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input /absolute/new/action-fixture/tests/visual/tst_panel_action.qml -import /absolute/new/action-fixture/imports -import /absolute/new/action-fixture/inert
+```
+
+The QML service has `launcherRuntime: "rust-native-v1"`; a previous kept instance
+without that marker is not verified just because its backend heartbeat is ready.
+The native-generation packaging check binds all QML/SVG and the adjusted service
+launcher root to the source; same-URL cache residency and retained services remain
+separate lifecycle concerns.
+
+For MCP use `imports/qs` plus fixture root, explicit dependencies, locale, radius
+0 or 8, DPR 1 or 2, `readyProperty: ready`, and `focusOpen: true`. The loaded bar
+panel exposes `io.github.pavellizunov.telebar.action status` with only revision,
+service state and composition-presence/count flags. `openWindow` follows the
+same parent/service route as the button; it is an explicit local UI action, not
+a status query. Use the existing shell instance and preserve active work. No
+text, attachment paths, account names or credentials are returned.
+
+
 ## Narrow-window list expansion
 
 `MainSidebarConsumer.qml` constructs the actual complete Main with `autoStart: false`,

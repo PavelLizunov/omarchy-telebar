@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
@@ -19,6 +20,33 @@ Panel {
   property var omagram: null
   readonly property var barIdentity: hostWidget || root
   readonly property int viewHeight: Style.space(560)
+  readonly property int actionRevision: 20261014
+
+  function openInWindow(chatId) {
+    if (!root.omagram) return false
+    if (chatId) root.omagram.openChat(chatId)
+    else root.omagram.openWindow()
+    // Closing puts away text, but attachments and in-flight work must stay owned.
+    if (!view.attachments.length && !view.sending && !view.recordingHere) root.close()
+    return true
+  }
+
+  function actionStatus() {
+    return JSON.stringify({ revision: root.actionRevision,
+      iconRevision: root.hostWidget ? root.hostWidget.iconRevision : "",
+      serviceReady: !!root.omagram && root.omagram.ready,
+      serviceConnected: !!root.omagram && root.omagram.connected,
+      launcherRuntime: root.omagram && root.omagram.launcherRuntime ? root.omagram.launcherRuntime : "unknown",
+      serviceDraftPresent: !!root.omagram && !!root.omagram.quickDraft,
+      opened: root.opened, draftPresent: view.replyChatId !== 0 && view.focusItem.text !== "",
+      attachments: view.attachments.length, sending: view.sending, recording: view.recordingHere })
+  }
+
+  IpcHandler {
+    target: root.moduleName + ".action"
+    function status(): string { return root.actionStatus() }
+    function openWindow(): string { return root.openInWindow(0) ? "requested" : "unavailable" }
+  }
 
   onOpenedChanged: {
     if (opened) view.reset(0)
@@ -51,12 +79,7 @@ Panel {
       onDismissRequested: root.close()
       onTabRequested: function (direction) { root.switchPanel(direction) }
       onFocusReturned: panel.beginFocusPrime()   // the full-screen view had the keyboard: take it back
-      onOpenInWindowRequested: function (chatId) {
-        if (!root.omagram) return
-        if (chatId) root.omagram.openChat(chatId)
-        else root.omagram.openWindow()
-        root.close()
-      }
+      onOpenInWindowRequested: function (chatId) { root.openInWindow(chatId) }
     }
   }
 }

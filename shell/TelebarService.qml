@@ -16,7 +16,8 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property int implementationRevision: 20261009
+  readonly property int implementationRevision: 20261014
+  readonly property string launcherRuntime: "rust-native-v1"
   readonly property string binDir: decodeURIComponent(String(Qt.resolvedUrl("../bin/")).replace("file://", ""))
 
   property var auth: ({ state: "connecting" })
