@@ -10,9 +10,10 @@ import sys
 import tempfile
 
 mode = sys.argv[4] if len(sys.argv) == 5 else "--keyring-fixture"
-assert mode in ("--keyring-fixture", "--send-fixture")
+assert mode in ("--keyring-fixture", "--send-fixture", "--voice-fixture")
 binary, library, sandbox = (pathlib.Path(p).resolve(strict=True) for p in sys.argv[1:4])
-sending = mode == "--send-fixture"
+voice = mode == "--voice-fixture"
+sending = mode in ("--send-fixture", "--voice-fixture")
 root = pathlib.Path(tempfile.mkdtemp(prefix="telebar-private-send-" if sending else "telebar-private-keyring-"))
 exposed = root / "exposed"
 exposed.mkdir(mode=0o700)
@@ -21,6 +22,10 @@ shutil.copyfile(binary, exposed / "test-keyring")
 (exposed / "lib").mkdir(mode=0o700)
 shutil.copyfile(library, exposed / "lib/libtdjson.so")
 (exposed / "lib/libtdjson.so").chmod(0o600)
+if voice:
+    for config in ("pipewire-voice.conf", "pulse-private.conf"):
+        shutil.copyfile(pathlib.Path(__file__).parent / config, exposed / config)
+        (exposed / config).chmod(0o600)
 sentinel = root / "external-sentinel"
 sentinel.write_bytes(b"inert non-secret external file")
 host = socket.socket(socket.AF_UNIX)
@@ -45,6 +50,9 @@ try:
         env["TELEBAR_PRIVATE_SEND"] = "1"
         env["TELEBAR_TEST_INERT_ABI"] = env["TELEBAR_TEST_TDLIB"]
         test = "actual_send_driver_acceptance_keeps_playback_inputs_and_originals"
+    if voice:
+        env["TELEBAR_PRIVATE_VOICE"] = "1"
+        test = "actual_voice_driver_uses_only_the_private_synthetic_pulse_source"
     result = subprocess.run([str(sandbox), str(exposed), str(exposed / "test-keyring"),
                              test, "--ignored", "--exact", "--nocapture"], env=env,
                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -58,7 +66,8 @@ try:
     assert result.returncode == 0, f"exact sandbox consumer exit {result.returncode}"
     print(json.dumps({"externalFileBaseline": True, "externalUnixBaseline": True,
                       "externalDenied": True, "deniedDeviceBaseline": True,
-                      "privateRoot": True, "bounded": True, "sendFixture": sending}))
+                      "privateRoot": True, "bounded": True, "sendFixture": sending,
+                      "voiceFixture": voice}))
 finally:
     host.close()
     shutil.rmtree(root)

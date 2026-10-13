@@ -173,6 +173,22 @@ bash rust/tests/run-send-driver.sh /absolute/exact/send_driver-test \
   /absolute/task-owned/libsendfixture.so /absolute/task-owned/keyring-sandbox
 ```
 
+`tests/run-voice-driver.sh` separately exercises the normal `voice.start` and
+`voice.stop` Driver routes against a private synthetic PipeWire/Pulse source.
+The actual Capture owner uses unchanged production ffmpeg Pulse input, session
+configuration, Opus conversion, duration/waveform and retained-recording dispatch.
+Duplicate and wrong-account stops are refused without replacing the recorder;
+explicit unsent stop and shutdown reap the observed child and remove only their
+raw inputs. One synthetic native send leaves playback bytes intact after close
+and unsent recovery. The graph uses finite Managed owners inside the existing
+identity-preserving confinement; root tool checks remain unchanged. This tests
+silent synthetic audio, not a physical microphone, audible output or Telegram.
+
+```sh
+bash rust/tests/run-voice-driver.sh /absolute/exact/send_driver-test \
+  /absolute/task-owned/libsendfixture.so /absolute/task-owned/keyring-sandbox
+```
+
 `tests/run-proxy-remote.sh` is a separate explicit public transport check, not part
 of inert/default tests. It permits host networking only inside a private namespace
 and sends one unauthenticated MTProto `req_pq_multi` through the actual Rust proxy,
