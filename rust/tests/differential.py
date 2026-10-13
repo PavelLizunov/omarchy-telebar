@@ -226,6 +226,7 @@ def corpus():
                 self._state.apply(update)
             self.answer = answer
             self.answers = None
+            self.strict_native_errors = False
             self.td = type("InertTd", (), {"execute": lambda self, query: None})()
             self.error = None
             self.queries = []
@@ -252,6 +253,12 @@ def corpus():
         def td_send(self, query, client=None, rid=None, transform=None, **kwargs):
             self.queries.append(query)
             answer = self.answers.pop(0) if self.answers else self.answer
+            if self.strict_native_errors and answer.get("@type") == "error":
+                # Match Daemon.handle_td, not a success transform applied to an
+                # error object. Only the explicit supplement enables this path;
+                # the historical frozen oracle stays byte-for-byte reproducible.
+                self.respond_error(client, rid, answer.get("message", ""), answer.get("code", 0))
+                return
             if answer.get("@type") == "error" and kwargs.get("failed"):
                 kwargs["failed"](answer)
                 return
@@ -424,18 +431,47 @@ def corpus():
         for samples in [1, 3, 100]:
             levels = helpers.levels_from_pcm(pcm, samples)
             add("media_helper", {"kind": "pcm", "samples": samples, "data": base64.b64encode(pcm).decode()}, {"levels": levels, "packed": base64.b64encode(helpers.waveform_bytes(levels)).decode()})
+    if len(sys.argv) > 1 and sys.argv[1] == "--valid-command-corpus":
+        # A distinct supplement; never regenerate or silently change the frozen
+        # baseline. These routes formerly had only malformed/error examples.
+        bot = [{"@type": "updateUser", "user": {"@type": "user", "id": 7, "first_name": "Synthetic", "type": {"@type": "userTypeBot"}}}, {"@type": "updateNewChat", "chat": {"@type": "chat", "id": 43, "title": "Synthetic bot", "type": {"@type": "chatTypePrivate", "user_id": 7}}}]
+        secret = [{"@type": "updateNewChat", "chat": {"@type": "chat", "id": 45, "title": "Synthetic secret", "type": {"@type": "chatTypeSecret", "user_id": 7, "secret_chat_id": 6}}}]
+        folders = [{"@type": "updateChatFolders", "chat_folders": [{"@type": "chatFolderInfo", "id": i, "name": {"text": {"text": str(i)}}} for i in [10, 2]], "main_chat_list_position": 1}]
+        supplements = [
+            ("bot.start", {"chatId": 43, "parameter": "synthetic"}, bot, answer),
+            ("secret.close", {"chatId": 45}, secret, {"@type": "ok"}),
+            ("thread.history", {"chatId": 42, "threadId": 8, "limit": 20, "offset": -5}, warmup, {"@type": "messages", "messages": [{"@type": "message", "chat_id": 42, "id": 13, "content": {"@type": "messageText", "text": {"text": "synthetic thread"}}}]}),
+            ("folder.save", {"name": "Synthetic", "includeGroups": True, "icon": "Work", "colorId": 3, "included": [42, 43, 42], "excluded": [44]}, warmup, {"@type": "chatFolderInfo", "id": 10}),
+            ("folder.save", {"id": 10, "name": "Synthetic", "includeGroups": True}, folders, {"@type": "chatFolderInfo", "id": 10}),
+            ("folders.reorder", {"ids": [2, 10]}, folders, {"@type": "ok"}),
+            *[("proxy.add", dict({"server": "127.0.0.1", "port": 123, "type": kind}, **options), [], {"@type": "addedProxy", "id": 9, "is_enabled": True, "proxy": {"@type": "proxy", "server": "127.0.0.1", "port": 123, "type": {"@type": "proxyTypeSocks5"}}}) for kind, options in [("socks5", {"username": "synthetic", "password": "fixture"}), ("http", {"httpOnly": True}), ("mtproto", {"secret": "0123456789abcdef0123456789abcdef"})]],
+        ]
+        cases = []
+        for command, args, initial, response in supplements:
+            for outcome in [response, {"@type": "error", "code": 400, "message": "synthetic refusal"}]:
+                oracle = Oracle(initial, outcome)
+                oracle.strict_native_errors = True
+                try:
+                    getattr(oracle, backend.COMMANDS[command][0])(object(), 1, args)
+                    expected = {"queries": oracle.queries}
+                    expected["error" if oracle.error else "result"] = oracle.error if oracle.error else oracle.result
+                except backend.BadRequest as error:
+                    expected = {"error": str(error)}
+                add("command", {"command": command, "args": args, "updates": initial, "answer": outcome}, expected)
     return cases
 
 
 def main():
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: differential.py <exact-built-Rust-binary>|--emit-corpus")
+    supplement = len(sys.argv) == 3 and sys.argv[1] == "--valid-command-corpus"
+    if len(sys.argv) != 2 and not supplement:
+        raise SystemExit("Usage: differential.py [--valid-command-corpus] <exact-built-Rust-binary>|--emit-corpus")
     cases = corpus()
-    if sys.argv[1] == "--emit-corpus":
+    binary = sys.argv[2] if supplement else sys.argv[1]
+    if binary == "--emit-corpus":
         for case in cases:
             print(json.dumps(case, ensure_ascii=False, separators=(",", ":")))
         return 0
-    process = subprocess.run([sys.argv[1], "--project"], input="".join(json.dumps({k: v for k, v in c.items() if k != "expected"}, ensure_ascii=False) + "\n" for c in cases).encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=True)
+    process = subprocess.run([binary, "--project"], input="".join(json.dumps({k: v for k, v in c.items() if k != "expected"}, ensure_ascii=False) + "\n" for c in cases).encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=True)
     actual = [json.loads(line) for line in process.stdout.splitlines()]
     if len(actual) != len(cases):
         raise AssertionError(f"response count {len(actual)} != {len(cases)}")

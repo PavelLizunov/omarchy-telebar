@@ -552,6 +552,25 @@ or disabling verification. This proves one public preauthorization relay, not
 working-account authorization, all DC/failure scenarios or recovery under a real
 Telegram session. No release gate or installed owner changed.
 
+The frozen baseline's six error-only projection routes now have a separate
+18-input valid success/rejection supplement: bot start, folder save/reorder,
+proxy add, secret close and thread history. Both fresh Python comparison and
+independent frozen-supplement replay pass. Supplement errors follow the owning
+Python `handle_td` policy before transforms, not the historical oracle's success
+transform on an error. Baseline expectations are unchanged. Valid thread-history
+comparison exposed an unsupported native query field: the pinned official schema
+and Python use `message_id`, not `message_thread_id`. The corrected Engine test
+also rejects wrong-account/duplicate callbacks and expired reused-request IDs.
+This closes those six projection gaps, not complete valid behavior for all170.
+
+Official TDLib also preserves saved/prior proxy IDs across close/reopen of two
+unauthorized disposable databases and restores the actual Rust bridge through
+native list/edit continuations. Disabling restores the prior proxies and reaps
+the owned child. Injected database keys remain unchanged; both accounts stay at
+phone with no network, working profiles, authorization or Telegram sends. This
+separate evidence complements synthetic delayed-child-loss and public resPQ;
+none of these alone establishes production-account cutover readiness.
+
 ## Acceptance and remaining scope
 
 Format, Clippy, Rust unit/integration tests and differential corpora must run

@@ -614,7 +614,7 @@ pub fn plan(command: &str, args: &Value, state: &State) -> Result<Action> {
             } else {
                 let tid = number(arg_int(args, "threadId", Some(1), None, None)?);
                 (
-                    json!({"@type":"getMessageThreadHistory","chat_id":cid,"message_thread_id":tid}),
+                    json!({"@type":"getMessageThreadHistory","chat_id":cid,"message_id":tid}),
                     json!({"chatId":cid,"threadId":tid}),
                 )
             };

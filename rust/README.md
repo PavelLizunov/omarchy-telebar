@@ -186,6 +186,38 @@ TELEBAR_TEST_PROXY_BINARY=/absolute/exact/telebar-runtime \
   -- --ignored --exact
 ```
 
+## Supplementary valid commands and official proxy persistence
+
+The frozen baseline remains 21,136 inputs. A separate 18-input supplement covers
+valid success and native rejection for the six formerly error-only projection
+routes: bot start, folder create/edit/reorder, proxy types, secret close and thread
+history. Its error oracle follows `Daemon.handle_td` before success transforms;
+that opt-in correction does not rewrite historical baseline expectations. Engine
+checks independently cover wrong-account replies, terminal error codes, duplicate
+callbacks and expired/reused IDs. The pinned official schema and Python consumer
+both use `getMessageThreadHistory.message_id`; the native planner now preserves
+that field rather than sending the unsupported `message_thread_id`.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked --offline --test valid_commands
+bash rust/tests/run-differential.sh /absolute/exact/telebar-runtime --valid-command-corpus
+python3 -B rust/tests/replay-corpus.py /absolute/exact/telebar-runtime --valid-command-corpus
+```
+
+`tests/native_proxy.rs` separately creates two unauthorized disposable encrypted
+TDLib profiles without network, adds a prior loopback proxy, enables the actual
+owned Rust bridge, closes/reopens the same temporary databases with injected keys
+and restores saved bridge IDs through official `getProxies` and `editProxy`.
+Disabling restores each original prior proxy and reaps the child. Both accounts
+remain at `phone`; no authorization, messages or working-profile access occurs.
+This is actual native proxy persistence, not working-account/network acceptance.
+
+```sh
+cargo test --manifest-path rust/Cargo.toml --locked --offline --test native_proxy --no-run
+bash rust/tests/run-native-proxy.sh /absolute/exact/native_proxy-test \
+  /absolute/verified/lib/libtdjson.so /absolute/exact/telebar-runtime
+```
+
 ## Implemented helper entry points
 
 The candidate implements `--launch`, `--host-window`, `--daemon`, `--menu`,
