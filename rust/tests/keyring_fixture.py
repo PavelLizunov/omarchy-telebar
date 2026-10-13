@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 """Bounded outer negative-control consumer; never receives user credentials."""
+import hashlib
 import json
 import pathlib
 import selectors
@@ -22,6 +23,20 @@ shutil.copyfile(binary, exposed / "test-keyring")
 (exposed / "lib").mkdir(mode=0o700)
 shutil.copyfile(library, exposed / "lib/libtdjson.so")
 (exposed / "lib/libtdjson.so").chmod(0o600)
+if mode == "--keyring-fixture":
+    # Explicit test-only producer inputs, never packaged or installed code.
+    source = pathlib.Path(__file__).resolve().parents[2]
+    oracle = exposed / "legacy-oracle"
+    oracle.mkdir(mode=0o700)
+    hashes = {}
+    for name in ("omagram_td.py", "plugin_safety.py"):
+        data = (source / "bin" / name).read_bytes()
+        assert len(data) <= 128 * 1024
+        (oracle / name).write_bytes(data)
+        hashes[name] = hashlib.sha256(data).hexdigest()
+    (oracle / "source-hashes.json").write_text(json.dumps(hashes))
+    script = pathlib.Path(__file__).with_name("legacy_profile_handoff.py")
+    shutil.copyfile(script, oracle / "handoff.py")
 if voice:
     for config in ("pipewire-voice.conf", "pulse-private.conf"):
         shutil.copyfile(pathlib.Path(__file__).parent / config, exposed / config)

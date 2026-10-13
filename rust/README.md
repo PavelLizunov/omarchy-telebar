@@ -129,6 +129,17 @@ pseudo-devices and narrow non-secret passwd/machine/seat metadata are admitted;
 no host bus/key directories are accessible. Both helpers are reaped.
 Root/helper trust is not relaxed
 for a user namespace, and no production route is added for these tests.
+The optional legacy handoff control uses only two explicit frozen development
+oracle files. Rust's exact ownership lock first refuses Python before credential
+or database access. After both native clients close and their owner drops, Python
+opens the same unauthorized disposable databases with the existing private keys,
+closes them, and Rust reopens with the same catalog and lock inode. This official
+private three-stage transition passes. Initial reduced Python oracle attempts
+failed at parameter readiness because they omitted the legacy daemon's initial
+`getOption(version)` activation of lazy clients. Restoring that inspected startup
+shape passed without changing native runtime behavior or relaxing containment.
+No open database is copied. Python is not packaged or used by the native application.
+Working authorized account transition remains a separate cutover requirement.
 
 `tests/host_keyring_readonly.rs` is a separate explicit ignored host-acceptance
 check. Given only the current catalog account IDs and existing session bus, the
