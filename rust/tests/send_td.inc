@@ -21,6 +21,7 @@ static int fixture_resources(int client,const char *type,json_object *query,json
     if(!strcmp(type,"getMessage")) {
         if(!fixture_input) {abort();} json_object *m=json_tokener_parse("{\"@type\":\"message\",\"id\":77,\"chat_id\":101,\"content\":{\"@type\":\"messageDocument\",\"document\":{\"@type\":\"document\"}}}");json_object_object_add(get(get(m,"content"),"document"),"document",json_object_get(fixture_input));publish(client,json_object_to_json_string_ext(m,JSON_C_TO_STRING_PLAIN),extra);json_object_put(m);return 1;
     }
+    if(!strcmp(type,"openMessageContent")) {publish(client,"{\"@type\":\"ok\"}",extra);return 1;}
     if(!strcmp(type,"getMessageProperties")) {publish(client,"{\"@type\":\"messageProperties\",\"can_be_saved\":true}",extra);return 1;}
     if(!strcmp(type,"getStorageStatisticsFast")) {publish(client,"{\"@type\":\"storageStatisticsFast\",\"files_size\":19,\"file_count\":1,\"database_size\":23,\"log_size\":0}",extra);return 1;}
     if(!strcmp(type,"optimizeStorage")) {publish(client,"{\"@type\":\"storageStatistics\",\"size\":42}",extra);return 1;}

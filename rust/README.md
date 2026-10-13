@@ -190,7 +190,14 @@ Duplicate and wrong-account stops are refused without replacing the recorder;
 explicit unsent stop and shutdown reap the observed child and remove only their
 raw inputs. One synthetic native send leaves playback bytes intact after close
 and unsent recovery. The graph uses finite Managed owners inside the existing
-identity-preserving confinement; root tool checks remain unchanged. This tests
+identity-preserving confinement; root tool checks remain unchanged. The same
+fixture now unifies normal `media.play`/`media.stop` and `sounds.play` requests
+with actual ffplay and pw-play streams linked to its private null sink. It verifies
+player/sound reaping and unchanged recording bytes, not audible device output.
+Sound launch supplies explicit `--playback`: verified canonical resolution turns
+`pw-play` into `pw-cat`, whose mode must not depend on the original executable
+name. The earlier direct-name null-sink test did not exercise that production
+launch contract; the normal Driver output check now does. This tests
 silent synthetic audio, not a physical microphone, audible output or Telegram.
 Normal Driver polling also retires spontaneous recorder completion or its finite
 helper deadline. It keeps the original raw input and persists `prepareFailed`

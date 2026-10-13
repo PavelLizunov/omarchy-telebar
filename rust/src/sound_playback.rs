@@ -117,6 +117,7 @@ impl Prepared {
         Managed::start(
             "/usr/bin/pw-play",
             &[
+                "--playback", // Canonical executable is pw-cat; do not depend on argv[0].
                 "--media-role",
                 "Notification",
                 &format!("/proc/{}/fd/{}", std::process::id(), self.file.as_raw_fd()),

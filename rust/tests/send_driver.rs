@@ -687,6 +687,70 @@ impl VoiceGraph {
         );
         output.stdout
     }
+    fn link_output(
+        &self,
+        binary: &str,
+        driver: &mut Driver,
+        app: &mut Application,
+        home: &Storage,
+    ) -> u32 {
+        let until = Instant::now() + Duration::from_secs(3);
+        let mut last = Value::Null;
+        loop {
+            assert!(
+                Instant::now() < until,
+                "private output node readiness: {binary}; nodes={last}; diagnostics={}",
+                app.diagnostic_runtime
+            );
+            driver
+                .tick_application(app, home, &mut |_| panic!("no parameters"))
+                .unwrap();
+            let dump: Value = serde_json::from_slice(&self.run("/usr/bin/pw-dump", &[])).unwrap();
+            last = Value::Array(
+                dump.as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|n| n["type"] == "PipeWire:Interface:Node")
+                    .map(|n| n["info"]["props"].clone())
+                    .collect(),
+            );
+            if let Some(node) = dump.as_array().unwrap().iter().find(|n| {
+                n["type"] == "PipeWire:Interface:Node"
+                    && (n["info"]["props"]["application.process.binary"] == binary
+                        || n["info"]["props"]["application.name"] == binary)
+                    && n["info"]["props"]["media.class"] == "Stream/Output/Audio"
+            }) {
+                let id = node["id"].as_u64().unwrap().to_string();
+                let name = node["info"]["props"]["node.name"].as_str().unwrap();
+                let client = dump
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|c| {
+                        c["type"] == "PipeWire:Interface:Client"
+                            && c["id"] == node["info"]["props"]["client.id"]
+                    })
+                    .unwrap();
+                let raw_pid = &client["info"]["props"]["application.process.id"];
+                let pid = raw_pid
+                    .as_u64()
+                    .or_else(|| raw_pid.as_str()?.parse().ok())
+                    .and_then(|n| u32::try_from(n).ok())
+                    .unwrap();
+                self.run("/usr/bin/pw-cli",&["set-param",&id,"PortConfig","{ direction = Output mode = dsp format = { mediaType = audio mediaSubtype = raw format = F32P rate = 48000 channels = 1 position = [ MONO ] } }"]);
+                let ports = String::from_utf8(self.run("/usr/bin/pw-link", &["-o"])).unwrap();
+                if let Some(port) = ports
+                    .lines()
+                    .map(str::trim)
+                    .find(|p| p.starts_with(&format!("{name}:")))
+                {
+                    self.run("/usr/bin/pw-link", &[port, "telebar-null:playback_FL"]);
+                    return pid;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
     fn link_capture(&self) -> u32 {
         let until = Instant::now() + Duration::from_secs(3);
         loop {
@@ -775,7 +839,17 @@ fn actual_voice_driver_uses_only_the_private_synthetic_pulse_source() {
     let sources =
         String::from_utf8(graph.run("/usr/bin/pactl", &["list", "short", "sources"])).unwrap();
     assert!(sources.contains("telebar-source"));
-    assert_eq!(sources.lines().count(), 1, "no host/device audio sources");
+    let names = sources
+        .lines()
+        .map(|line| line.split_whitespace().nth(1).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(names.len(), 2, "only private source and null monitor");
+    assert!(
+        names
+            .iter()
+            .all(|name| matches!(*name, "telebar-source" | "telebar-null.monitor")),
+        "no host/device audio sources"
+    );
     graph.run("/usr/bin/pactl", &["set-default-source", "telebar-source"]);
     let session = telebar_runtime::session::Context::new(
         root.clone(),
@@ -962,6 +1036,62 @@ fn actual_voice_driver_uses_only_the_private_synthetic_pulse_source() {
         1,
         "one synthetic send only"
     );
+    graph.run("/usr/bin/pactl", &["set-default-sink", "telebar-null"]);
+    let mut action = Some(Action::Native {
+        query: json!({"@type":"getOption","name":"telebarFixtureInput","fixture_file":{"@type":"file","id":100,"size":bytes.len(),"local":{"@type":"localFile","path":playback,"is_downloading_completed":true,"downloaded_size":bytes.len()}}}),
+        answer: Answer::Empty,
+    });
+    let effects = driver
+        .request_with_local(
+            7,
+            request(69, "chat.history", json!({"chatId":101})),
+            &mut |_, _, _| Some(Ok(action.take().unwrap())),
+        )
+        .unwrap();
+    let frames = collect(&mut driver, &mut app, &home, 69, effects);
+    assert_eq!(reply(&frames, 69)["ok"], true);
+    let played = command(
+        &mut driver,
+        &mut app,
+        &home,
+        80,
+        "media.play",
+        json!({"fileId":100,"chatId":101,"messageId":11}),
+    );
+    assert_eq!(reply(&played, 80)["ok"], true);
+    assert!(
+        played
+            .iter()
+            .any(|f| f["event"] == "playing" && f["fileId"] == 100)
+    );
+    let player = graph.link_output("ffplay", &mut driver, &mut app, &home);
+    let stopped = command(&mut driver, &mut app, &home, 81, "media.stop", json!({}));
+    assert_eq!(reply(&stopped, 81)["ok"], true);
+    assert_capture_reaped(player);
+    assert_eq!(fs::read(&playback).unwrap(), bytes);
+    app.settings.value["sounds"] = json!({"style":"pop","variants":{}});
+    let sound = command(
+        &mut driver,
+        &mut app,
+        &home,
+        82,
+        "sounds.play",
+        json!({"userId":900}),
+    );
+    assert_eq!(reply(&sound, 82)["ok"], true);
+    let player = graph.link_output("pw-cat", &mut driver, &mut app, &home);
+    let until = Instant::now() + Duration::from_secs(3);
+    loop {
+        driver
+            .tick_application(&mut app, &home, &mut |_| panic!("no parameters"))
+            .unwrap();
+        if app.diagnostic_runtime["children"] == 0 && app.diagnostic_runtime["jobs"] == 0 {
+            break;
+        }
+        assert!(Instant::now() < until, "actual sound output retire");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_capture_reaped(player);
     let before = files(&root.join(".local/share/omagram/sent"));
     let start = command(
         &mut driver,
@@ -1041,6 +1171,6 @@ fn actual_voice_driver_uses_only_the_private_synthetic_pulse_source() {
         assert_capture_reaped(pid);
     }
     println!(
-        "private Pulse source; normal voice.start/stop; Opus/waveform; explicit stop/shutdown reap; synthetic native send; retained playback PASS"
+        "private Pulse source; normal voice.start/stop; Opus/waveform; normal media.play/stop ffplay and sounds.play pw-play null sink; explicit stop/shutdown reap; synthetic native send; retained playback PASS"
     );
 }
