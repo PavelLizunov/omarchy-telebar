@@ -336,6 +336,164 @@ fn actual_send_driver_acceptance_keeps_playback_inputs_and_originals() {
             "fixture actual dispatch count"
         );
     }
+    // Actual protected export/save and cache Driver routes use only explicitly
+    // injected local file metadata. The synthetic ABI never reads the paths.
+    let configure = |driver: &mut Driver, app: &mut Application, id: u64, path: &Path| {
+        let mut action = Some(Action::Native {
+            query: json!({"@type":"getOption","name":"telebarFixtureInput","fixture_file":{"@type":"file","id":100,"size":1,"local":{"@type":"localFile","path":path,"is_downloading_completed":true,"downloaded_size":1}}}),
+            answer: Answer::Empty,
+        });
+        let effects = driver
+            .request_with_local(
+                7,
+                request(id, "chat.history", json!({"chatId":101})),
+                &mut |_, _, _| Some(Ok(action.take().unwrap())),
+            )
+            .unwrap();
+        let frames = collect(driver, app, &home, id, effects);
+        assert_eq!(reply(&frames, id)["ok"], true);
+    };
+    home.write(
+        ".local/share/omagram/files/export.txt",
+        b"synthetic export bytes",
+        0o600,
+    )
+    .unwrap();
+    let export = root.join(".local/share/omagram/files/export.txt");
+    configure(&mut driver, &mut app, 40, &export);
+    for rid in [41, 42] {
+        let frames = command(
+            &mut driver,
+            &mut app,
+            &home,
+            rid,
+            "file.save",
+            json!({"chatId":101,"messageId":77,"fileId":100,"fileName":"saved.txt"}),
+        );
+        assert_eq!(reply(&frames, rid)["ok"], true);
+        let target = reply(&frames, rid)["result"]["path"].as_str().unwrap();
+        assert_eq!(fs::read(target).unwrap(), b"synthetic export bytes");
+    }
+    assert_eq!(fs::read(&export).unwrap(), b"synthetic export bytes");
+    home.ensure_dir(".local/share/applications").unwrap();
+    home.write(".local/share/applications/inert.desktop",b"[Desktop Entry]\nType=Application\nName=Inert read\nExec=/usr/bin/cat %f\nMimeType=text/plain;\n",0o600).unwrap();
+    home.write(
+        ".config/mimeapps.list",
+        b"[Default Applications]\ntext/plain=inert.desktop\n",
+        0o600,
+    )
+    .unwrap();
+    app.clipboard_context.as_mut().unwrap().environment = std::collections::BTreeMap::from([
+        ("HOME".into(), root.to_str().unwrap().into()),
+        (
+            "XDG_CONFIG_HOME".into(),
+            root.join(".config").to_str().unwrap().into(),
+        ),
+        (
+            "XDG_DATA_HOME".into(),
+            root.join(".local/share").to_str().unwrap().into(),
+        ),
+        (
+            "XDG_DATA_DIRS".into(),
+            root.join(".local/share").to_str().unwrap().into(),
+        ),
+        ("XDG_CURRENT_DESKTOP".into(), "generic".into()),
+        ("DE".into(), "generic".into()),
+        ("WAYLAND_DISPLAY".into(), "fixture-no-socket".into()),
+    ]);
+    let opened = command(
+        &mut driver,
+        &mut app,
+        &home,
+        43,
+        "file.open",
+        json!({"fileId":100}),
+    );
+    assert_eq!(reply(&opened, 43)["ok"], true);
+    let until = Instant::now() + Duration::from_secs(3);
+    while app.diagnostic_runtime["children"].as_u64().unwrap_or(0) > 0 {
+        assert!(Instant::now() < until);
+        driver
+            .tick_application(&mut app, &home, &mut |_| panic!("no startup"))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let compressed = telebar_runtime::process::run(
+        "/usr/bin/gzip",
+        &["-c"],
+        &Default::default(),
+        br#"{"v":"5.5","layers":[]}"#,
+        Duration::from_secs(2),
+        4096,
+    )
+    .unwrap();
+    assert!(compressed.ok());
+    home.write(
+        ".local/share/omagram/files/sticker.tgs",
+        &compressed.stdout,
+        0o600,
+    )
+    .unwrap();
+    let sticker = root.join(".local/share/omagram/files/sticker.tgs");
+    configure(&mut driver, &mut app, 44, &sticker);
+    let inflated = command(
+        &mut driver,
+        &mut app,
+        &home,
+        45,
+        "sticker.lottie",
+        json!({"fileId":100}),
+    );
+    assert_eq!(reply(&inflated, 45)["ok"], true);
+    let cached = reply(&inflated, 45)["result"]["path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(fs::read(&cached).unwrap(), br#"{"v":"5.5","layers":[]}"#);
+    let stats = command(&mut driver, &mut app, &home, 46, "storage.stats", json!({}));
+    assert_eq!(reply(&stats, 46)["ok"], true);
+    assert_eq!(reply(&stats, 46)["result"]["filesSize"], 19);
+    assert_eq!(reply(&stats, 46)["result"]["stickerCacheSize"], 23);
+    configure(&mut driver, &mut app, 47, Path::new(&note_path));
+    let animated = command(
+        &mut driver,
+        &mut app,
+        &home,
+        48,
+        "videonote.animation",
+        json!({"fileId":100}),
+    );
+    assert_eq!(reply(&animated, 48)["ok"], true);
+    let animation = reply(&animated, 48)["result"]["path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(reply(&animated, 48)["result"]["fps"], 20);
+    assert_eq!(telebar_runtime::media::probe(&animation)[1..], [240, 240]);
+    let clear = command(&mut driver, &mut app, &home, 49, "storage.clear", json!({}));
+    assert_eq!(reply(&clear, 49)["ok"], true);
+    assert_eq!(reply(&clear, 49)["result"]["remaining"], 42);
+    assert!(!Path::new(&cached).exists());
+    assert!(Path::new(&animation).exists() && Path::new(&note_path).exists());
+    let listed = command(&mut driver, &mut app, &home, 50, "account.list", json!({}));
+    assert_eq!(reply(&listed, 50)["ok"], true);
+    assert_eq!(reply(&listed, 50)["result"]["active"], "default");
+    assert_eq!(
+        reply(&listed, 50)["result"]["accounts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let sound = command(
+        &mut driver,
+        &mut app,
+        &home,
+        51,
+        "sounds.play",
+        json!({"userId":900}),
+    );
+    assert_eq!(reply(&sound, 51)["ok"], true); // Actual private audio output has its separate consumer; no host PipeWire here.
     let retained = files(&root.join(".local/share/omagram/sent"));
     assert_eq!(retained.len(), 5);
     driver.close(Duration::from_secs(2)).unwrap();

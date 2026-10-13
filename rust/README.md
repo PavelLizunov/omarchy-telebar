@@ -156,8 +156,13 @@ An explicit `TELEBAR_SEND_FIXTURE` C build is the only fixture accepting these
 local mutations; the default `inert_td.c` still refuses them. The fixture never
 reads input paths, contacts Telegram or loads official TDLib. The send wrapper
 reuses the root-identity-preserving Landlock/AF_UNIX confinement above. Final
-media remains playable after native-owner close and unsent cleanup. These checks
-do not establish real Telegram sends or physical recording/playback acceptance.
+media remains playable after native-owner close and unsent cleanup. The same
+confined actual Driver also checks protected Downloads save/name collision,
+explicit inert `xdg-open` lifecycle, sticker inflation, storage stats/clear,
+round-video animation/cache, account listing and sound-request admission. Cache
+clear preserves generated/sent media and selected originals; native replies are
+still synthetic, not actual TDLib storage deletion. These checks do not establish
+real Telegram sends, host opener/audio output or physical recording/playback.
 
 ```sh
 cargo test --manifest-path rust/Cargo.toml --locked --offline --test upload_groups

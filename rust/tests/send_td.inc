@@ -3,6 +3,23 @@
  * actual JSON ABI and emits pending/settled updates for projection checks.
  */
 static int fixture_messages, fixture_profile, fixture_refused, fixture_next=10;
+static json_object *fixture_input;
+static int fixture_resources(int client,const char *type,json_object *query,json_object *extra) {
+    if(!strcmp(type,"getOption") && get(query,"name") && !strcmp(json_object_get_string(get(query,"name")),"telebarFixtureInput")) {
+        json_object *input=get(query,"fixture_file");if(!input || json_object_get_type(input)!=json_type_object)abort();
+        if(fixture_input) {json_object_put(fixture_input);} fixture_input=json_object_get(input);publish(client,"{\"@type\":\"ok\"}",extra);return 1;
+    }
+    if(!strcmp(type,"getFile") || !strcmp(type,"downloadFile")) {
+        if(!fixture_input) {abort();} publish(client,json_object_to_json_string_ext(fixture_input,JSON_C_TO_STRING_PLAIN),extra);return 1;
+    }
+    if(!strcmp(type,"getMessage")) {
+        if(!fixture_input) {abort();} json_object *m=json_tokener_parse("{\"@type\":\"message\",\"id\":77,\"chat_id\":101,\"content\":{\"@type\":\"messageDocument\",\"document\":{\"@type\":\"document\"}}}");json_object_object_add(get(get(m,"content"),"document"),"document",json_object_get(fixture_input));publish(client,json_object_to_json_string_ext(m,JSON_C_TO_STRING_PLAIN),extra);json_object_put(m);return 1;
+    }
+    if(!strcmp(type,"getMessageProperties")) {publish(client,"{\"@type\":\"messageProperties\",\"can_be_saved\":true}",extra);return 1;}
+    if(!strcmp(type,"getStorageStatisticsFast")) {publish(client,"{\"@type\":\"storageStatisticsFast\",\"files_size\":19,\"file_count\":1,\"database_size\":23,\"log_size\":0}",extra);return 1;}
+    if(!strcmp(type,"optimizeStorage")) {publish(client,"{\"@type\":\"storageStatistics\",\"size\":42}",extra);return 1;}
+    return 0;
+}
 static void fixture_publish(int client,json_object *value,json_object *extra) {
     publish(client,json_object_to_json_string_ext(value,JSON_C_TO_STRING_PLAIN),extra);
 }

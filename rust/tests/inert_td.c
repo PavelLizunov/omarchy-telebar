@@ -45,6 +45,7 @@ void td_send(int client,const char *text) {
     if(!type)abort();
     if(strcmp(type,"close")==0){publish(client,"{\"@type\":\"updateAuthorizationState\",\"authorization_state\":{\"@type\":\"authorizationStateClosed\"}}",NULL);}
 #ifdef TELEBAR_SEND_FIXTURE
+    else if(fixture_resources(client,type,query,extra)) {}
     else if(strcmp(type,"getOption")==0 && get(query,"name") && strcmp(json_object_get_string(get(query,"name")),"telebarFixtureStats")==0){fixture_stats(client,extra);}
 #endif
     else if(strcmp(type,"getOption")==0){publish(client,"{\"@type\":\"optionValueString\",\"value\":\"inert-abi\"}",extra);}
