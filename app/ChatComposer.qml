@@ -14,8 +14,8 @@ Rectangle {
   Layout.fillWidth: true
   // With scheduled messages listed, only while one of them is being edited.
   visible: !root.showTopics && (!root.scheduledOpen || root.editingId > 0) && root.composerBlock === ""
-  // 20 of outer margin and 16 of inner padding around the text, plus room for the caret.
-  Layout.preferredHeight: Math.min(Style.space(180), composer.implicitHeight + Style.space(40))
+  // Reserve chat space while the emoji picker is open; long text scrolls in place.
+  Layout.preferredHeight: Math.min(root.emojiOpen ? Math.max(Style.space(60), root.height * 0.25) : Style.space(180), Style.space(180), composer.implicitHeight + Style.space(40))
   color: "transparent"
 
   Rectangle { width: parent.width; height: 1; color: app.border; opacity: 0.35 }
@@ -88,6 +88,12 @@ Rectangle {
       contentHeight: composer.implicitHeight
       clip: true
       boundsBehavior: Flickable.StopAtBounds
+      function ensureCursorVisible() {
+        var caret = composer.cursorRectangle
+        if (caret.y < contentY) contentY = caret.y
+        else if (caret.y + caret.height > contentY + height) contentY = caret.y + caret.height - height
+      }
+      onHeightChanged: Qt.callLater(ensureCursorVisible)
 
       TextEdit {
         id: composer
@@ -99,11 +105,7 @@ Rectangle {
         selectionColor: app.accent
         font.family: app.fontFamily
         font.pixelSize: Style.font.body
-        onCursorRectangleChanged: {
-          if (cursorRectangle.y < composerFlick.contentY) composerFlick.contentY = cursorRectangle.y
-          else if (cursorRectangle.y + cursorRectangle.height > composerFlick.contentY + composerFlick.height)
-            composerFlick.contentY = cursorRectangle.y + cursorRectangle.height - composerFlick.height
-        }
+        onCursorRectangleChanged: composerFlick.ensureCursorVisible()
 
         onTextChanged: root.composerEdited()
         onCursorPositionChanged: suggestLater.restart()

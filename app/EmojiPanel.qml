@@ -24,6 +24,7 @@ FocusScope {
 
   readonly property bool ready: !!panel.sets.emoji
   readonly property bool reacting: panel.allowed !== null
+  readonly property bool compact: panel.height < Style.space(200)
   readonly property var kinds: ["emoji", "symbols", "kaomoji"]
   readonly property var kindNames: ["Emoji", "Symbols", "Kaomoji"]
   readonly property string kind: panel.reacting ? "emoji" : panel.kinds[panel.tab]
@@ -36,6 +37,10 @@ FocusScope {
   signal inserted(string text)
   signal reacted(string emoji)
   signal closed()
+
+  Keys.onPressed: function(event) {
+    if (Keymap.matches(panel.app.shortcuts, "emoji.close", event)) { panel.closed(); event.accepted = true }
+  }
 
   function open() {
     panel.allowed = null
@@ -191,70 +196,89 @@ FocusScope {
 
   ColumnLayout {
     anchors.fill: parent
-    anchors.margins: Style.space(10)
-    spacing: Style.space(6)
+    anchors.margins: Style.space(panel.compact ? 4 : 10)
+    spacing: Style.space(panel.compact ? 3 : 6)
 
-    Flow {
+    Flickable {
+      id: controls
+      objectName: "emoji-controls-scroll"
       Layout.fillWidth: true
-      Layout.preferredHeight: implicitHeight
-      spacing: Style.space(6)
-
-      Repeater {
-        model: panel.reacting ? ["Reactions"] : panel.kindNames
-
-        delegate: Rectangle {
-          id: tabChip
-          required property var modelData
-          required property int index
-          readonly property bool current: panel.reacting || tabChip.index === panel.tab
-          height: Style.space(30)
-          width: tabLabel.implicitWidth + Style.space(22)
-          radius: Style.cornerRadius
-          color: tabChip.current ? panel.app.selected
-               : (tabArea.containsMouse ? Qt.rgba(panel.app.foreground.r, panel.app.foreground.g, panel.app.foreground.b, 0.05) : "transparent")
-
-          Text {
-            id: tabLabel
-            anchors.centerIn: parent
-            text: tabChip.modelData
-            textFormat: Text.PlainText
-            color: tabChip.current ? panel.app.foreground : panel.app.muted
-            font.family: panel.app.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            font.bold: tabChip.current
-          }
-          MouseArea {
-            id: tabArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-              panel.showTab(tabChip.index)
-              search.forceActiveFocus()
-            }
-          }
+      Layout.preferredHeight: Style.space(30)
+      Layout.rightMargin: Style.space(34)
+      contentWidth: controlRow.implicitWidth
+      contentHeight: height
+      clip: true
+      boundsBehavior: Flickable.StopAtBounds
+      WheelHandler {
+        target: null
+        onWheel: function(event) {
+          var delta = event.pixelDelta.x || event.pixelDelta.y || event.angleDelta.x / 3 || event.angleDelta.y / 3
+          controls.contentX = Math.max(0, Math.min(Math.max(0, controls.contentWidth - controls.width), controls.contentX - delta))
+          event.accepted = true
         }
       }
 
       Row {
-        visible: panel.kind === "emoji"
-        spacing: Style.space(2)
+        id: controlRow
+        spacing: Style.space(6)
 
         Repeater {
-          model: panel.tones
+          model: panel.reacting ? ["Reactions"] : panel.kindNames
+
           delegate: Rectangle {
-            id: toneChip
+            id: tabChip
             required property var modelData
             required property int index
-            width: Style.space(28)
-            height: Style.space(28)
+            readonly property bool current: panel.reacting || tabChip.index === panel.tab
+            height: Style.space(30)
+            width: tabLabel.implicitWidth + Style.space(22)
             radius: Style.cornerRadius
-            color: toneChip.index === panel.tone ? panel.app.selected : "transparent"
-            Text { anchors.centerIn: parent; text: toneChip.modelData; textFormat: Text.PlainText; font.pixelSize: Style.font.body }
+            color: tabChip.current ? panel.app.selected
+                 : (tabArea.containsMouse ? Qt.rgba(panel.app.foreground.r, panel.app.foreground.g, panel.app.foreground.b, 0.05) : "transparent")
+
+            Text {
+              id: tabLabel
+              anchors.centerIn: parent
+              text: tabChip.modelData
+              textFormat: Text.PlainText
+              color: tabChip.current ? panel.app.foreground : panel.app.muted
+              font.family: panel.app.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              font.bold: tabChip.current
+            }
             MouseArea {
+              id: tabArea
               anchors.fill: parent
+              hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: { panel.setTone(toneChip.index); search.forceActiveFocus() }
+              onClicked: {
+                panel.showTab(tabChip.index)
+                search.forceActiveFocus()
+              }
+            }
+          }
+        }
+
+        Row {
+          visible: panel.kind === "emoji"
+          spacing: Style.space(2)
+
+          Repeater {
+            model: panel.tones
+            delegate: Rectangle {
+              id: toneChip
+              required property var modelData
+              required property int index
+              width: Style.space(28)
+              height: Style.space(28)
+              radius: Style.cornerRadius
+              color: toneChip.index === panel.tone ? panel.app.selected : "transparent"
+              Text { anchors.centerIn: parent; text: toneChip.modelData; textFormat: Text.PlainText; font.pixelSize: Style.font.body }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: { panel.setTone(toneChip.index); search.forceActiveFocus() }
+              }
             }
           }
         }
@@ -320,6 +344,7 @@ FocusScope {
 
     GridView {
       id: grid
+      objectName: "emoji-grid"
       Layout.fillWidth: true
       Layout.fillHeight: true
       clip: true
@@ -379,6 +404,7 @@ FocusScope {
 
     // What the cursor is on, by its names; and the keys.
     Text {
+      visible: !panel.compact
       Layout.fillWidth: true
       elide: Text.ElideRight
       textFormat: Text.PlainText
@@ -389,5 +415,24 @@ FocusScope {
       font.family: panel.app.fontFamily
       font.pixelSize: Style.font.caption
     }
+  }
+
+  Item {
+    objectName: "emoji-close"
+    anchors.top: parent.top
+    anchors.right: parent.right
+    anchors.margins: Style.space(panel.compact ? 4 : 10)
+    width: Style.space(30)
+    height: width
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: "Close emoji panel"
+    Accessible.onPressAction: panel.closed()
+    Keys.onReturnPressed: panel.closed()
+    Keys.onEnterPressed: panel.closed()
+    Keys.onSpacePressed: panel.closed()
+    Rectangle { anchors.fill: parent; radius: Style.cornerRadius; color: closeArea.containsMouse ? panel.app.selected : "transparent"; border.width: parent.activeFocus ? 1 : 0; border.color: panel.app.accent }
+    Icon { anchors.centerIn: parent; name: "close"; size: Style.font.body; color: panel.app.foreground }
+    MouseArea { id: closeArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: panel.closed() }
   }
 }

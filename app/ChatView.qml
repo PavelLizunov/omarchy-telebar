@@ -1014,12 +1014,16 @@ FocusScope {
 
     // ------------------------------------------------ messages
     Item {
+      id: messageViewport
+      objectName: "chat-message-viewport"
       Layout.fillWidth: true
       Layout.fillHeight: true
+      Layout.minimumHeight: Math.min(Style.space(100), root.height * 0.25)
       visible: !root.showTopics
 
       ListView {
         id: messageList
+        objectName: "chat-message-list"
         anchors.fill: parent
         clip: true
         model: rows
@@ -1300,7 +1304,10 @@ FocusScope {
     EmojiPanel {
       id: emojiPanel
       Layout.fillWidth: true
-      Layout.preferredHeight: root.emojiOpen ? Math.min(Style.space(300), root.height * 0.6) : 0
+      Layout.fillHeight: true
+      Layout.minimumHeight: 0
+      Layout.preferredHeight: root.emojiOpen ? Math.min(Style.space(300), root.height * 0.4) : 0
+      Layout.maximumHeight: Layout.preferredHeight
       visible: root.emojiOpen
       app: root.app
       onInserted: function (text) {

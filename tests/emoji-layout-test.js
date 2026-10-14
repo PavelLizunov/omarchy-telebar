@@ -1,0 +1,15 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const root = path.resolve(__dirname, '..');
+const read = name => fs.readFileSync(path.join(root, name), 'utf8');
+const chat = read('app/ChatView.qml'), composer = read('app/ChatComposer.qml'), emoji = read('app/EmojiPanel.qml');
+assert(chat.includes('Layout.minimumHeight: Math.min(Style.space(100), root.height * 0.25)'));
+assert(chat.includes('Layout.preferredHeight: root.emojiOpen ? Math.min(Style.space(300), root.height * 0.4) : 0'));
+assert(chat.includes('Layout.maximumHeight: Layout.preferredHeight'));
+assert(composer.includes('Math.max(Style.space(60), root.height * 0.25)'));
+assert(composer.includes('onHeightChanged: Qt.callLater(ensureCursorVisible)'));
+assert(emoji.includes('contentWidth: controlRow.implicitWidth') && emoji.includes('visible: !panel.compact'));
+assert(emoji.includes('Keymap.matches(panel.app.shortcuts, "emoji.close", event)'));
+assert(emoji.includes('objectName: "emoji-close"'));
+console.log('Compact emoji chat/editor bounds, caret visibility and dismissal contracts passed; actual geometry/input remain Qt consumer checks');

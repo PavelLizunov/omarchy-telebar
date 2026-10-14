@@ -1,5 +1,13 @@
 # Changes
 
+## Compact emoji layout (2026-10-14)
+
+- Reserve a usable chat viewport while emoji are open in a small window.
+- Let the picker shrink and cap a long editor only while emoji are open; keep
+  the caret visible when the editor shrinks.
+- Scroll category/tone controls instead of wrapping them over the emoji grid,
+  and provide a pointer/keyboard close action without discarding the draft.
+
 ## Round video enlargement (2026-10-14)
 
 - Open original round videos full-screen from the window's expand control or the
