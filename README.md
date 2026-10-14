@@ -8,11 +8,12 @@ commands are Rust; the interface is QML/JavaScript with Quickshell and official 
  · [Architecture](ARCHITECTURE.md) · [Runtime contract](rust/PARITY.md)
 
 Main contains the native source, tests and tooling. It is not an installation
-package until built. The current release remains 1.3.0-rc.1, not stable-release
+package until built. The current release is 1.3.0-rc.2, not stable-release
 certification. Reported sent-video playback, forum-parent unread state and a
 historical disappearing window remain unresolved. Full command, perceived media
 quality, working-account reverse rollback and independent security acceptance are
-incomplete. The installed compact-to-window opener has user acceptance.
+incomplete. The installed compact-to-window opener and compact emoji layout
+have user acceptance.
 
 ## Requirements
 

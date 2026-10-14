@@ -1,5 +1,16 @@
 # Changes
 
+## 1.3.0-rc.2 (2026-10-14)
+
+Corrected native prerelease with the compact emoji layout fix, confirmed working
+by the user. Includes the previously published original round-video viewer and
+native-only source/tooling cleanup. The application remains Rust/QML/JavaScript.
+
+[Release and native archive](https://github.com/PavelLizunov/omarchy-telebar/releases/tag/v1.3.0-rc.2)
+provide the updated x86-64 package and checksums. Existing `v1.3.0-rc.1` assets
+and tag remain unchanged. No additional tests were run for this publication at
+the user's request; prior scoped checks and user acceptance are retained.
+
 ## Compact emoji layout (2026-10-14)
 
 - Reserve a usable chat viewport while emoji are open in a small window.
