@@ -20,7 +20,7 @@ Panel {
   property var omagram: null
   readonly property var barIdentity: hostWidget || root
   readonly property int viewHeight: Style.space(560)
-  readonly property int actionRevision: 20261014
+  readonly property int actionRevision: 20261015
 
   function openInWindow(chatId) {
     if (!root.omagram) return false
@@ -36,6 +36,7 @@ Panel {
       iconRevision: root.hostWidget ? root.hostWidget.iconRevision : "",
       serviceReady: !!root.omagram && root.omagram.ready,
       serviceConnected: !!root.omagram && root.omagram.connected,
+      roundVideoRevision: view.roundVideoRevision,
       launcherRuntime: root.omagram && root.omagram.launcherRuntime ? root.omagram.launcherRuntime : "unknown",
       serviceDraftPresent: !!root.omagram && !!root.omagram.quickDraft,
       opened: root.opened, draftPresent: view.replyChatId !== 0 && view.focusItem.text !== "",

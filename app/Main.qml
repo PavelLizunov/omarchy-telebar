@@ -18,13 +18,14 @@ import "MainNavigation.js" as MainNavigation
 Scope {
   id: omagram
 
-  readonly property int implementationRevision: 20261013
+  readonly property int implementationRevision: 20261015
   readonly property string binDir: decodeURIComponent(String(Qt.resolvedUrl("../bin/")).replace("file://", ""))
   // Explicit consumer context keeps offscreen acceptance away from live IPC.
   // Normal launch retains the same socket and service-start behavior.
   property bool autoStart: true
   property bool surfaceVisible: true
   readonly property var contentSurface: window
+  readonly property var mediaSurface: photoWindow
   property string socketPath: (Quickshell.env("XDG_RUNTIME_DIR") || "").charAt(0) === "/"
     ? Quickshell.env("XDG_RUNTIME_DIR") + "/omagram/omagram.sock" : ""
 
@@ -244,8 +245,8 @@ Scope {
     return MainFiles.setFile({ omagram: omagram }, view)
   }
 
-  function download(fileId, priority) {
-    return MainFiles.download({ omagram: omagram, service: service }, fileId, priority)
+  function download(fileId, priority, callback) {
+    return MainFiles.download({ omagram: omagram, service: service }, fileId, priority, callback)
   }
 
   // Animated stickers need their Lottie JSON, which the service unpacks once per sticker.
@@ -648,12 +649,14 @@ Scope {
     return MainNavigation.closeTopic({ omagram: omagram, screen: screen })
   }
 
+  signal roundVideoOpening()
   property real viewerMessageId: 0
   property real viewerFileId: 0
   property var viewerBlock: null
   onViewerMessageIdChanged: if (!viewerMessageId) { viewerFileId = 0; viewerBlock = null }
 
   function openPhoto(message) {
+    if (message && message.content && message.content.kind === "videoNote") roundVideoOpening()
     return MainNavigation.openPhoto({ omagram: omagram }, message)
   }
 
@@ -726,9 +729,10 @@ Scope {
 
   }
 
-  // A photo opens over the whole screen the window is on, above everything, with the keyboard.
+  // Photos and round videos open above the screen with exclusive keyboard focus.
   PanelWindow {
     id: photoWindow
+    objectName: "window-media-surface"
     visible: omagram.viewerMessageId > 0
     screen: window.screen
     anchors { top: true; bottom: true; left: true; right: true }
@@ -738,13 +742,26 @@ Scope {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
+    Loader {
+      anchors.fill: parent
+      active: omagram.viewerMessageId > 0 && !!omagram.viewerBlock && omagram.viewerBlock.content.kind === "videoNote"
+      sourceComponent: RoundVideoViewer {
+        app: omagram
+        message: omagram.viewerBlock
+        onClosed: {
+          omagram.viewerMessageId = 0
+          if (screen.item && screen.item.focusMessages) screen.item.focusMessages()
+        }
+      }
+    }
     PhotoViewer {
       anchors.fill: parent
+      visible: omagram.viewerMessageId > 0 && (!omagram.viewerBlock || omagram.viewerBlock.content.kind !== "videoNote")
       app: omagram
       messages: omagram.openChat ? omagram.messagesFor(omagram.openChatId) : []
-      messageId: omagram.viewerMessageId
+      messageId: omagram.viewerBlock && omagram.viewerBlock.content.kind === "videoNote" ? 0 : omagram.viewerMessageId
       fileId: omagram.viewerFileId
-      extraMessage: omagram.viewerBlock
+      extraMessage: omagram.viewerBlock && omagram.viewerBlock.content.kind === "photo" ? omagram.viewerBlock : null
       onClosed: {
         omagram.viewerMessageId = 0
         if (screen.item && screen.item.focusMessages) screen.item.focusMessages()

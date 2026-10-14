@@ -66,10 +66,11 @@ Item {
     service.files = files
   }
 
-  function download(fileId) {
+  function download(fileId, priority, callback) {
     if (!fileId) return
-    client.request("file.download", { fileId: fileId, priority: 8 }, function (answer) {
+    client.request("file.download", { fileId: fileId, priority: priority || 8 }, function (answer) {
       if (answer.ok && answer.result) service.noteFile(answer.result)
+      if (callback) callback(answer)
     })
   }
 

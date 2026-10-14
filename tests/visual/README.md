@@ -45,6 +45,24 @@ SidebarHandle. `tst_send_contract.qml` keeps recorder CaptureSession inactive an
 checks original-destination/recovery ownership without devices.
 
 The bundled [inert imports](imports/README.md) and their provenance remain for
-content-only QtTest. Fixtures requiring unsupported native windows/imports are
+content-only QtTest. `RoundVideoConsumer.qml` uses an explicitly generated local
+480×480 H.264 test clip, never private media. `tst_round_video.qml` exercises the
+real decoder, inline expand button, zoom, drag, pause, reset and close. Generate
+`round-480.mp4` in the new fixture, not in the repository:
+
+```sh
+ffmpeg -hide_banner -loglevel error -f lavfi -i "testsrc2=size=480x480:rate=20:duration=4" -an -c:v libx264 -pix_fmt yuv420p -preset veryfast -movflags +faststart /absolute/new/action-fixture/tests/visual/round-480.mp4
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input /absolute/new/action-fixture/tests/visual/tst_round_video.qml -import /absolute/new/action-fixture/imports -import /absolute/new/action-fixture/inert
+```
+
+`RoundParentConsumer.qml` preserves actual Main/Quick media surfaces under the
+static native adapter, with their original content reparented and surfaces kept
+unshown. Stock QtTest lacks those static window modules. Qt's software video
+output can decode without showing video pixels; decoder dimensions/position alone
+are not visual acceptance. Use the reviewed OpenGL offscreen native adapter for
+original-frame pixel changes and circular clipping. FFmpeg writes stream metadata
+to stderr; strict generic rendering rejects those lines, even without a playback
+error. Preserve the failed render and classify any report-policy exception.
+Fixtures requiring unsupported native windows/imports are
 not automatically certified by that adapter. Optional suites requiring external
 media/native host contexts stay separate from default checks.

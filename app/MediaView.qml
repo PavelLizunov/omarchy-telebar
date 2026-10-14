@@ -39,6 +39,7 @@ Item {
   readonly property string url: file ? Model.fileUrl(file.path) : ""
   readonly property bool ready: url !== ""
   readonly property bool downloading: !!file && file.active
+  readonly property var playback: loader.item && loader.item.playback ? loader.item.playback : null
   readonly property real fraction: Model.progress(file)
   readonly property var thumbFile: info.thumb && info.thumb.file ? app.fileState(info.thumb.file) : null
   readonly property string thumbUrl: thumbFile ? Model.fileUrl(thumbFile.path) : ""
@@ -68,6 +69,20 @@ Item {
     if (kind === "photo") { app.openPhoto(message); return }
     if (kind === "file") { app.openFile(message); return }
     togglePlay()
+  }
+
+  function releasePlayback() { if (loader.item && loader.item.release) loader.item.release() }
+  Connections {
+    target: view.app
+    ignoreUnknownSignals: true
+    function onRoundVideoOpening() { view.releasePlayback() }
+  }
+
+  function enlarge() {
+    if (covered) { revealRequested(); return }
+    if (kind !== "videoNote" || !media || !app) return
+    if (loader.item && loader.item.release) loader.item.release()
+    app.openPhoto(message)
   }
 
   function togglePlay() {
@@ -302,6 +317,8 @@ Item {
       id: videoItem
       clip: true
       property bool started: false
+      function release() { if (videoLoader.item) videoLoader.item.pause() }
+      readonly property var playback: videoLoader.item
 
       function toggle() {
         if (!view.ready) { view.download(32); return }
@@ -360,6 +377,8 @@ Item {
     Item {
       id: note
       property bool sound: false
+      function release() { sound = false; if (noteVideo.item) noteVideo.item.pause() }
+      readonly property var playback: noteVideo.item
 
       function toggle() {
         if (!view.ready) { view.download(32); return }
@@ -437,6 +456,28 @@ Item {
         color: "white"
         size: Style.font.caption
       }
+      Rectangle {
+        objectName: "round-video-enlarge"
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.margins: Style.space(8)
+        width: Style.space(32)
+        height: width
+        radius: Style.cornerRadius
+        color: Qt.rgba(0, 0, 0, enlargeArea.containsMouse ? 0.8 : 0.55)
+        visible: view.interactive && !view.covered
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Button
+        Accessible.name: "Enlarge round video"
+        Accessible.onPressAction: view.enlarge()
+        Keys.onReturnPressed: view.enlarge()
+        Keys.onEnterPressed: view.enlarge()
+        Keys.onSpacePressed: view.enlarge()
+        border.width: activeFocus ? 2 : 0
+        border.color: "white"
+        Icon { anchors.centerIn: parent; name: "expand"; color: "white"; size: Style.space(20) }
+        MouseArea { id: enlargeArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: view.enlarge() }
+      }
       SpeedChip {
         dark: true
         visible: note.sound
@@ -455,6 +496,8 @@ Item {
       property bool started: false
       readonly property bool playing: audio.playbackState === MediaPlayer.PlayingState
       readonly property real played: audio.duration > 0 ? audio.position / audio.duration : 0
+      function release() { audio.pause() }
+      readonly property var playback: audio
 
       function toggle() {
         if (!view.ready) { view.download(32); return }
@@ -545,6 +588,8 @@ Item {
       id: fileItem
       readonly property bool isAudio: view.kind === "audio"
       readonly property bool playing: isAudio && track.playbackState === MediaPlayer.PlayingState
+      function release() { track.pause() }
+      readonly property var playback: track
 
       function toggle() {
         if (!view.ready) { view.download(32); return }

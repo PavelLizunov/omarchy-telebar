@@ -41,6 +41,10 @@ Item {
 `
 };
 export function rewrite(name, text) {
+  if (name === "shell/MediaWindow.qml") {
+    if (text.split("  visible: true\n").length !== 2) throw Error("Media surface visibility contract changed");
+    return text.replace("  visible: true\n", "  visible: false\n");
+  }
   if (name === 'app/TelebarClient.qml') {
     const before = 'property string socketPath: client.runtimeDir.charAt(0) === "/" ? client.runtimeDir + "/omagram/omagram.sock" : ""';
     if (text.split(before).length !== 2) throw Error('Client default socket contract changed');

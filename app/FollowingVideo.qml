@@ -13,6 +13,12 @@ Item {
   property alias loops: player.loops
   property alias muted: audio.muted
   property alias fillMode: picture.fillMode
+  property alias endOfStreamPolicy: picture.endOfStreamPolicy
+  readonly property alias videoSink: picture.videoSink
+  readonly property alias mediaStatus: player.mediaStatus
+  readonly property alias error: player.error
+  readonly property alias errorString: player.errorString
+  readonly property alias duration: player.duration
   signal stopped()
   function play() { player.play() }
   function pause() { player.pause() }

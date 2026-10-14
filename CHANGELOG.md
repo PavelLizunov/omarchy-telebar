@@ -1,5 +1,16 @@
 # Changes
 
+## Round video enlargement (2026-10-14)
+
+- Open original round videos full-screen from the window's expand control or the
+  quick-view row, without an external Telegram client or player.
+- Share native video decoding, circular crop, 1–4× zoom, bounded pan, pause,
+  reset and close controls. Keep window inline playback separate.
+- Await existing quick playback retirement; ignore refused or stale responses.
+- Cover actual Main/Quick parent routes, original decoded/rendered frames,
+  pointer/keyboard zoom and media close/download contracts. This does not settle
+  the separate reported outgoing-video playback incident or perceived quality.
+
 ## Native main cleanup (2026-10-14)
 
 - Publish the checked Rust implementation and current native UI on main.

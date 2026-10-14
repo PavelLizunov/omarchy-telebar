@@ -96,6 +96,11 @@ from the mark. Quiet mode leaves unread indication intact.
 Common window controls: Ctrl+K searches, Ctrl+, opens Settings, Ctrl+I shows chat
 info, Ctrl+O attaches media, Ctrl+R records voice and Ctrl+Shift+R records round
 video. Enter sends, Shift+Enter inserts a line, Escape cancels the current action.
+Round videos have an expand control in the window; click their row in the quick
+view. The original video opens full-screen inside Telebar. Use the wheel or +/−
+to zoom up to 4×, drag to move the enlarged frame, 0 to reset, Space to pause and
+Escape to close. Zoom exposes existing source pixels; it does not add camera detail.
+
 Ctrl+O in the quick view opens its chat in the window. Shortcuts are configurable
 in Settings; global bindings only remove entries owned by Telebar.
 

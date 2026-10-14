@@ -130,6 +130,8 @@ Item {
   property real pendingMediaId: 0        // a message whose photo or video opens as soon as the history holds it
   property real viewingFileId: 0
   property var viewingBlock: null
+  property int mediaOpenSerial: 0
+  readonly property string roundVideoRevision: "original-zoom-v1"
   readonly property var mediaItems: {
     var items = Model.mediaMessages(quick.history)
     if (quick.viewingBlock && !items.some(function (m) { return m.id === quick.viewingBlock.id && m.content.media.file.id === quick.viewingFileId }))
@@ -138,7 +140,7 @@ Item {
   }
 
   onQueryChanged: quick.cursor = 0
-  onShownChatIdChanged: historyDelay.restart()
+  onShownChatIdChanged: { quick.mediaOpenSerial++; historyDelay.restart() }
 
   Timer {
     interval: 30000
@@ -180,6 +182,7 @@ Item {
     quick.noteAnimations = ({})
     quick.attachments = []
     quick.asked = ({})
+    quick.mediaOpenSerial++
     quick.viewingId = 0
     search.text = ""
     composer.text = ""
@@ -209,6 +212,7 @@ Item {
     quick.readCursors = ({})
     quick.sendSerial++
     if (quick.recordingHere) quick.stopRecording(false)
+    quick.mediaOpenSerial++
     quick.viewingId = 0
     if (quick.service) {
       quick.service.quickChatId = quick.replyChatId
@@ -601,6 +605,10 @@ Item {
     if (quick.service) quick.service.request(cmd, args, callback)
   }
 
+  readonly property real playbackRate: Model.playbackRate(quick.playing.rate)
+  function fileState(file) { return quick.fileOf(file) }
+  function download(fileId, priority, callback) { if (quick.service) quick.service.download(fileId, priority, callback) }
+
   function fileOf(file) {
     if (!file) return null
     var known = quick.service && quick.service.files ? quick.service.files[file.id] : null
@@ -692,10 +700,24 @@ Item {
 
   function openMedia(message) {
     var kind = message && message.content ? message.content.kind : ""
-    if (message && message.id && ["photo", "video", "gif"].indexOf(kind) >= 0) {
-      quick.viewingBlock = message
-      quick.viewingFileId = message.content.media && message.content.media.file ? message.content.media.file.id : 0
-      quick.viewingId = message.id
+    var serial = ++quick.mediaOpenSerial
+    if (message && message.chatId !== quick.shownChatId) return
+    var account = quick.activeAccount, chatId = quick.shownChatId
+    function current() { return serial === quick.mediaOpenSerial && account === quick.activeAccount && chatId === quick.shownChatId }
+    if (message && message.id && ["photo", "video", "gif", "videoNote"].indexOf(kind) >= 0) {
+      var open = function() {
+        if (!current()) return
+        quick.viewingBlock = message
+        quick.viewingFileId = message.content.media && message.content.media.file ? message.content.media.file.id : 0
+        quick.viewingId = message.id
+      }
+      if (kind === "videoNote" && quick.service) {
+        quick.service.request("media.stop", {}, function(answer) {
+          if (!current()) return
+          if (!answer.ok) { quick.status = answer.error || "Could not stop current playback"; return }
+          open()
+        })
+      } else open()
     } else if (message && message.content && message.content.media && message.content.media.file) {
       quick.fetchNow(message.content.media.file)
       if (quick.urlOf(message.content.media.file)) quick.service.request("file.open", { fileId: message.content.media.file.id })
@@ -703,6 +725,7 @@ Item {
   }
 
   function closeMedia() {
+    quick.mediaOpenSerial++
     if (!quick.viewingId) return
     quick.viewingId = 0
     quick.viewingFileId = 0
@@ -714,6 +737,7 @@ Item {
   // A window of its own over the whole screen, with the keyboard (MediaWindow.qml): loaded from its file only
   // while a photo or video is open, so nothing about it is needed before.
   Loader { id: mediaWindow }
+  readonly property var mediaSurface: mediaWindow.item
 
   onViewingIdChanged: {
     if (!quick.viewingId) { quick.viewingFileId = 0; quick.viewingBlock = null }
@@ -1548,9 +1572,19 @@ Item {
               }
             }
 
-            // A voice or round video message: listen to it here.
+            // Voice plays here; a round video opens its original full-screen decoder.
             Rectangle {
               id: listen
+              objectName: "quick-round-video-" + line.message.id
+              activeFocusOnTab: line.kind === "videoNote"
+              Accessible.role: Accessible.Button
+              Accessible.name: line.kind === "videoNote" ? "Enlarge round video" : "Play voice message"
+              Accessible.onPressAction: line.kind === "videoNote" ? quick.openMedia(line.message) : quick.togglePlay(line.message)
+              Keys.onReturnPressed: if (line.kind === "videoNote") quick.openMedia(line.message)
+              Keys.onEnterPressed: if (line.kind === "videoNote") quick.openMedia(line.message)
+              Keys.onSpacePressed: if (line.kind === "videoNote") quick.openMedia(line.message)
+              border.width: activeFocus ? 2 : 0
+              border.color: quick.accent
               x: Style.space(8)
               readonly property bool playingThis: !!line.media && !!line.media.file && quick.playing.fileId === line.media.file.id
               visible: line.kind === "voice" || line.kind === "videoNote"
@@ -1605,7 +1639,7 @@ Item {
                     // md-pause U+F03E4, md-play U+F040A
                     Icon {
                       anchors.centerIn: parent
-                      name: listen.playingThis ? "pause" : "play"
+                      name: line.kind === "videoNote" ? "expand" : listen.playingThis ? "pause" : "play"
                       color: listen.playingThis ? quick.onAccent : quick.text
                       size: Style.font.bodySmall
                     }
@@ -1658,7 +1692,7 @@ Item {
                     quick.hoverNote = null
                   }
                 }
-                onClicked: quick.togglePlay(line.message)
+                onClicked: line.kind === "videoNote" ? quick.openMedia(line.message) : quick.togglePlay(line.message)
               }
             }
           }

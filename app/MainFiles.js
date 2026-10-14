@@ -22,11 +22,12 @@ function setFile(context, view) {
     omagram.filesRevision++
   }
 
-function download(context, fileId, priority) {
+function download(context, fileId, priority, callback) {
   var omagram = context.omagram
   var service = context.service
     service.request("file.download", { fileId: fileId, priority: priority || 16 }, function (answer) {
       if (answer.ok) omagram.setFile(answer.result)
+      if (callback) callback(answer)
     })
   }
 

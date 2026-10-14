@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Wayland
+import "../app"
 
 // The quick view's photo or video over the whole screen (MediaViewer.qml), in a window of its own: above
 // everything, with the keyboard. The quick view loads this file only while something is open.
@@ -18,13 +19,23 @@ PanelWindow {
   WlrLayershell.layer: WlrLayer.Overlay
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
+  Loader {
+    anchors.fill: parent
+    active: !!window.host && !!window.host.viewingBlock && window.host.viewingBlock.content.kind === "videoNote"
+    sourceComponent: RoundVideoViewer {
+      app: window.host
+      message: window.host.viewingBlock
+      onClosed: window.host.closeMedia()
+    }
+  }
   MediaViewer {
+    visible: !window.host || !window.host.viewingBlock || window.host.viewingBlock.content.kind !== "videoNote"
     anchors.fill: parent
     host: window.host
-    items: window.host ? window.host.mediaItems : []
-    messageId: window.host ? window.host.viewingId : 0
+    items: visible && window.host ? window.host.mediaItems : []
+    messageId: visible && window.host ? window.host.viewingId : 0
     fileId: window.host ? window.host.viewingFileId : 0
-    Component.onCompleted: forceActiveFocus()
+    Component.onCompleted: if (visible) forceActiveFocus()
     onClosed: window.host.closeMedia()
     onPlayed: {
       window.host.closeMedia()
