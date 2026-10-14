@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/telebar-rust-target
+      CARGO_TARGET_DIR: /tmp/telebar-rust-target
       CARGO_INCREMENTAL: 0
     steps:
       - uses: actions/checkout@v4
