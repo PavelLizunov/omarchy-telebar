@@ -37,6 +37,7 @@ Panel {
       serviceReady: !!root.omagram && root.omagram.ready,
       serviceConnected: !!root.omagram && root.omagram.connected,
       roundVideoRevision: view.roundVideoRevision,
+      serviceRevision: root.omagram ? root.omagram.implementationRevision : 0,
       launcherRuntime: root.omagram && root.omagram.launcherRuntime ? root.omagram.launcherRuntime : "unknown",
       serviceDraftPresent: !!root.omagram && !!root.omagram.quickDraft,
       opened: root.opened, draftPresent: view.replyChatId !== 0 && view.focusItem.text !== "",
