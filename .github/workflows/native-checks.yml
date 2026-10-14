@@ -38,12 +38,19 @@ jobs:
         run: |
           "$CARGO_TARGET_DIR/release/telebar-runtime" --package "$PWD" "$RUNNER_TEMP/telebar-native-base"
           node scripts/native-ui-generation.mjs "$RUNNER_TEMP/telebar-native-base" "$RUNNER_TEMP/telebar-native-package"
-          # Ubuntu restricts namespace setup; the payload runs as the runner with no caps.
+          # Stage outside the private runner home before namespace uid mapping.
+          CI_SOURCE=$(mktemp -d /tmp/telebar-native-ci.XXXXXX)
+          trap 'rm -rf -- "$CI_SOURCE"' EXIT
+          mkdir "$CI_SOURCE/workspace"
+          cp -a scripts tests "$CI_SOURCE/workspace/"
+          mv "$RUNNER_TEMP/telebar-native-package" "$CI_SOURCE/package"
+          chmod 755 "$CI_SOURCE" "$CI_SOURCE/workspace" "$CI_SOURCE/package"
+          # Privilege is used only for namespace setup; payload runs with no caps.
           sudo -- timeout 30s bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL \
             --uid "$(id -u)" --gid "$(id -g)" \
             --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
             --proc /proc --dev /dev --tmpfs /tmp --dir /home \
             --ro-bind /etc/passwd /etc/passwd --ro-bind /etc/group /etc/group \
-            --ro-bind "$GITHUB_WORKSPACE" /workspace --ro-bind "$RUNNER_TEMP/telebar-native-package" /candidate \
+            --ro-bind "$CI_SOURCE/workspace" /workspace --ro-bind "$CI_SOURCE/package" /candidate \
             --clearenv --setenv PATH /usr/bin --setenv TELEBAR_ISOLATED_PACKAGE 1 \
             /usr/bin/node /workspace/tests/native-package-consumer.mjs /candidate
