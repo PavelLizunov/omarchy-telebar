@@ -93,7 +93,7 @@ impl Settings {
             return None;
         }
         Some((|| {
-            // Python serializes these commands on its main loop. Keep later
+            // Serialize settings commands on the main loop. Keep later
             // mutations behind the pending compositor operation, before save.
             if self.globals_pending && self.global_context.is_some() {
                 return Ok(Action::Work(crate::jobs::Work::DeferredSettings {

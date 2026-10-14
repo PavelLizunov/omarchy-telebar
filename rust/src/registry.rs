@@ -1,4 +1,4 @@
-//! Frozen current IPC registry. Python is a development oracle only.
+//! Frozen current IPC registry.
 //! Update with the reviewed consumer contract, never by accepting arbitrary TDLib names.
 pub const COMMANDS: [(&str, bool); 170] = [
     ("bridge.test", false),

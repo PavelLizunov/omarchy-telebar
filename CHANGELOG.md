@@ -1,132 +1,31 @@
-# Releases and checkpoints
+# Changes
+
+## Native main cleanup (2026-10-14)
+
+- Publish the checked Rust implementation and current native UI on main.
+- Remove retired interpreter code, comparison drivers, dependent test wrappers
+  and obsolete guidance from the current source tree. Prior checkpoints remain
+  in Git history; no tags or release assets are rewritten.
+- Replace UI-generation and actual-consumer preview tooling with Node.js.
+- Replay the frozen 21,136-plus-18-input projection corpora directly in Rust.
+- Use native/JavaScript CI and actual packaged ELF/socket/helper checks.
+- Preserve application behavior, accounts, licenses, native safety guards and
+  the separately installed Qt recovery. No backend/shared-shell restart.
 
 ## 1.3.0-rc.1 (2026-10-14)
 
-First native Rust application prerelease. QML/JavaScript, Quickshell and official
-TDLib remain; there is no application Python, PyO3 or fallback in the downloadable
-native package. Historical Python files remain only in the source archive for
-development comparison. The runtime crate remains an internal unpublished 0.1.0
-package; 1.3.0-rc.1 is the Telebar product version.
+Native runtime prerelease with compatible launcher/daemon/helper entry points,
+original paper-plane mark, narrow-window sidebar expansion, actionable compact
+window opener and content-bound UI packaging. The user confirmed window opening.
 
-### Included
+[Release and native archive](https://github.com/PavelLizunov/omarchy-telebar/releases/tag/v1.3.0-rc.1)
+retains its original source/acceptance scope. This main cleanup does not move its
+tag or replace its files. New main is source-only until built and packaged.
 
-- Native launcher, daemon, helper modes and owned systemd user-manager routes.
-- Existing account, encrypted storage, keyring, lock and IPC identities.
-- Bounded media ownership and durable recording/input recovery without autosend.
-- Original stepped paper-plane icon, native theme geometry and unread semantics.
-- Narrow-window sidebar expansion and clickable/keyboard-accessible Open Telebar.
-- Content-bound QML generations so package updates do not rely on same-URL cache
-  freshness; an already-kept old service still requires a safe scoped recreation.
-- Corrected story/sidebar regression checks using the production width helper.
+## Remaining limits
 
-### Package and checks
-
-The x86-64 Linux archive contains one Rust ELF, five Bash entry shims, native UI,
-licenses and exact hash manifests. It requires glibc 2.34+, OpenSSL 3 and the
-[documented Omarchy runtime dependencies](README.md#requirements). TDLib is not
-redistributed. SHA256SUMS accompanies the archive. GitHub automatic source
-archives are development sources, not native installation packages.
-
-Exact exported-source checks passed 104 default Rust tests, with 24 explicitly
-ignored host/device/isolated acceptance cases, formatting, warnings-denied
-all-target Clippy, locked offline release build, 21,136 frozen replay inputs and
-18 supplementary valid inputs with zero differences. The inert legacy/shared-UI
-checks passed 297 Python contracts, with two missing-tool skips, and nine
-JavaScript suites. Native package/proxy/EOF/environment checks and unchanged
-actual-consumer QML evidence are qualified separately from user acceptance.
-The user confirmed opening the installed window from the compact view.
-
-### Known limitations
-
-This is a prerelease, not exhaustive migration or stable-release acceptance.
 The reported outgoing sent-video playback P1, forum-parent unread mismatch and
-historical window disappearance remain unresolved. All 170 commands on working
-accounts, perceived audio/camera quality, working-network recovery, authorized
-reverse rollback and independent whole-source security review are incomplete.
-The local Qt 6.12 recovery remains separate; clean-stock portability is not
-certified. Runtime diagnostics intentionally retain migration_complete=false.
-No Telegram test send, account logout, device capture or backend/shared-shell
-restart is performed to create this release.
-
-## 1.2.1-dev.2 (2026-10-07)
-
-Final checkpoint for this batch; supersedes the preliminary dev.1 tag.
-Application and QML fixture bytes are unchanged. Ubuntu hosted checks now stage
-input outside the private runner home and use privilege only for namespace setup.
-The payload runs with the runner uid/gid and no effective capabilities. The runner
-asserts an isolated network and read-only workspace before importing the suite.
-Resource, network and filesystem restrictions remain intact.
-
-[Hosted run 37536497815](https://github.com/PavelLizunov/omarchy-telebar/actions/runs/37536497815)
-passed on commit `910fbb82d5f674b4543d1fe38ac1944604a8156d`: three identity checks,
-279 Python checks (two skipped) and eight JavaScript suites. Final version metadata
-is checked again on the published dev.2 commit. Local omissions and live/audit
-limitations below remain; hosted success is not installed-client acceptance.
-The initial dev.1 and first setup-correction CI failures are retained in Actions.
-
-## 1.2.1-dev.1 (2026-10-07)
-
-Development checkpoint of the current Python/QML implementation. This is not a
-stable release, completed repository audit, or acceptance of the installed client.
-No Rust backend, TDLib upgrade, account migration or live deployment is included.
-
-### Included corrections
-
-- Require message identity, original-media membership and explicit TDLib export
-  permission before saving files or copying viewer photos.
-- Retain rejected text/file compositions and edits. Accept completion only for
-  the original account, chat, topic/thread and unchanged composition revision.
-- Preserve voice and auxiliary-send reply metadata on rejection; successful
-  reply-only completion leaves ordinary text, attachments and edits intact.
-- Retire stale mention/reaction navigation and delayed edit-Markdown callbacks.
-- Surface bounded startup-parameter failures without raw credentials/errors.
-- Bound tracked TDLib/IPC requests, expire them independently, protect reused IDs
-  and finalize owned resources without applying stale business results.
-- Return failures, not successful empty results, after malformed callbacks.
-- Reject malformed numeric/opaque media boundaries; preserve valid Unicode text
-  and paths. Clipboard cleanup deletes generated output, never selected uploads.
-- Enforce recording-finalization capacity before consuming recording ownership;
-  allocate video output before interrupting its recorder.
-- Include inert regression suites, versioned/licensed QML imports and a
-  network-isolated Python/JavaScript GitHub Actions workflow.
-
-### Verification evidence
-
-A fresh export of the staged checkpoint executed 279 Python checks with zero
-failures/errors, two missing-tool skips (`qrencode`, `desktop-file-validate`) and
-eight JavaScript suites in the reviewed network-isolated, read-only worker.
-Checkpoint metadata does not change the checked application or test bytes. The offscreen Qt evidence
-contains 164 passes across 17 suites, zero failures/skips/warnings, and sixteen
-personally inspected radius-0/8 captures. Rendering, geometry and interaction
-assertions are fixture evidence, not live desktop or hardware acceptance.
-
-Selected immutable corrective deltas received bounded advisory reviews. Full
-independent source/security review and complete personal source coverage remain
-unfinished. Hosted CI must be checked against the exact published commit; a
-workflow file or local pass is not hosted acceptance.
-
-### Known limitations
-
-- The installed plugin remains unchanged. The reported rich-post display failure
-  is not resolved by publishing this source checkpoint.
-- Video-note original-context routing, recording cancellation/account transitions
-  and recorded-file retry after Telegram rejection need further audit.
-- Sticker/GIF reply handling and other asynchronous sibling consumers still need
-  coverage; the main-composer fixes do not certify every send route.
-- Live microphone/camera, account/database transitions, quick-view audio output
-  following, compositor behavior, exhaustive contrast and accessibility are not
-  verified.
-- Fresh-environment portability, the complete audit and phone-first README
-  restructuring remain outstanding. No performance or Rust benefit is claimed.
-
-### Package and compatibility
-
-The checkpoint package contains QML, Python helpers, assets, manifests and notices.
-It does not bundle or rebuild TDLib; the existing pinned TDLib setup remains
-required. Account storage, keyring identifiers, runtime names and original licenses
-are preserved. Legacy context-free `file.save` callers now fail closed and must
-supply `chatId`, `messageId` and `fileId`.
-
-The archive is a source/plugin package, not a standalone compiled executable.
-Creating it does not install, enable or restart the plugin. Do not run Telebar and
-Omagram together against the same profile.
+historical window disappearance remain unresolved. Full 170-command working-account
+coverage, perceived media quality, working network/reverse rollback, clean-stock
+portability and independent security review are incomplete. Runtime diagnostics
+retain `migration_complete=false`. Source publication is not stable certification.

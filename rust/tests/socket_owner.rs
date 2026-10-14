@@ -9,49 +9,34 @@ use std::{
 use telebar_runtime::socket_owner::Owner;
 
 #[test]
-fn legacy_python_flock_and_rust_exclude_each_other_without_opening_profiles() {
+fn native_flock_and_socket_owner_exclude_each_other_without_opening_profiles() {
     use std::{
-        collections::BTreeMap,
-        time::{Duration, Instant},
+        fs::OpenOptions,
+        os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
     };
-    use telebar_runtime::process::{self, Managed};
-    let root = std::env::temp_dir().join(format!("telebar-legacy-lock-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("telebar-flock-{}", std::process::id()));
     fs::create_dir(&root).unwrap();
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-    let script = "import os,fcntl,sys,time\np=sys.argv[1]+'/omagram.lock'\nf=os.open(p,os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)\ntry: fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)\nexcept BlockingIOError: print('blocked',flush=True);sys.exit(73)\nprint('locked',flush=True)\ntime.sleep(2)\n";
-    let args = ["-I", "-c", script, root.to_str().unwrap()];
-    let mut legacy = Managed::start(
-        "/usr/bin/python3",
-        &args,
-        &BTreeMap::new(),
-        &[],
-        Duration::from_secs(3),
-        1024,
-    )
-    .unwrap();
-    let until = Instant::now() + Duration::from_secs(2);
-    loop {
-        assert!(
-            legacy.poll().unwrap().is_none(),
-            "legacy fixture stopped before lock"
-        );
-        if legacy.output_snapshot().0 == b"locked\n" {
-            break;
-        }
-        assert!(Instant::now() < until);
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    // These exact open/flock flags and names match the preserved Python owner.
-    // No Python daemon, TDLib, credentials or database is constructed here.
+    let path = root.join("omagram.lock");
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&path)
+        .unwrap();
+    assert_eq!(
+        unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
     let stale = UnixListener::bind(root.join("omagram.sock")).unwrap();
     let socket_inode = fs::symlink_metadata(root.join("omagram.sock"))
         .unwrap()
         .ino();
-    let lock_inode = fs::symlink_metadata(root.join("omagram.lock"))
-        .unwrap()
-        .ino();
+    let lock_inode = lock.metadata().unwrap().ino();
     let error = match Owner::acquire(&root, "omagram.sock", "omagram.lock") {
-        Ok(_) => panic!("Rust admitted while legacy lock held"),
+        Ok(_) => panic!("native owner admitted while lock held"),
         Err(error) => error,
     };
     assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
@@ -61,27 +46,25 @@ fn legacy_python_flock_and_rust_exclude_each_other_without_opening_profiles() {
             .ino(),
         socket_inode
     );
-    legacy.cancel().unwrap();
+    drop(lock);
     drop(stale);
-    let native = Owner::acquire(&root, "omagram.sock", "omagram.lock").unwrap();
+    let owner = Owner::acquire(&root, "omagram.sock", "omagram.lock").unwrap();
+    let competitor = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(&path)
+        .unwrap();
+    assert_eq!(competitor.metadata().unwrap().ino(), lock_inode);
     assert_eq!(
-        fs::symlink_metadata(root.join("omagram.lock"))
-            .unwrap()
-            .ino(),
-        lock_inode
+        unsafe { libc::flock(competitor.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        -1
     );
-    let refused = process::run(
-        "/usr/bin/python3",
-        &args,
-        &BTreeMap::new(),
-        &[],
-        Duration::from_secs(3),
-        1024,
-    )
-    .unwrap();
-    assert_eq!(refused.code, Some(73));
-    assert_eq!(refused.stdout, b"blocked\n");
-    drop(native);
+    assert_eq!(
+        std::io::Error::last_os_error().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+    drop(owner);
     assert!(!root.join("omagram.sock").exists());
     assert!(!root.join("database").exists());
     fs::remove_dir_all(root).unwrap();

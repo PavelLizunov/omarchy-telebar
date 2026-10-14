@@ -113,7 +113,7 @@ fn valid_action(action: &str) -> bool {
     };
     part(a, 21) && part(b, 41) && a != "global"
 }
-// Python repr is part of legacy validation errors. Values here are bounded
+// Compatibility representation is part of validation errors. Values are bounded
 // JSON; this implements its string/number/container spellings, not execution.
 fn py_string(s: &str) -> String {
     let quote = if s.contains('\'') && !s.contains('"') {

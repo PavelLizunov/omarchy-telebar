@@ -418,7 +418,7 @@ impl Application {
                 self.pending_open = None;
                 let mut event = target;
                 event["event"] = json!("open");
-                // Open events precede the admitted terminal response, as in Python.
+                // Open events precede the admitted terminal response.
                 let mut replies: Vec<_> = self
                     .windows
                     .iter()
@@ -507,7 +507,7 @@ impl Application {
                 }
             }
         }
-        // Python broadcasts the persisted switch before its terminal reply.
+        // Broadcast the persisted switch before its terminal reply.
         let mut ordered: Vec<_> = events.into_iter().map(|event| (0, event)).collect();
         ordered.append(&mut result.replies);
         result.replies = ordered;

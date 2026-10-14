@@ -1,212 +1,50 @@
-# Consumer visual review
+# Actual-consumer QML checks
 
-## Compact open-window action
+Fixtures load the real application/compact components with synthetic models.
+They do not establish production account actions, compositor placement, device
+capture, screen-reader behavior or perceived playback quality.
 
-`prepare_panel_action_fixture.py` loads the actual Panel, its native controller
-and QuickView with synthetic requests. Only KeyboardPanel's window boundary and
-Commons I/O are inert; no production socket, launcher, devices or compositor
-is constructed. `tst_panel_action.qml` checks the pictured Open Telebar label and
-mark through the real parent handler, unavailable service, draft/attachment and
-pending-send retention. `tst_quick.qml` also covers Tab-focus activation, Enter
-and Space. These are fixture pointer/key checks, not physical user input.
+## Native fixture preparation
 
 ```sh
-python3 -B tests/visual/prepare_panel_action_fixture.py /absolute/new/action-fixture
+node scripts/prepare-preview.mjs action /absolute/new/action-fixture
+node scripts/prepare-preview.mjs icon /absolute/new/icon-fixture
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input /absolute/new/action-fixture/tests/visual/tst_panel_action.qml -import /absolute/new/action-fixture/imports -import /absolute/new/action-fixture/inert
-```
-
-The QML service has `launcherRuntime: "rust-native-v1"`; a previous kept instance
-without that marker is not verified just because its backend heartbeat is ready.
-The native-generation packaging check binds all QML/SVG and the adjusted service
-launcher root to the source; same-URL cache residency and retained services remain
-separate lifecycle concerns.
-
-For MCP use `imports/qs` plus fixture root, explicit dependencies, locale, radius
-0 or 8, DPR 1 or 2, `readyProperty: ready`, and `focusOpen: true`. The loaded bar
-panel exposes `io.github.pavellizunov.telebar.action status` with only revision,
-service state and composition-presence/count flags. `openWindow` follows the
-same parent/service route as the button; it is an explicit local UI action, not
-a status query. Use the existing shell instance and preserve active work. No
-text, attachment paths, account names or credentials are returned.
-
-
-## Narrow-window list expansion
-
-`MainSidebarConsumer.qml` constructs the actual complete Main with `autoStart: false`,
-`socketPath: ""` and native surfaces unshown. It reparents only the real content
-subtree and injects synthetic accounts/chats. `prepare_sidebar_fixture.py` reuses
-the reviewed explicit Process/FileView overlay and native inert Commons adapter.
-It never constructs a production service or starts another shell.
-
-```sh
-node tests/sidebar-layout-test.js
-python3 -B tests/visual/prepare_sidebar_fixture.py /absolute/new/sidebar-fixture
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_sidebar.qml -import tests/visual/imports -import tests/visual/imports/inert
-```
-
-The complete-Main MCP consumer checks the resulting detailed ChatList at width 249.
-Pass the generated `imports/qs` and fixture root, explicit dependencies, locale,
-DPR and `readyProperty: ready`. Native offscreen Hyprland initialization reports
-`$HYPRLAND_INSTANCE_SIGNATURE is unset. Cannot connect to hyprland.`; only that
-known warning is an explicitly reviewed report-policy exception, not a clean
-strict-warning pass. Sidebar QtTest separately exercises pointer and keyboard
-collapse/expand at widths 249, 320, 640 and 900, plus resizing, radius and drag
-controls. Complete Main activation is a signal/state check, not physical input.
-Very narrow expanded lists intentionally leave less conversation space; collapse
-restores it. These checks do not establish the separate quick-panel launcher
-failure, compositor minimum-size enforcement, live draft retention or every theme.
-
-## Native Telebar mark
-
-`prepare_icon_fixture.py` creates a new private fixture with the actual RingMark,
-BarWidget and BarMenu plus current installed native BarIconButton/WidgetButton
-geometry. Commons I/O is explicitly bound to a unique inert module. Only the
-owning Panel and PopupCard window boundaries are replaced with inert items;
-there is no service, production socket, process, camera or compositor startup.
-The native host color references are explicitly qualified for Qt 6.12; source
-and transformation hashes are saved in `fixture-inputs.json`.
-
-```sh
-python3 -B tests/icon_contract_test.py
-python3 -B tests/visual/prepare_icon_fixture.py /absolute/new/icon-fixture
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input /absolute/new/action-fixture/tests/visual/tst_quick.qml -import /absolute/new/action-fixture/imports -import /absolute/new/action-fixture/inert
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input /absolute/new/icon-fixture/tests/visual/tst_ring_mark.qml -import /absolute/new/icon-fixture/imports -import /absolute/new/icon-fixture/inert
 QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input /absolute/new/icon-fixture/tests/visual/tst_bar_icon.qml -import /absolute/new/icon-fixture/imports -import /absolute/new/icon-fixture/inert
 ```
 
-For MCP, use the fixture's `imports/qs` root only, not its dynamic QtTest inert
-Quickshell module. `RingMarkConsumer.qml` shows native-size and enlarged actual
-vectors plus the desktop file SVG. `BarIconConsumer.qml` loads the real bar and
-checks ready/unavailable/unread, horizontal/vertical geometry, theme color and
-native optical-canvas bindings. Render at DPR 1/2 and radii 0/8 with explicit
-inputs, dependencies and `readyProperty: ready`; readiness fails closed on a
-stored assertion. The source contracts require a shared stepped contour and
-nontext contrast on the named light/dark palettes, not universal theme contrast.
-These checks exercise left/right pointer routing on inert panel/menu owners.
-They do not prove popup positioning, screen-reader or physical desktop behavior.
+The Node.js tool copies admitted actual UI and binds product Process/FileView to
+a uniquely named inert module. The client's default socket is blank before
+construction. Native Commons I/O is bound explicitly to a relative inert import;
+same-name shadowing is not presumed. Icon mode replaces only the internal panel/
+popup window boundary. Action mode retains actual Panel/controller/QuickView with
+an inert KeyboardPanel surface. The fixture tool does not deploy, start the shared
+shell or connect to a production socket.
 
+The Open Telebar label and mark exercise the real parent handler, unavailable
+service and pending attachment/send/draft retention. Other suites preserve theme
+radius, mark optical/hit geometry, unread states, sidebar interactions and shared
+composition. `FixtureApp.qml` supplies only synthetic requests/media.
 
-Telebar rename checks use `tst_rename.qml` with the inert import adapter below.
-Create `/tmp/telebar-rename-evidence/` before running it. It loads the actual setup,
-login, quick-view and bar-menu components, checks their displayed names, and writes
-supplemental QtTest PNGs at theme radii 0 and 8. `tst_bar_menu.qml` separately checks
-click and keyboard action routing. These captures do not verify the Main.qml window
-title, compositor placement, production account operations or MCP acceptance.
+## Offscreen rendering
 
-Fixtures load the actual application QML components with `FixtureApp.qml` synthetic
-models. Requests are inert; no account, network, camera, microphone or production
-socket is used. `sample-photo.svg` is locally authored fixture media.
+Discover the currently available QML-preview MCP and call healthcheck. For icon
+or action renders, use generated `imports/qs` and fixture root, explicit dependency
+paths, locale, DPR 1/2, radius 0/8, a settled `ready` property and strict diagnostics.
+The native static adapter is offscreen, not a sandbox. Inspect each PNG through
+the harness. Geometry/hash checks, image/native design review and pointer/key
+QtTest are separate evidence. Do not start a second shared shell or change the
+live theme to produce preview evidence.
 
-Reviewed states: icon sheet, normal/compact/long chat, topics and retry error, settings
-profile/connection/shortcuts, initial setup, phone and password login, new conversation,
-forward picker, poll composer, user info, quick chat list/reply, media controls, photo,
-story error, emoji, sticker empty state, context menu and reacting people.
+`MainSidebarConsumer.qml` preserves complete Main with `autoStart:false` and blank
+socket, unshown native surfaces and the actual content subtree. Direct signal/
+state activation is not physical desktop input. `Sidebar.qml` uses actual
+SidebarHandle. `tst_send_contract.qml` keeps recorder CaptureSession inactive and
+checks original-destination/recovery ownership without devices.
 
-`tst_message_text.qml` exercises native pointer fragment selection, Ctrl+C and
-selected-text context-menu copying in the actual ChatView, rich-post and QuickView
-consumers. It verifies full compact message height, wheel scrolling and last-line
-reachability. Actual Service/OmagramClient events cover peer status updates,
-account filtering and queued-chat races with inert Socket/Hyprland adapters.
-These checks do not establish physical compositor input or live-account privacy.
-`tst_contrast.qml` measures actual message-surface body, sender, time and selected
-text colors across representative dark/light/installed palettes and radii 0/8.
-It checks online placement beside the name, last-seen transitions and narrow
-layout. This does not certify every theme, accessibility reader or physical UI.
-
-The composed chat fixture is not the `Main.qml` window: host/compositor placement
-requires separate live checks. Sidebar.qml uses the same SidebarHandle as Main.qml;
-its geometry and interactions are measured offscreen. Bar.qml attempts the actual bar
-consumer; missing PopupWindow/host imports are a blocker, not a visual pass.
-
-Discover the currently loaded QML-preview MCP tools and call healthcheck before
-rendering; a configuration file or historical version does not prove availability.
-The recorded context/lifecycle audit preflight returned wrapper and renderer 0.3.0
-with Qt 6.11.2. That evidence applies to its recorded run, not every future session.
-Render with explicit importPaths, locale, DPR, readyProperty and dependencyPaths. measureObjects records
-named logical scene bounds. Historical reports describe the earlier legacy renderer;
-they are not evidence for subsequently changed files.
-The bundled `tests/visual/imports` adapter supplies inert Quickshell Process/FileView
-and versioned qs.Commons tokens. Its provenance, MIT notice and limits are recorded
-in `imports/README.md` and `imports/provenance.json`. No temporary external imports
-are required for the content consumer tests. Effects/masks and media playback are not verified by software
-captures. Record dependency hashes and renderer limitations in the evidence manifest.
-
-`mcp_all_pages.py --paired-radius` covers 223 cases, including QR preparation and
-unavailable-image states at radii 0/8. `warningsPolicy: error` and explicit
-`geometryChecks` gate renders; PNG inspection and interaction checks remain separate.
-
-View each PNG through the harness. Do not start an external image viewer or production
-panel to obtain preview evidence. No global theme or renderer modifications are needed.
-
-Rich-post checks use the actual MessageRow, QuickView, shared RichMessageView and photo
-viewer with synthetic text/image/text blocks. They cover order, content updates, radii 0/8,
-partial-content failure/stale callbacks, keyboard spoiler activation and multiple photos
-with the same message id. Run `tst_rich.qml` with the same inert import adapter below.
-`tst_rich_capture.qml` writes supplemental QtTest PNGs to `/tmp/omagram-rich-evidence/`
-(create that directory first); these do not establish QML-preview MCP acceptance.
-
-Interaction check for original matched-contour transitions:
-
-```bash
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_morph.qml
-```
-
-This verifies intermediate geometry and settled states, not native GPU frame pacing.
-
-Consumer keyboard/state checks (settings initial load/Escape, menu arrows/Enter/Escape,
-forum selection, QR/phone/password transitions) use the existing inert adapter:
-
-```bash
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_consumers.qml -import tests/visual/imports -import tests/visual/imports/inert
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_sidebar.qml -import tests/visual/imports -import tests/visual/imports/inert
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_quick.qml -import tests/visual/imports -import tests/visual/imports/inert
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_bar_menu.qml -import tests/visual/imports -import tests/visual/imports/inert
-```
-
-The review is a focused native UI walkthrough, not every dialog/action or every theme.
-Narrow.qml and its state wrappers cover a 15-unit monospace font with scaled spacing,
-compact actions, drafts, information overlay, selection, confirmation, attachments and
-recording. The consumer test resizes the actual ChatView and checks draft retention,
-Send, overflow menu activation/dismissal and information layout with inert requests.
-Sidebar tests exercise click, drag from the icon and rail, drag-release without an
-accidental toggle, limits, keyboard resizing, hover pixels and radius 0 → 8 → 0.
-Video/camera capture and network actions are not executed in fixtures.
-`tst_send_contract.qml` exercises delayed video signals with the actual recorder's
-CaptureSession Loader held inactive. It checks original destination/reply ownership,
-cancellation while stopping, stale completion and overlay send admission without
-opening devices. `SendContractConsumer.qml` supports `pickerKind` (`sticker`,
-`saved-gif`, `inline-gif`) and `video: true` for inert pending/rejected renders. A loading/empty
-fixture is evidence of that state only. The actual bar render is blocked by the installed
-adapter's missing `Quickshell.Hyprland` plugin; the QuickView content is reviewed separately.
-BarMenuConsumer.qml now loads the same BarMenu.qml used by BarWidget.qml, so content,
-action routing and theme geometry can be checked independently of PopupCard's window.
-This does not verify the host popup's placement, focus grab or lifecycle.
-QuickConsumer.qml covers sent/read/sending/failed receipts, inert send success/failure,
-long drafts, attachments and recording layout. SettingsConsumer.qml covers narrow
-editing/confirmation and SearchConsumer.qml covers scoped search and ten accounts.
-
-FileDialogsConsumer.qml loads the actual shared FilePicker from ChatView and
-SettingsView with synthetic local files. `tst_file_dialogs.qml` checks multiple
-attachments, image filtering/profile request, cancellation, repeated open/close,
-path validation and radius changes. It does not reconnect USB devices or write to
-mounted media. The Qt 6.11.2 native-dialog fallback was tested and rejected because
-Ctrl-click did not preserve multi-selection.
-
-```sh
-QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software QT_QPA_PLATFORMTHEME=gtk3 QT_QUICK_CONTROLS_STYLE=Fusion /usr/lib/qt6/bin/qmltestrunner -input tests/visual/tst_file_dialogs.qml -import tests/visual/imports -import tests/visual/imports/inert
-```
-
-During the USB workaround review the configured MCP wrapper reported 0.2.0 while
-its renderer reported 0.3.0; render failed with `Renderer/wrapper version mismatch`.
-`tst_filepicker_capture.qml` provides supplemental actual-consumer QtTest captures,
-not a substitute MCP PASS. See REVIEW-USB-2026-09-30.md for scoped evidence.
-
-First-open Attach regression tests now exercise the actual full-window paperclip,
-compact overflow selection and profile-photo action without a seeded directory.
-QuickView tests exercise its paperclip, cancellation, two-file selection and inert
-message.sendFiles routing. `tst_media_open.qml` loads the actual shell media viewer,
-checks photo/video navigation and delayed file.open, without starting a video player.
-`tst_attach_capture.qml` records supplemental native consumer states at radii 0/8.
-Quick-view geometry checks now cover width transitions 350→534→700→350→534 with
-font sizes 12/14/15/18 and empty/multiline drafts. Each control's hit area must fit
-inside the composer and must not overlap the text viewport. Settled-state images
-alone had missed the conditional-anchor transition defect.
+The bundled [inert imports](imports/README.md) and their provenance remain for
+content-only QtTest. Fixtures requiring unsupported native windows/imports are
+not automatically certified by that adapter. Optional suites requiring external
+media/native host contexts stay separate from default checks.

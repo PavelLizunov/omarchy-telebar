@@ -1,0 +1,49 @@
+name: Native runtime checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/telebar-rust-target
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config ffmpeg bubblewrap nodejs gzip
+          rustup update stable --no-self-update
+          rustup default stable
+      - name: Source and shared UI contracts
+        run: |
+          node scripts/check-source.mjs
+          for test in tests/*-test.js tests/*-test.mjs; do node "$test"; done
+      - name: Native formatting, tests and lint
+        run: |
+          cargo fmt --manifest-path rust/Cargo.toml --check
+          cargo test --manifest-path rust/Cargo.toml --locked
+          cargo clippy --manifest-path rust/Cargo.toml --all-targets --locked -- -D warnings
+          cargo build --manifest-path rust/Cargo.toml --release --locked
+      - name: Exact native package and disposable socket
+        run: |
+          "$CARGO_TARGET_DIR/release/telebar-runtime" --package "$PWD" "$RUNNER_TEMP/telebar-native-base"
+          node scripts/native-ui-generation.mjs "$RUNNER_TEMP/telebar-native-base" "$RUNNER_TEMP/telebar-native-package"
+          # Ubuntu restricts namespace setup; the payload runs as the runner with no caps.
+          sudo -- timeout 30s bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL \
+            --uid "$(id -u)" --gid "$(id -g)" \
+            --ro-bind /usr /usr --symlink usr/bin /bin --symlink usr/lib /lib --symlink usr/lib64 /lib64 \
+            --proc /proc --dev /dev --tmpfs /tmp --dir /home \
+            --ro-bind /etc/passwd /etc/passwd --ro-bind /etc/group /etc/group \
+            --ro-bind "$GITHUB_WORKSPACE" /workspace --ro-bind "$RUNNER_TEMP/telebar-native-package" /candidate \
+            --clearenv --setenv PATH /usr/bin --setenv TELEBAR_ISOLATED_PACKAGE 1 \
+            /usr/bin/node /workspace/tests/native-package-consumer.mjs /candidate

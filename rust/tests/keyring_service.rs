@@ -248,8 +248,7 @@ fn actual_private_keyring_and_driver_startup_preserve_account_key_identity() {
         assert!(!driver.runtime.engine.accounts[id].ready);
         assert!(driver.runtime.metadata[id].bridge_ready);
     }
-    // Bidirectional legacy/native transition on these unauthorized disposable
-    // profiles. The same lock excludes Python before it reads keys or loads TDLib.
+    // Native clients close before releasing the original ownership lock.
     let lock_identity = |path: &Path| {
         let meta = fs::metadata(path).unwrap();
         (meta.dev(), meta.ino())
@@ -261,60 +260,9 @@ fn actual_private_keyring_and_driver_startup_preserve_account_key_identity() {
     )
     .unwrap();
     let original_lock = lock_identity(&root.join("runtime/omagram.lock"));
-    let mut legacy_environment = context.environment.clone();
-    for name in ["TELEBAR_PRIVATE_ROOT", "TELEBAR_TEST_TDLIB"] {
-        legacy_environment.insert(name.into(), std::env::var(name).unwrap());
-    }
-    legacy_environment.insert("TELEBAR_PRIVATE_KEYRING".into(), "1".into());
-    legacy_environment.insert("PYTHONDONTWRITEBYTECODE".into(), "1".into());
-    let oracle = std::path::PathBuf::from(std::env::var_os("TELEBAR_PRIVATE_ROOT").unwrap())
-        .join("legacy-oracle/handoff.py");
-    let blocked = telebar_runtime::process::run(
-        "/usr/bin/python3",
-        &["-I", oracle.to_str().unwrap(), "--lock-refusal"],
-        &legacy_environment,
-        &[],
-        Duration::from_secs(4),
-        4096,
-    )
-    .unwrap();
-    assert_eq!(blocked.code, Some(73));
-    assert_eq!(blocked.stdout, b"blocked\n");
-    assert!(!blocked.timed_out && !blocked.truncated);
-    // Official clients close and the receiver wrapper drops before releasing
-    // the ownership lock. No file/database copy or simultaneous native owner.
     driver.close(Duration::from_secs(5)).unwrap();
     drop(driver);
     drop(owner);
-    let legacy = telebar_runtime::process::run(
-        "/usr/bin/python3",
-        &["-I", oracle.to_str().unwrap(), "--handoff"],
-        &legacy_environment,
-        &[],
-        Duration::from_secs(15),
-        16384,
-    )
-    .unwrap();
-    if !legacy.ok() {
-        let diagnostic = std::str::from_utf8(&legacy.stderr)
-            .ok()
-            .and_then(|text| text.lines().last())
-            .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-            .unwrap_or_default();
-        let stage = diagnostic["handoffFailureStage"]
-            .as_str()
-            .unwrap_or("unknown");
-        let kind = diagnostic["exceptionType"].as_str().unwrap_or("unknown");
-        panic!(
-            "legacy private handoff failed at {stage} ({kind}); exit {:?}; timeout {}",
-            legacy.code, legacy.timed_out
-        );
-    }
-    let report: serde_json::Value = serde_json::from_slice(&legacy.stdout).unwrap();
-    assert_eq!(report["legacyOfficialAccounts"], 2);
-    assert_eq!(report["closed"], 2);
-    assert_eq!(report["keysPreserved"], true);
-    assert_eq!(report["catalogPreserved"], true);
     let reopened_owner = telebar_runtime::socket_owner::Owner::acquire(
         &root.join("runtime"),
         "handoff.sock",
@@ -465,7 +413,7 @@ fn actual_private_keyring_and_driver_startup_preserve_account_key_identity() {
     let _ = (daemon_pid, bus_pid);
     println!(
         "{}",
-        json!({"actualSecretTool":true,"privateSecretService":true,"accountKeysPreserved":true,"asynchronousOfficialStartupAccounts":3,"sequentialDatabaseReopen":true,"accountAdd":true,"credentialsSetDriver":true,"replyBeforeRoutedStartup":true,"invalidSavePreservesCredentials":true,"disposableLogoutAndRecreate":true,"logoutKeyCatalogIdentityPreserved":true,"authorization":"phone","workingProfiles":false,"realUserSecrets":false,"helpersReaped":true,"landlockFileUnixDeviceDenial":true,"systemHelperRootIdentity":true,"legacyPythonLockRefusalBeforeStartup":true,"officialRustPythonRustProfileHandoff":true,"sameLockInode":true})
+        json!({"actualSecretTool":true,"privateSecretService":true,"accountKeysPreserved":true,"asynchronousOfficialStartupAccounts":3,"sequentialDatabaseReopen":true,"accountAdd":true,"credentialsSetDriver":true,"replyBeforeRoutedStartup":true,"invalidSavePreservesCredentials":true,"disposableLogoutAndRecreate":true,"logoutKeyCatalogIdentityPreserved":true,"authorization":"phone","workingProfiles":false,"realUserSecrets":false,"helpersReaped":true,"landlockFileUnixDeviceDenial":true,"systemHelperRootIdentity":true,"nativeOwnerRetiresBeforeProfileReopen":true,"sameLockInode":true})
     );
     fs::remove_dir_all(root).unwrap();
 }

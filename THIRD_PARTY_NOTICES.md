@@ -1,47 +1,43 @@
 # Third-party notices
 
-Omagram's code is MIT (see `LICENSE`). It talks to Telegram through TDLib, which is not part of this
-repository: it is built on your computer when Omagram is set up, from https://github.com/tdlib/td
-(Boost Software License 1.0, Copyright Aliaksei Levin and Arseny Smirnov).
+Telebar is based on Omagram by ReidenXerx. Original MIT copyright and permission
+remain unchanged in `LICENSE`.
+
+## TDLib
+
+Official TDLib is built locally from https://github.com/tdlib/td at
+`d1085f9cebc5a62379991ae1652673954f229c1f` (1.8.67). It is not redistributed here.
+Boost Software License 1.0, copyright Aliaksei Levin and Arseny Smirnov.
 
 ## Emoji, symbols and kaomoji
 
-`app/emoji/` is taken unchanged from the Omarchy emoji picker plugin by the same author
-(https://github.com/ReidenXerx/omarchy-emoji-picker, MIT): `EmojiModel.js`, and its data files, which
-that plugin's `tools/build-data.py` generates from:
+`app/emoji/` originates in ReidenXerx's Omarchy emoji picker, MIT:
+https://github.com/ReidenXerx/omarchy-emoji-picker. Its emoji data uses Unicode
+Emoji 16.0 and CLDR en/uk/ru annotations at `1aaabe99aa65`, Unicode License V3.
+`LICENSES/Unicode-3.0.txt`, copyright 1991-2026 Unicode, Inc.
 
-- Unicode emoji data: `emoji-test.txt`, Unicode Emoji 16.0 (https://www.unicode.org/Public/emoji/16.0/),
-  for the emoji, their grouping, order and skin tones.
-- Unicode CLDR annotations for English, Ukrainian and Russian (https://github.com/unicode-org/cldr-json,
-  revision `1aaabe99aa65`), for the names and keywords of emoji and symbols.
+Kaomoji originate in https://github.com/w33ble/emoticon-data at `92b6211ec2a9`, MIT,
+`LICENSES/emoticon-data-MIT.txt`, copyright 2014 Joe Fleming. Local tag/search
+translations do not change the original kaomoji.
 
-  Both under the Unicode License V3, `LICENSES/Unicode-3.0.txt`. Copyright © 1991-2026 Unicode, Inc.
+## MTProto WebSocket algorithms
 
-- emoticon-data (https://github.com/w33ble/emoticon-data, revision `92b6211ec2a9`) for the kaomoji, whose
-  tags were grouped and given Ukrainian and Russian search words; the kaomoji themselves are unchanged.
-  MIT, `LICENSES/emoticon-data-MIT.txt`. Copyright (c) 2014 Joe Fleming.
+`rust/src/proxy_crypto.rs` and the native relay adapt algorithms from
+https://github.com/Flowseal/tg-ws-proxy at
+`caa949bee0873d2b95dfb4fbeb1b7868b0ee3843`, MIT, copyright 2026 Flowseal.
+The exact license remains at `bin/vendor/flowseal/LICENSE`; generated packages
+place it at `LICENSES/Flowseal-MIT.txt`. No upstream tray, updater or server list
+is bundled. Native TLS uses system trust and fixed Telegram destinations.
 
-## Bundled MTProto WebSocket transport
+## Native dependencies and interface drawings
 
-`bin/vendor/flowseal/transport.py` and `websocket.py` adapt transport algorithms from
-https://github.com/Flowseal/tg-ws-proxy, revision
-`caa949bee0873d2b95dfb4fbeb1b7868b0ee3843`. MIT, copyright (c) 2026 Flowseal.
-The license is preserved in `bin/vendor/flowseal/LICENSE`; local changes are described
-in that directory's README. The Rust candidate's `rust/src/proxy_crypto.rs` adapts
-the same handshake/packet algorithms and retains this attribution. Native
-packages also preserve the MIT license as `LICENSES/Flowseal-MIT.txt`. No Flowseal
-tray UI, updater or server list is bundled.
+Cargo.lock pins the runtime graph. OpenSSL bindings use system OpenSSL 3;
+current OpenSSL and the Rust openssl crate are Apache-2.0. Tokio/Tungstenite are
+MIT; native-tls and other dual-licensed crates permit MIT/Apache-2.0 as applicable.
+Distributed native release archives include dependency version/license texts under
+`LICENSES/rust-dependencies/`. A successful build is not an independent legal or
+vulnerability audit; consult each dependency's metadata and upstream license.
 
-Rust candidate dependencies are pinned in `rust/Cargo.lock`. OpenSSL bindings use
-the system OpenSSL library (Apache-2.0 for current OpenSSL); the `openssl` Rust
-crate is Apache-2.0. Tokio and Tungstenite are MIT; native-tls is MIT/Apache-2.0.
-Dependency metadata and upstream license files remain the authoritative notices.
-Native release archives include the compiled Linux runtime dependencies’ license
-texts and version inventory in `LICENSES/rust-dependencies/`. This distribution
-uses their MIT, Apache-2.0, ISC, Zlib and Unicode licenses as applicable; a
-successful build is not a vulnerability or independent license audit.
-
-## Interface drawings
-
-`app/Icons.js` contains original SVG drawings created for this fork, under this
-repository's MIT license. No Lucide/Feather assets are included.
+`app/Icons.js`, the paper-plane contour and local interface drawings are original
+MIT artwork for this fork, not Telegram's official logo or Lucide/Feather assets.
+User-provided media and Unicode emoji remain their original artwork.

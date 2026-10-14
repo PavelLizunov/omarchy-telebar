@@ -211,7 +211,7 @@ fn select_photo<'a>(
     } else {
         choices.is_empty()
     };
-    // Python max/min retain the first equal key, unlike Iterator::max_by_key.
+    // Preserve the first equal key, unlike Iterator::max_by_key.
     candidates.iter().copied().reduce(|a, b| {
         if if minimize {
             b.0 * b.1 < a.0 * a.1

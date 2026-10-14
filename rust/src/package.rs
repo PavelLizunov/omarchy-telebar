@@ -97,7 +97,7 @@ fn collect(source: &Path, store: &Storage, path: &str, files: &mut Vec<Input>) -
 }
 fn shim(mode: &str) -> String {
     // Bash privileged mode suppresses BASH_ENV and exported function imports.
-    // Fixed argv/quoted location preserve spaces; no Python or shell evaluation.
+    // Fixed argv/quoted location preserve spaces; no shell evaluation.
     format!(
         "#!/usr/bin/bash -p\nset -euo pipefail\nexport PATH=/usr/bin\nunset BASH_ENV ENV CDPATH GLOBIGNORE\nexec -- \"${{BASH_SOURCE[0]%/*}}/telebar-runtime\" {mode} \"$@\"\n"
     )

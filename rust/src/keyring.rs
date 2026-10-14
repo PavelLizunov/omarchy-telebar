@@ -34,7 +34,7 @@ pub fn valid_credentials(id: &str, hash: &str) -> bool {
             .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
 pub fn valid_key(key: &str) -> bool {
-    // Python's validated decoder accepts nonzero trailing bits. Preserve the
+    // The compatible stored decoder accepts nonzero trailing bits. Preserve the
     // existing key representation; never replace a stored key to normalize it.
     GeneralPurpose::new(
         &ALPHABET,

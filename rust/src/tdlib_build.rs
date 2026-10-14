@@ -1,4 +1,4 @@
-//! Pinned official TDLib build helper; no Python runtime or system installation.
+//! Pinned official TDLib build helper; no system installation.
 use crate::{launcher::Context, process, storage::Storage, td::Td};
 use serde_json::json;
 use std::{io, path::Path, time::Duration};

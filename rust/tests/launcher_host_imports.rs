@@ -9,7 +9,7 @@ use telebar_runtime::launcher::Context;
 
 #[test]
 #[ignore = "explicit host import metadata only; no QML/window/startup"]
-fn normal_launcher_admits_root_owned_imports_in_private_runtime_without_python() {
+fn normal_launcher_admits_root_owned_imports_in_private_runtime() {
     assert_eq!(
         std::env::var("TELEBAR_HOST_IMPORTS_READONLY").as_deref(),
         Ok("1")

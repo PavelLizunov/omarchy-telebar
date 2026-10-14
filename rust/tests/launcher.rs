@@ -76,7 +76,7 @@ fn native_launcher_keeps_identity_entries_and_existing_owner() {
         context.plugin.join("bin/omagram").display()
     )));
     assert!(!entry.contains("python"));
-    let legacy = entry.replace("Exec=", "Exec=/usr/bin/python3 ");
+    let legacy = entry.replace("Exec=", "Exec=/obsolete/launcher ");
     fs::write(&path, legacy).unwrap();
     assert_eq!(context.install_desktop_entry().unwrap(), "written");
     assert_eq!(fs::read_to_string(&path).unwrap(), entry);
