@@ -106,9 +106,32 @@ QtObject {
     pendingPhotoRequest = null
     if (callback) callback({ ok: photoError === "", error: photoError, result: { canSave: photoCanSave } })
   }
+  property var searchData: []
+  property var searchRequests: []
+  property var pendingSearches: []
+  property bool holdSearch: false
+  property string searchError: ""
+  property var aroundHistory: []
+  function completeSearch(index) {
+    var pending = pendingSearches[index]
+    if (!pending) return
+    var found = searchData.filter(function (message) {
+      return message.chatId === pending.args.chatId && (!pending.args.fromMessageId || message.id < pending.args.fromMessageId)
+        && Model.previewOf(message).toLowerCase().indexOf(pending.args.query.toLowerCase()) >= 0
+    })
+    pending.callback({ ok: searchError === "", error: searchError,
+      result: { messages: found.slice(0, pending.args.limit), nextFromMessageId: found.length > pending.args.limit ? found[pending.args.limit - 1].id : 0 } })
+  }
   property var lastRequest: null
   function request(cmd, args, callback) {
     lastRequest = { cmd: cmd, args: args }
+    if (cmd === "messages.search") {
+      searchRequests = searchRequests.concat([args])
+      var index = pendingSearches.length
+      pendingSearches = pendingSearches.concat([{ args: args, callback: callback }])
+      if (!holdSearch) Qt.callLater(function () { completeSearch(index) })
+      return
+    }
     if (cmd === "message.markdown") {
       pendingMarkdown = callback
       return
@@ -137,7 +160,7 @@ QtObject {
     if (cmd === "settings.set") result = { settings: { showStories: args.settings.showStories } }
     if (cmd === "topics.list") result = { topics: topicData, next: null }
     else if (cmd === "folders.get") result = { folders: [{ id: 1, name: "Work", groups: true, included: [], pinned: [], excluded: [] }], mainPosition: 0 }
-    else if (cmd === "chat.history" || cmd === "topic.history") result = { messages: history }
+    else if (cmd === "chat.history" || cmd === "topic.history") result = { messages: args.offset < 0 ? aroundHistory : history }
     else if (cmd === "privacy.get") result = { settings: { status: { base: "contacts", allowed: 0, restricted: 0 }, photo: { base: "everybody" }, phone: { base: "contacts" }, findByPhone: { base: "contacts" }, bio: { base: "everybody" }, birthdate: { base: "contacts" }, forwards: { base: "everybody" }, calls: { base: "contacts" }, invites: { base: "contacts" } } }
     else if (cmd === "notifications.get") result = { scopes: { private: { muted: false, preview: true }, groups: { muted: false, preview: true }, channels: { muted: true, preview: false } } }
     else if (cmd === "blocked.list") result = { total: 0, senders: [] }

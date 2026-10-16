@@ -18,7 +18,9 @@ Rectangle {
   property bool compactMode: true
   property bool showMessageStart: false
   property bool longMessageReady: false
-  property bool ready: state === "long-message" ? longMessageReady : quick.history.length >= 4
+  property bool ready: state === "long-message" ? longMessageReady
+    : state === "message-results" || state === "message-empty" || state === "message-error" ? quick.query !== "" && !quick.searchingMessages
+    : quick.history.length >= 4
   property alias serviceModel: model
   property alias consumer: quick
   FixtureApp {
@@ -43,7 +45,15 @@ Rectangle {
     Color.foreground = model.foreground
     if (preview.peerStatus) model.chats = model.chats.map(function (chat) { return chat.id === 101 ? Object.assign({}, chat, { status: preview.peerStatus }) : chat })
     quick.reset(101, 0)
-    if (state === "search" || state === "search-empty") {
+    if (state === "message-results" || state === "message-empty" || state === "message-error" || state === "message-loading") {
+      model.searchData = [{ id: 500, chatId: 101, date: 1690726000, outgoing: false, senderName: "Alex Demo",
+        content: { kind: "text", text: "The old message with the meeting address.", entities: [] } }]
+      model.holdSearch = state === "message-loading"
+      model.searchError = state === "message-error" ? "Could not search messages: synthetic connection failure" : ""
+      quick.focusSearch()
+      quick.focusItem.text = state === "message-empty" ? "absent phrase" : "meeting"
+    }
+    else if (state === "search" || state === "search-empty") {
       quick.focusSearch()
       if (state === "search-empty") quick.focusItem.text = "no-synthetic-chat-matches"
     }

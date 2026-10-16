@@ -72,8 +72,16 @@ Item {
   readonly property var chats: quick.ready ? quick.service.chats : []
   property string query: ""
   property bool searchOpen: false
-  readonly property string searchRevision: "compact-chat-search-v1"
-  readonly property var results: Model.filterChats(quick.chats, quick.query).slice(0, 60)
+  readonly property string searchRevision: "compact-message-search-v2"
+  property bool messageSearch: false
+  property var messageResults: []
+  property bool searchingMessages: false
+  property string searchError: ""
+  property real nextSearchMessageId: 0
+  property int searchSerial: 0
+  property real focusedMessageId: 0
+  readonly property var results: quick.searchOpen && quick.messageSearch ? quick.messageResults
+    : Model.filterChats(quick.chats, quick.query).slice(0, 60)
   property int cursor: 0
   readonly property var highlighted: quick.results[quick.cursor] || null
   property real replyChatId: 0
@@ -142,7 +150,75 @@ Item {
     return items
   }
 
-  onQueryChanged: quick.cursor = 0
+  onQueryChanged: { quick.cursor = 0; quick.restartMessageSearch() }
+  Timer { id: messageSearchDelay; interval: 350; onTriggered: quick.searchMessages(false) }
+
+  function restartMessageSearch() {
+    quick.searchSerial++
+    messageSearchDelay.stop()
+    quick.messageResults = []
+    quick.nextSearchMessageId = 0
+    quick.searchError = ""
+    quick.searchingMessages = quick.searchOpen && quick.messageSearch && quick.query.trim() !== "" && quick.ready
+    if (quick.searchingMessages) messageSearchDelay.restart()
+  }
+
+  function searchMessages(more) {
+    if (!quick.searchOpen || !quick.messageSearch || !quick.ready || !quick.query.trim() || (more && quick.searchingMessages)) return
+    var serial = quick.searchSerial, chatId = quick.replyChatId, account = quick.activeAccount
+    var args = { chatId: chatId, query: quick.query.trim(), limit: 30 }
+    if (more) args.fromMessageId = quick.nextSearchMessageId
+    quick.searchingMessages = true
+    quick.searchError = ""
+    quick.request("messages.search", args, function (answer) {
+      if (serial !== quick.searchSerial || account !== quick.activeAccount || chatId !== quick.replyChatId || !quick.opened) return
+      quick.searchingMessages = false
+      if (!answer.ok) { quick.searchError = answer.error || "Could not search messages"; return }
+      var found = (answer.result.messages || []).filter(function (m) { return m.chatId === chatId })
+      var rows = more ? quick.messageResults.slice() : []
+      for (var message of found) if (!rows.some(function (m) { return m.id === message.id })) rows.push(message)
+      quick.messageResults = rows.slice(0, 300)
+      var next = answer.result.nextFromMessageId || 0
+      quick.nextSearchMessageId = rows.length < 300 && next !== (args.fromMessageId || 0) ? next : 0
+    })
+  }
+
+  function chooseResult() {
+    if (!quick.highlighted) return
+    if (quick.messageSearch && quick.searchOpen) quick.openFoundMessage(quick.highlighted)
+    else quick.reply(quick.highlighted.id)
+  }
+
+  function openFoundMessage(message) {
+    if (!message || message.chatId !== quick.replyChatId || !quick.ready) return
+    historyDelay.stop()
+    var serial = ++quick.historySerial, searchSerial = quick.searchSerial
+    var account = quick.activeAccount, chatId = quick.replyChatId
+    quick.searchingMessages = true
+    quick.request("chat.history", { chatId: chatId, fromMessageId: message.id, offset: -15, limit: 30 }, function (answer) {
+      if (serial !== quick.historySerial || searchSerial !== quick.searchSerial || account !== quick.activeAccount || chatId !== quick.replyChatId || !quick.opened) return
+      quick.searchingMessages = false
+      if (!answer.ok) { quick.searchError = answer.error || "Could not open the message"; return }
+      quick.focusedMessageId = message.id
+      messageList.followsEnd = false
+      quick.loadingOlder = false
+      quick.historyComplete = false
+      quick.historyChatId = chatId
+      quick.history = Model.mergeMessages(answer.result.messages || [], [message])
+      quick.closeSearch()
+      Qt.callLater(function () {
+        if (serial !== quick.historySerial || chatId !== quick.replyChatId) return
+        messageList.forceLayout()
+        messageList.positionViewAtIndex(Model.indexOfChat(quick.history, message.id), ListView.Center)
+      })
+    })
+  }
+
+  function showLatest() {
+    quick.focusedMessageId = 0
+    messageList.followsEnd = true
+    quick.loadHistory()
+  }
   onShownChatIdChanged: { quick.mediaOpenSerial++; historyDelay.restart() }
 
   Timer {
@@ -179,6 +255,9 @@ Item {
     quick.sending = false
     quick.replyChatId = 0
     quick.searchOpen = false
+    quick.messageSearch = false
+    quick.focusedMessageId = 0
+    quick.restartMessageSearch()
     quick.cursor = 0
     quick.stickersOpen = false
     quick.hoverSticker = null
@@ -225,6 +304,7 @@ Item {
     }
     quick.replyChatId = 0
     quick.searchOpen = false
+    quick.restartMessageSearch()
     quick.sending = false
     quick.stickersOpen = false
     quick.hoverSticker = null
@@ -238,15 +318,23 @@ Item {
     if (quick.results.length === 0) return
     quick.cursor = Math.max(0, Math.min(quick.results.length - 1, quick.cursor + delta))
     chatList.positionViewAtIndex(quick.cursor, ListView.Contain)
+    if (quick.messageSearch && quick.searchOpen && !quick.searchingMessages && quick.nextSearchMessageId && quick.cursor >= quick.results.length - 3)
+      quick.searchMessages(true)
   }
 
-  function focusSearch() {
+  function focusSearch(messages) {
+    quick.messageSearch = messages !== false && quick.replyChatId !== 0
     quick.searchOpen = true
+    search.text = ""
+    quick.restartMessageSearch()
     Qt.callLater(function () { search.forceActiveFocus(); search.selectAll() })
   }
 
   function closeSearch() {
     quick.searchOpen = false
+    quick.searchSerial++
+    messageSearchDelay.stop()
+    quick.searchingMessages = false
     Qt.callLater(function () { quick.focusItem.forceActiveFocus() })
   }
 
@@ -259,7 +347,8 @@ Item {
       return
     }
     quick.searchOpen = false
-    if (chatId !== quick.replyChatId) { quick.historySerial++; quick.readCursors = ({}) }
+    quick.restartMessageSearch()
+    if (chatId !== quick.replyChatId) { quick.focusedMessageId = 0; quick.historySerial++; quick.readCursors = ({}) }
     if (chatId !== quick.replyChatId) attachPicker.visible = false
     if (chatId !== quick.replyChatId) { quick.sendSerial++; quick.sending = false }
     if (chatId !== quick.replyChatId) quick.attachments = []   // files pasted for another chat stay out of this one
@@ -294,6 +383,9 @@ Item {
     quick.sendSerial++
     quick.sending = false
     quick.replyChatId = 0
+    quick.messageSearch = false
+    quick.focusedMessageId = 0
+    search.text = ""
     quick.status = ""
     search.forceActiveFocus()
   }
@@ -550,7 +642,7 @@ Item {
   // One-shot coalescing avoids a request for every layout/scroll notification.
   Timer { id: readDelay; interval: 60; onTriggered: quick.markViewedRead() }
   function markViewedRead() {
-    if (!quick.opened || !quick.visible || !quick.ready || !quick.historyChatId || quick.historyChatId !== quick.shownChatId) return
+    if (!quick.opened || !quick.visible || quick.searchOpen || !quick.ready || !quick.historyChatId || quick.historyChatId !== quick.shownChatId) return
     var groups = {}
     var rows = messageList.contentItem.children
     for (var i = 0; i < rows.length; i++) {
@@ -872,7 +964,7 @@ Item {
       if (e.message && e.message.sendAt) return   // scheduled: part of no history until it goes out
       if (name === "message" && e.message.chatId === quick.historyChatId) {
         quick.history = Model.mergeMessages(quick.history, [e.message])
-        messageList.positionViewAtEnd()
+        if (messageList.followsEnd) messageList.positionViewAtEnd()
       } else if ((name === "messageSent" || name === "messageFailed") && e.message.chatId === quick.historyChatId) {
         quick.history = Model.replaceMessage(quick.history, e.oldMessageId, e.message)
       } else if (name === "messageContent" && e.chatId === quick.historyChatId) {
@@ -1009,7 +1101,8 @@ Item {
         TextInput {
           id: search
           objectName: "quick-search-input"
-          Accessible.name: "Search chats"
+          Accessible.name: quick.messageSearch && quick.searchOpen ? "Search messages in this chat" : "Search chats"
+          maximumLength: 128
           anchors.left: searchIcon.right
           anchors.leftMargin: Style.space(8)
           anchors.top: parent.top
@@ -1032,10 +1125,11 @@ Item {
             else if (is("quick.pageDown")) quick.move(8)
             else if (is("quick.pageUp")) quick.move(-8)
             else if (is("quick.reply")) {
-              if (quick.highlighted) quick.reply(quick.highlighted.id)
+              if (quick.highlighted) quick.chooseResult()
               else if (!quick.ready) quick.openInWindowRequested(0)
             }
-            else if (is("quick.openInWindow")) quick.openInWindowRequested(quick.highlighted ? quick.highlighted.id : 0)
+            else if (is("quick.openInWindow")) quick.openInWindowRequested(quick.highlighted
+              ? (quick.searchOpen && quick.messageSearch ? quick.highlighted.chatId : quick.highlighted.id) : 0)
             else if (is("quick.close")) {
               if (search.text !== "") search.text = ""
               else if (quick.searchOpen && quick.replyChatId) quick.closeSearch()
@@ -1049,7 +1143,7 @@ Item {
             anchors.fill: parent
             verticalAlignment: Text.AlignVCenter
             visible: search.text === ""
-            text: quick.ready ? "Search chats" : quick.unavailableText
+            text: !quick.ready ? quick.unavailableText : quick.messageSearch && quick.searchOpen ? "Search messages" : "Search chats"
             textFormat: Text.PlainText
             color: quick.muted
             font: search.font
@@ -1137,6 +1231,43 @@ Item {
         }
       }
 
+      Text {
+        objectName: "quick-search-scope"
+        Layout.fillWidth: true
+        visible: quick.searchOpen && quick.messageSearch
+        text: "Messages in " + (quick.replyChat ? quick.replyChat.title : "this chat")
+        textFormat: Text.PlainText
+        elide: Text.ElideRight
+        color: quick.muted
+        font.family: quick.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+      Text {
+        Layout.fillWidth: true
+        visible: quick.messageSearch && quick.searchOpen && quick.results.length > 0 && quick.searchError !== ""
+        text: quick.searchError
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+        color: quick.urgent
+        font.family: quick.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+      Item {
+        objectName: "quick-search-more"
+        visible: quick.searchOpen && quick.messageSearch && quick.results.length > 0 && (quick.searchingMessages || quick.nextSearchMessageId !== 0)
+        Layout.fillWidth: true
+        Layout.preferredHeight: Style.space(30)
+        enabled: !quick.searchingMessages
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Button
+        Accessible.name: "Load older search results"
+        Keys.onReturnPressed: quick.searchMessages(true)
+        Keys.onEnterPressed: quick.searchMessages(true)
+        Keys.onSpacePressed: quick.searchMessages(true)
+        Rectangle { anchors.fill: parent; color: "transparent"; radius: Style.cornerRadius; border.width: parent.activeFocus ? 1 : 0; border.color: quick.accent }
+        Text { anchors.centerIn: parent; text: quick.searchingMessages ? "Searching…" : "Load older results"; color: quick.accentText; font.family: quick.fontFamily; font.pixelSize: Style.font.bodySmall }
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: quick.searchMessages(true) }
+      }
       ListView {
         id: chatList
         objectName: "quick-chat-list"
@@ -1153,7 +1284,9 @@ Item {
           id: chatRow
           required property var modelData
           required property int index
+          readonly property bool messageResult: quick.searchOpen && quick.messageSearch
           readonly property var last: chatRow.modelData.lastMessage || null
+          objectName: messageResult ? "quick-search-result-" + modelData.id : ""
           width: ListView.view.width
           height: Style.space(46)
           radius: Style.cornerRadius
@@ -1174,7 +1307,7 @@ Item {
 
               Text {
                 Layout.fillWidth: true
-                text: chatRow.modelData.title || ""
+                text: chatRow.messageResult ? (chatRow.modelData.outgoing ? "You" : chatRow.modelData.senderName || (quick.replyChat ? quick.replyChat.title : "")) : chatRow.modelData.title || ""
                 textFormat: Text.PlainText
                 elide: Text.ElideRight
                 color: quick.text
@@ -1184,7 +1317,7 @@ Item {
               }
               Text {
                 objectName: "quick-peer-status-" + chatRow.modelData.id
-                text: quick.peerStatus(chatRow.modelData)
+                text: chatRow.messageResult ? Model.listTime(chatRow.modelData.date, quick.nowMs) : quick.peerStatus(chatRow.modelData)
                 visible: text !== ""
                 Layout.maximumWidth: chatRow.width * 0.5
                 elide: Text.ElideRight
@@ -1213,7 +1346,7 @@ Item {
             }
             Text {
               Layout.fillWidth: true
-              text: chatRow.last ? (chatRow.last.outgoing ? "You: " : (chatRow.modelData.kind !== "private" && chatRow.last.senderName ? chatRow.last.senderName + ": " : ""))
+              text: chatRow.messageResult ? Model.previewOf(chatRow.modelData) : chatRow.last ? (chatRow.last.outgoing ? "You: " : (chatRow.modelData.kind !== "private" && chatRow.last.senderName ? chatRow.last.senderName + ": " : ""))
                                    + (chatRow.last.text || "") : ""
               textFormat: Text.PlainText
               elide: Text.ElideRight
@@ -1232,11 +1365,11 @@ Item {
             acceptedButtons: Qt.LeftButton | Qt.MiddleButton
             onClicked: function (mouse) {
               if (mouse.button === Qt.MiddleButton) {
-                quick.openInWindowRequested(chatRow.modelData.id)
+                quick.openInWindowRequested(chatRow.messageResult ? chatRow.modelData.chatId : chatRow.modelData.id)
                 return
               }
               quick.cursor = chatRow.index
-              quick.reply(chatRow.modelData.id)
+              quick.chooseResult()
             }
           }
         }
@@ -1244,7 +1377,13 @@ Item {
         Text {
           anchors.centerIn: parent
           visible: quick.results.length === 0
-          text: quick.ready ? "No chat matches" : "Enter opens Telebar"
+          objectName: "quick-search-feedback"
+          width: parent.width - Style.space(20)
+          horizontalAlignment: Text.AlignHCenter
+          wrapMode: Text.Wrap
+          text: !quick.ready ? quick.unavailableText : quick.searchOpen && quick.messageSearch
+            ? (quick.searchError || (quick.searchingMessages ? "Searching messages…" : quick.query.trim() ? "No messages found" : "Type a word or phrase to find messages"))
+            : "No chat matches"
           textFormat: Text.PlainText
           color: quick.muted
           font.family: quick.fontFamily
@@ -1338,7 +1477,7 @@ Item {
           Layout.preferredHeight: Style.space(30)
           activeFocusOnTab: true
           Accessible.role: Accessible.Button
-          Accessible.name: "Search chats"
+          Accessible.name: "Search messages in this chat"
           Accessible.onPressAction: quick.focusSearch()
           Keys.onReturnPressed: quick.focusSearch()
           Keys.onEnterPressed: quick.focusSearch()
@@ -1385,6 +1524,21 @@ Item {
         }
       }
 
+      Item {
+        objectName: "quick-show-latest"
+        visible: quick.focusedMessageId !== 0
+        Layout.fillWidth: true
+        Layout.preferredHeight: Style.space(30)
+        activeFocusOnTab: true
+        Accessible.role: Accessible.Button
+        Accessible.name: "Back to latest messages"
+        Keys.onReturnPressed: quick.showLatest()
+        Keys.onEnterPressed: quick.showLatest()
+        Keys.onSpacePressed: quick.showLatest()
+        Rectangle { anchors.fill: parent; color: "transparent"; radius: Style.cornerRadius; border.width: parent.activeFocus ? 1 : 0; border.color: quick.accent }
+        Text { anchors.centerIn: parent; text: "Back to latest messages"; color: quick.accentText; font.family: quick.fontFamily; font.pixelSize: Style.font.bodySmall }
+        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: quick.showLatest() }
+      }
       Item {
         Layout.fillWidth: true
         Layout.fillHeight: true
@@ -1458,7 +1612,7 @@ Item {
               radius: Style.cornerRadius
               color: line.ground
               border.width: 1
-              border.color: Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.18)
+              border.color: quick.focusedMessageId === line.mid ? quick.accent : Qt.rgba(quick.text.r, quick.text.g, quick.text.b, 0.18)
             }
 
             RowLayout {

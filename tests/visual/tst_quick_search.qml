@@ -28,6 +28,9 @@ TestCase {
     var serial = quick.sendSerial
     mouseClick(button, button.width / 2, button.height / 2)
     tryCompare(search, "activeFocus", true)
+    compare(quick.messageSearch, true)
+    quick.focusSearch(false)
+    tryCompare(search, "activeFocus", true)
     verify(search.visible)
     compare(quick.focusItem, search)
     compare(quick.draftPresent, true)
@@ -62,7 +65,7 @@ TestCase {
     else if (data.pending === "send") quick.sending = true
     else view.serviceModel.recording = { state: "voice", chatId: 101, startedAt: Date.now() }
     var serial = quick.sendSerial
-    quick.focusSearch()
+    quick.focusSearch(false)
     tryCompare(search, "activeFocus", true)
     search.text = "Community"
     keyClick(Qt.Key_Return)
@@ -85,7 +88,7 @@ TestCase {
     input.text = "Sending to Alex"
     view.serviceModel.holdSend = true
     quick.send()
-    quick.focusSearch()
+    quick.focusSearch(false)
     tryCompare(search, "activeFocus", true)
     search.text = "Community"
     view.serviceModel.completeSend()
@@ -104,6 +107,9 @@ TestCase {
     var search = findChild(view, "quick-search-input")
     button.forceActiveFocus()
     keyClick(Qt.Key_Space)
+    tryCompare(search, "activeFocus", true)
+    compare(quick.messageSearch, true)
+    quick.focusSearch(false)
     tryCompare(search, "activeFocus", true)
     search.text = "Community"
     keyClick(Qt.Key_Return)
@@ -134,6 +140,8 @@ TestCase {
     verify(position.x >= 0 && position.x + button.width <= openPosition.x)
     mouseClick(button, button.width / 2, button.height / 2)
     var search = findChild(view, "quick-search-input")
+    tryCompare(search, "activeFocus", true)
+    view.consumer.focusSearch(false)
     tryCompare(search, "activeFocus", true)
     verify(search.width > 120)
     var top = search.mapToItem(view, 0, 0)
