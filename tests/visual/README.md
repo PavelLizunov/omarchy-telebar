@@ -38,6 +38,17 @@ the harness. Geometry/hash checks, image/native design review and pointer/key
 QtTest are separate evidence. Do not start a second shared shell or change the
 live theme to produce preview evidence.
 
+`MainSelectionConsumer.qml` preserves complete Main with synthetic history and
+uses QtTest pointer events to drag a fragment through the actual window subtree.
+Its `ready` becomes true only when `selectedText` is `fragment` and the message
+owns focus. Render it with the static native adapter, generated `imports/qs` and
+fixture root. The absent-Hyprland warning is expected offscreen: retain the strict
+failure and use report policy only for this documented isolation warning. This
+checks synthetic input, not physical Wayland input or the user's reported failure.
+`tst_message_text.qml` separately checks multiline dragging, word selection,
+fragment clipboard copying, links, context menu and Ctrl+click selection. Stock
+QtTest needs generated `imports`, `inert` and fixture root on its import path.
+
 `MainSidebarConsumer.qml` preserves complete Main with `autoStart:false` and blank
 socket, unshown native surfaces and the actual content subtree. Direct signal/
 state activation is not physical desktop input. `Sidebar.qml` uses actual

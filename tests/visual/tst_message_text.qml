@@ -71,6 +71,35 @@ TestCase {
     mouseClick(text, 2, 2, Qt.LeftButton, Qt.ControlModifier)
     verify(view.selection[70])
   }
+  function test_main_multiline_drag_keeps_text_selection() {
+    var source = Array(24).fill("Select a fragment across several message lines.").join("\n")
+    model.history = [{ id: 71, chatId: 101, date: 1790726000, outgoing: false,
+      content: { kind: "text", text: source, entities: [] }, reactions: [] }]
+    var view = createTemporaryObject(chatScene, tests)
+    var text = null
+    tryVerify(function () { text = findChild(view, "message-text-71"); return text && text.visible })
+    var list = findChild(view, "chat-message-list")
+    list.positionViewAtBeginning()
+    wait(50)
+    var start = 7
+    var end = source.indexOf("\n") + 12
+    var a = text.positionToRectangle(start)
+    var b = text.positionToRectangle(end)
+    var before = list.contentY
+    mousePress(text, a.x + 1, a.y + a.height / 2)
+    for (var i = 1; i <= 12; i++)
+      mouseMove(text, a.x + (b.x - a.x) * i / 12 + 1, a.y + a.height / 2 + (b.y - a.y) * i / 12, 15)
+    mouseRelease(text, b.x + 1, b.y + b.height / 2)
+    compare(text.selectedText.replace(/\u2029/g, "\n"), source.slice(start, end), "Vertical dragging must select text, not flick the message list")
+    compare(list.contentY, before)
+    keyClick(Qt.Key_C, Qt.ControlModifier)
+    clipboardProbe.text = ""
+    clipboardProbe.paste()
+    compare(clipboardProbe.text, source.slice(start, end))
+    text.deselect()
+    mouseDoubleClickSequence(text, a.x + 15, a.y + a.height / 2)
+    compare(text.selectedText, "fragment", "Double-click must select a word")
+  }
   function test_compact_long_message_scroll_and_fragment() {
     var view = createTemporaryObject(quickScene, tests, { width: 430, height: 530 })
     tryCompare(view, "ready", true)
