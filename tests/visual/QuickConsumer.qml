@@ -43,7 +43,11 @@ Rectangle {
     Color.foreground = model.foreground
     if (preview.peerStatus) model.chats = model.chats.map(function (chat) { return chat.id === 101 ? Object.assign({}, chat, { status: preview.peerStatus }) : chat })
     quick.reset(101, 0)
-    if (state === "attachments") quick.addAttachments([model.imagePath], true)
+    if (state === "search" || state === "search-empty") {
+      quick.focusSearch()
+      if (state === "search-empty") quick.focusItem.text = "no-synthetic-chat-matches"
+    }
+    else if (state === "attachments") quick.addAttachments([model.imagePath], true)
     else if (state === "recording") model.recording = { state: "voice", chatId: 101, startedAt: Date.now() }
     else if (state === "video-recording") model.recording = { state: "video", chatId: 101, startedAt: Date.now() }
     else if (state === "retained-rejected" || state === "retained-unknown") model.recordedSend = {

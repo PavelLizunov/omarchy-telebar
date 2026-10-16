@@ -71,6 +71,8 @@ Item {
     : (!quick.service.connected ? "Connecting to Telebar…" : "Telebar is not signed in")
   readonly property var chats: quick.ready ? quick.service.chats : []
   property string query: ""
+  property bool searchOpen: false
+  readonly property string searchRevision: "compact-chat-search-v1"
   readonly property var results: Model.filterChats(quick.chats, quick.query).slice(0, 60)
   property int cursor: 0
   readonly property var highlighted: quick.results[quick.cursor] || null
@@ -123,7 +125,8 @@ Item {
   }
   onPlayingNoteChanged: if (quick.playingNote) quick.wantNoteAnimation(quick.playingNote)
   readonly property bool recordingHere: quick.recording.state !== "idle" && quick.replyChatId !== 0 && quick.recording.chatId === quick.replyChatId
-  readonly property Item focusItem: quick.replyChatId ? composer : search
+  readonly property bool draftPresent: quick.replyChatId !== 0 && composer.text !== ""
+  readonly property Item focusItem: quick.replyChatId && !quick.searchOpen ? composer : search
   property bool loadingOlder: false
   property bool historyComplete: false   // nothing older is left in the chat shown
   property real viewingId: 0             // the message whose photo or video is open over the whole screen
@@ -175,6 +178,7 @@ Item {
     quick.status = ""
     quick.sending = false
     quick.replyChatId = 0
+    quick.searchOpen = false
     quick.cursor = 0
     quick.stickersOpen = false
     quick.hoverSticker = null
@@ -220,6 +224,7 @@ Item {
       quick.service.quickClosedAt = Date.now()
     }
     quick.replyChatId = 0
+    quick.searchOpen = false
     quick.sending = false
     quick.stickersOpen = false
     quick.hoverSticker = null
@@ -235,8 +240,25 @@ Item {
     chatList.positionViewAtIndex(quick.cursor, ListView.Contain)
   }
 
+  function focusSearch() {
+    quick.searchOpen = true
+    Qt.callLater(function () { search.forceActiveFocus(); search.selectAll() })
+  }
+
+  function closeSearch() {
+    quick.searchOpen = false
+    Qt.callLater(function () { quick.focusItem.forceActiveFocus() })
+  }
+
   function reply(chatId) {
     if (!chatId) return
+    if (quick.searchOpen && chatId !== quick.replyChatId && quick.replyChatId
+        && (composer.text !== "" || quick.attachments.length || quick.sending || quick.recordingHere)) {
+      quick.closeSearch()
+      quick.status = "Finish or clear the current reply before switching chats"
+      return
+    }
+    quick.searchOpen = false
     if (chatId !== quick.replyChatId) { quick.historySerial++; quick.readCursors = ({}) }
     if (chatId !== quick.replyChatId) attachPicker.visible = false
     if (chatId !== quick.replyChatId) { quick.sendSerial++; quick.sending = false }
@@ -295,10 +317,10 @@ Item {
         quick.markRead(chat)
         composer.text = ""
         quick.status = ""
-        composer.forceActiveFocus()
+        quick.focusItem.forceActiveFocus()
       } else {
         quick.status = answer.error || "Could not send"
-        composer.forceActiveFocus()
+        quick.focusItem.forceActiveFocus()
       }
     })
   }
@@ -393,10 +415,10 @@ Item {
         quick.markRead(chat)
         quick.attachments = []
         composer.text = ""
-        composer.forceActiveFocus()
+        quick.focusItem.forceActiveFocus()
       } else {
         quick.status = answer.error || "Could not send the files"
-        composer.forceActiveFocus()
+        quick.focusItem.forceActiveFocus()
       }
     })
   }
@@ -427,7 +449,7 @@ Item {
       } else if (send) {
         quick.markRead(chat)
         quick.status = ""
-        Qt.callLater(function () { composer.forceActiveFocus() })
+        Qt.callLater(function () { quick.focusItem.forceActiveFocus() })
       }
     })
   }
@@ -508,7 +530,7 @@ Item {
       if (answer.ok) {
         quick.markRead(chat)
         // The stickers stay open for another one; Esc goes back to the message box.
-        stickerGrid.forceActiveFocus()
+        if (!quick.searchOpen) stickerGrid.forceActiveFocus()
       } else {
         quick.status = answer.error || "Could not send the sticker"
       }
@@ -946,7 +968,7 @@ Item {
 
     // ---------------------------------------------- the chats
     ColumnLayout {
-      visible: !quick.compact || quick.replyChatId === 0
+      visible: !quick.compact || quick.replyChatId === 0 || quick.searchOpen
       Layout.preferredWidth: quick.compact ? -1 : Math.round(quick.width * 0.34)
       Layout.fillWidth: quick.compact
       Layout.fillHeight: true
@@ -956,9 +978,40 @@ Item {
         Layout.fillWidth: true
         implicitHeight: Style.space(34)
 
+        Item {
+          id: searchBack
+          objectName: "quick-search-back"
+          visible: quick.compact && quick.searchOpen && quick.replyChatId !== 0
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          width: visible ? Style.space(30) : 0
+          height: Style.space(30)
+          activeFocusOnTab: visible
+          Accessible.role: Accessible.Button
+          Accessible.name: "Back to the conversation"
+          Accessible.onPressAction: quick.closeSearch()
+          Keys.onReturnPressed: quick.closeSearch()
+          Keys.onEnterPressed: quick.closeSearch()
+          Keys.onSpacePressed: quick.closeSearch()
+          Rectangle { anchors.fill: parent; color: "transparent"; radius: Style.cornerRadius; border.width: parent.activeFocus ? 1 : 0; border.color: quick.accent }
+          Icon { anchors.centerIn: parent; name: "back"; size: Style.font.body; color: quick.text }
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: quick.closeSearch() }
+        }
+        Icon {
+          id: searchIcon
+          anchors.left: searchBack.right
+          anchors.leftMargin: searchBack.visible ? Style.space(6) : 0
+          anchors.verticalCenter: parent.verticalCenter
+          name: "search"
+          size: Style.font.body
+          color: quick.muted
+        }
         TextInput {
           id: search
-          anchors.left: parent.left
+          objectName: "quick-search-input"
+          Accessible.name: "Search chats"
+          anchors.left: searchIcon.right
+          anchors.leftMargin: Style.space(8)
           anchors.top: parent.top
           anchors.bottom: parent.bottom
           anchors.right: openOmagram.left
@@ -985,6 +1038,7 @@ Item {
             else if (is("quick.openInWindow")) quick.openInWindowRequested(quick.highlighted ? quick.highlighted.id : 0)
             else if (is("quick.close")) {
               if (search.text !== "") search.text = ""
+              else if (quick.searchOpen && quick.replyChatId) quick.closeSearch()
               else quick.dismissRequested()
             }
             else return
@@ -995,7 +1049,7 @@ Item {
             anchors.fill: parent
             verticalAlignment: Text.AlignVCenter
             visible: search.text === ""
-            text: quick.ready ? "Find a chat" : quick.unavailableText
+            text: quick.ready ? "Search chats" : quick.unavailableText
             textFormat: Text.PlainText
             color: quick.muted
             font: search.font
@@ -1085,6 +1139,7 @@ Item {
 
       ListView {
         id: chatList
+        objectName: "quick-chat-list"
 
         WheelScroll { view: chatList }
         Layout.fillWidth: true
@@ -1208,7 +1263,7 @@ Item {
 
     // ---------------------------------------------- the chat
     ColumnLayout {
-      visible: !quick.compact || quick.replyChatId !== 0
+      visible: !quick.compact || (quick.replyChatId !== 0 && !quick.searchOpen)
       Layout.fillWidth: true
       Layout.fillHeight: true
       spacing: Style.space(6)
@@ -1274,6 +1329,35 @@ Item {
             font.family: quick.fontFamily
             font.pixelSize: Style.font.bodySmall
           }
+        }
+        Item {
+          id: searchButton
+          objectName: "quick-search-button"
+          visible: quick.compact
+          Layout.preferredWidth: searchButtonRow.implicitWidth + Style.space(12)
+          Layout.preferredHeight: Style.space(30)
+          activeFocusOnTab: true
+          Accessible.role: Accessible.Button
+          Accessible.name: "Search chats"
+          Accessible.onPressAction: quick.focusSearch()
+          Keys.onReturnPressed: quick.focusSearch()
+          Keys.onEnterPressed: quick.focusSearch()
+          Keys.onSpacePressed: quick.focusSearch()
+          Rectangle {
+            anchors.fill: parent
+            radius: Style.cornerRadius
+            color: searchButtonArea.containsMouse ? quick.selected : "transparent"
+            border.width: searchButton.activeFocus ? 1 : 0
+            border.color: quick.accent
+          }
+          Row {
+            id: searchButtonRow
+            anchors.centerIn: parent
+            spacing: Style.space(6)
+            Icon { anchors.verticalCenter: parent.verticalCenter; name: "search"; size: Style.font.body; color: quick.text }
+            Text { text: "Search"; color: quick.text; font.family: quick.fontFamily; font.pixelSize: Style.font.bodySmall }
+          }
+          MouseArea { id: searchButtonArea; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: quick.focusSearch() }
         }
         // md-bell-sleep U+F00A0: the chat sends silently
         Icon {
