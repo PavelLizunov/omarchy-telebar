@@ -2,6 +2,44 @@
 .import "Model.js" as Model
 .import "Keymap.js" as Keymap
 
+function selectList(context, key) {
+  var omagram = context.omagram
+  var service = context.service
+  if (!key) return
+  omagram.listKey = key
+  if (omagram.auth.state !== "ready") return
+  var account = omagram.activeAccount
+  var revision = omagram.accountRevision
+  var loads = omagram.loadedLists
+  function current() {
+    return account === omagram.activeAccount && revision === omagram.accountRevision
+      && loads === omagram.loadedLists
+  }
+  function refresh() {
+    var before = {}
+    omagram.chats.forEach(function (chat) { before[chat.id] = chat })
+    service.request("chats.list", { list: key, limit: 500 }, function (answer) {
+      if (!current() || !answer.ok) return
+      var latest = {}
+      omagram.chats.forEach(function (chat) { latest[chat.id] = chat })
+      // Do not roll back stream updates flushed while the snapshot was pending.
+      var incoming = (answer.result.chats || []).filter(function (chat) {
+        return latest[chat.id] === before[chat.id]
+      })
+      omagram.chats = Model.mergeChatUpdates(omagram.chats, incoming, "")
+    })
+  }
+  refresh()
+  if (loads[key]) return
+  loads[key] = true
+  service.request("chats.load", { list: key, limit: 100 }, function (answer) {
+    if (!current()) return
+    // TDLib uses 404 when the list is fully loaded; still hydrate known chats.
+    if (!answer.ok && answer.code !== 404) delete loads[key]
+    refresh()
+  })
+}
+
 function openChatAt(context, chatId, messageId) {
   var omagram = context.omagram
   var screen = context.screen

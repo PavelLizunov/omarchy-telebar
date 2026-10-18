@@ -18,7 +18,7 @@ import "MainNavigation.js" as MainNavigation
 Scope {
   id: omagram
 
-  readonly property int implementationRevision: 20261016
+  readonly property int implementationRevision: 20261018
   readonly property string binDir: decodeURIComponent(String(Qt.resolvedUrl("../bin/")).replace("file://", ""))
   // Explicit consumer context keeps offscreen acceptance away from live IPC.
   // Normal launch retains the same socket and service-start behavior.
@@ -331,7 +331,8 @@ Scope {
   }
 
   function applyAccountSnapshot(result) {
-    return MainAccounts.applyAccountSnapshot({ chatFlush: chatFlush, omagram: omagram, screen: screen }, result)
+    MainAccounts.applyAccountSnapshot({ chatFlush: chatFlush, omagram: omagram, screen: screen }, result)
+    if (omagram.auth.state === "ready") omagram.selectList(omagram.listKey)
   }
 
   function reloadAccount() {
@@ -377,6 +378,7 @@ Scope {
 
   TelebarClient {
     id: service
+    objectName: "window-transport"
     binDir: omagram.binDir
     autoStart: omagram.autoStart
     socketPath: omagram.socketPath
@@ -389,9 +391,9 @@ Scope {
       implementation_revision: omagram.implementationRevision })
 
     onHello: function (result) {
+      omagram.loadedLists = ({})
       omagram.applyAccountSnapshot(result)
       omagram.applySettings(result)
-      omagram.loadedLists = ({})
       if (omagram.auth.state === "ready" && omagram.openChatId) omagram.openChatById(omagram.openChatId, true)
       if (omagram.auth.state === "ready") {
         service.request("ui.focus", { chatId: omagram.focusedChatId })
@@ -559,11 +561,7 @@ Scope {
   // ---------------------------------------------------------------- lists
 
   function selectList(key) {
-    if (!key) return
-    omagram.listKey = key
-    if (omagram.loadedLists[key] || omagram.auth.state !== "ready") return
-    omagram.loadedLists[key] = true
-    service.request("chats.load", { list: key, limit: 100 })
+    return MainNavigation.selectList({ omagram: omagram, service: service }, key)
   }
 
   function togglePin(chatId) {

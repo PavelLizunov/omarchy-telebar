@@ -28,6 +28,22 @@ service and pending attachment/send/draft retention. Other suites preserve theme
 radius, mark optical/hit geometry, unread states, sidebar interactions and shared
 composition. `FixtureApp.qml` supplies only synthetic requests/media.
 
+## Archive refresh regression
+
+`node tests/archive-refresh-test.js` exercises the actual navigation/model logic:
+500 main chats plus 41 archived chats, cached-list hydration even when TDLib
+returns load-complete 404 without new-chat events, revisits, retries and stale
+account/snapshot guards. Per-list display stays bounded at 500; the shared known
+chat cache is separately bounded at 5,000.
+
+`ArchiveConsumer.qml` loads complete Main with unshown native surfaces, a blank
+socket and synthetic transport replies. Readiness requires all 41 archived rows,
+all 500 main rows and an updated visible preview/unread count after a streamed
+chat event. Use the static native adapter and generated `imports/qs` plus fixture
+root. Strict diagnostics reject the expected absent-Hyprland warning; an explicit
+report-policy render may retain that isolation warning only. Synthetic events do
+not establish arrival of a new real Telegram message or human acceptance.
+
 ## Offscreen rendering
 
 Discover the currently available QML-preview MCP and call healthcheck. For icon

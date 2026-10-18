@@ -3,6 +3,7 @@
 // Pure display logic for Omagram's window: no QML, no I/O (node tests/model-test.js).
 
 var CHATS_MAX = 500
+var KNOWN_CHATS_MAX = 5000
 var MESSAGES_MAX = 3000
 var PREVIEW_MAX = 120
 var RUN_GAP_SECONDS = 300
@@ -86,7 +87,7 @@ function upsertKnown(chats, chat) {
   if (!isObject(chat) || typeof chat.id !== "number") return chats
   var out = chats.filter(function (c) { return c.id !== chat.id })
   out.push(chat)
-  return out.length > CHATS_MAX ? out.slice(out.length - CHATS_MAX) : out
+  return out.length > KNOWN_CHATS_MAX ? out.slice(out.length - KNOWN_CHATS_MAX) : out
 }
 
 function mergeChatUpdates(chats, incoming, listKey) {
@@ -95,7 +96,7 @@ function mergeChatUpdates(chats, incoming, listKey) {
     if (isObject(chat) && typeof chat.id === "number") byId[chat.id] = chat
   })
   var values = Object.keys(byId).map(function (key) { return byId[key] })
-  return listKey ? chatsIn(values, listKey) : values.slice(-CHATS_MAX)
+  return listKey ? chatsIn(values, listKey) : values.slice(-KNOWN_CHATS_MAX)
 }
 
 function chatsIn(chats, listKey) {
