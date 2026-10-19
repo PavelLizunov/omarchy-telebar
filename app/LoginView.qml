@@ -8,6 +8,7 @@ import "Model.js" as Model
 // is cleared from the field once sent. Where Telegram is blocked, a proxy link gets through first.
 FocusScope {
   id: view
+  objectName: "account-login"
 
   property var app
   property var client
@@ -26,7 +27,8 @@ FocusScope {
     view.busy = false
     view.phoneInstead = false
     view.proxyInstead = false
-    Qt.callLater(function () { field.clear(); field.forceActiveFocus() })
+    field.clear()
+    field.forceActiveFocus()
   }
 
   Component.onCompleted: view.loadProxy()

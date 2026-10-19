@@ -68,6 +68,27 @@ eventCtx.onEvent("connection", { account: "first", state: "ready" });
 assert.equal(omagram.connection, "ready");
 console.log("Account UI checks passed: stale callbacks, control responses, cross-account events");
 
+let authResets = 0, pendingFailures = 0;
+eventCtx.screen = { active: true, item: null };
+eventCtx.service = { accountGeneration: 0, failPending() { pendingFailures++; } };
+Object.assign(omagram, { auth: { state: "starting" }, accountTransition: false,
+  resetAccountView() { authResets++; this.accountTransition = true; eventCtx.screen.active = false; } });
+for (const state of ["phone", "code", "password", "qr", "qr", "ready"]) {
+  eventCtx.onEvent("auth", { account: "first", auth: { state } });
+  assert.equal(omagram.auth.state, state);
+  assert.equal(omagram.accountTransition, false, "Auth updates must release the transition gate");
+  assert.equal(eventCtx.screen.active, true, "Login loader must remain mounted");
+}
+assert.equal(authResets, 0, "Sign-in steps must not destroy their own login view");
+eventCtx.onEvent("auth", { account: "first", auth: { state: "phone" } });
+assert.equal(authResets, 1, "Leaving a ready session still clears account-owned chat state");
+assert.equal(pendingFailures, 1);
+assert.equal(eventCtx.screen.active, true);
+assert.equal(omagram.accountTransition, false);
+eventCtx.onEvent("auth", { account: "second", auth: { state: "password" } });
+assert.equal(omagram.auth.state, "phone", "Other accounts must not replace this login step");
+console.log("Login transitions passed: starting/phone/code/password/QR/ready and return from ready");
+
 let resets = 0;
 const snapshotApp = { activeAccount: "first", accountRevision: 2,
   resetAccountView() { resets++; } };

@@ -28,6 +28,18 @@ service and pending attachment/send/draft retention. Other suites preserve theme
 radius, mark optical/hit geometry, unread states, sidebar interactions and shared
 composition. `FixtureApp.qml` supplies only synthetic requests/media.
 
+## Additional-account login regression
+
+`node tests/accounts-ui-test.js` checks that starting, phone, code, password,
+QR refresh and ready events leave the screen loader active. Account-owned chat
+state is cleared only when leaving a ready session, not on every sign-in step.
+`LoginAccountConsumer.qml` runs the same events through complete Main and the
+actual transport handler with two synthetic accounts, blank socket and unshown
+native windows. Its readiness requires a mounted login screen and both accounts
+retained. The old consumer hangs with `accountTransition=true`; corrected
+consumers render phone/QR/code/password. Real Telegram authorization and physical
+input remain separate; never put real codes, passwords or QR links in fixtures.
+
 ## System file chooser
 
 `app/FilePicker.qml` delegates browsing to QtQuick.Dialogs.FileDialog. The native

@@ -18,7 +18,7 @@ import "MainNavigation.js" as MainNavigation
 Scope {
   id: omagram
 
-  readonly property int implementationRevision: 20261018
+  readonly property int implementationRevision: 20261019
   readonly property string binDir: decodeURIComponent(String(Qt.resolvedUrl("../bin/")).replace("file://", ""))
   // Explicit consumer context keeps offscreen acceptance away from live IPC.
   // Normal launch retains the same socket and service-start behavior.
@@ -429,8 +429,8 @@ Scope {
     if (name === "connection") { omagram.connection = e.state || ""; return }
     if (name === "auth") {
       if (!e.account || e.account === omagram.activeAccount) {
-        omagram.auth = e.auth
-        if (e.auth.state !== "ready") {
+        var leavingReady = omagram.auth.state === "ready" && e.auth.state !== "ready"
+        if (leavingReady) {
           if (screen.item && screen.item.leaveAccount) screen.item.leaveAccount()
           service.accountGeneration++
           service.failPending()
@@ -443,6 +443,9 @@ Scope {
           omagram.folders = []
           omagram.listKey = "main"
         }
+        omagram.auth = e.auth
+        omagram.accountTransition = false
+        screen.active = true
       }
       omagram.refreshAccounts()
     } else if (name === "folders") {
