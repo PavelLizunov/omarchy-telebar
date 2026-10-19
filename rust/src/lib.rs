@@ -40,6 +40,7 @@ pub mod profile_photo;
 pub mod projection;
 pub mod proxy;
 pub mod proxy_crypto;
+pub mod qr;
 pub mod recorded_send;
 pub mod recording_checkpoint;
 pub mod recording_jobs;

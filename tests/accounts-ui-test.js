@@ -89,6 +89,21 @@ eventCtx.onEvent("auth", { account: "second", auth: { state: "password" } });
 assert.equal(omagram.auth.state, "phone", "Other accounts must not replace this login step");
 console.log("Login transitions passed: starting/phone/code/password/QR/ready and return from ready");
 
+const authRequests = [];
+const login = { step: "qr", busy: false, send(cmd) { authRequests.push(cmd); } };
+const loginContext = vm.createContext({ view: login, Qt: { callLater(fn) { fn(); } }, field: { forceActiveFocus() {} } });
+vm.runInContext("function switchMethod() {" + body("app/LoginView.qml", "function switchMethod(") + "}", loginContext);
+loginContext.switchMethod();
+assert.deepEqual(authRequests, ["auth.logout"], "QR must be cancelled in TDLib, not just hidden");
+login.busy = true;
+loginContext.switchMethod();
+assert.equal(authRequests.length, 1, "Do not submit a second cancellation while pending");
+login.busy = false;
+login.step = "phone";
+loginContext.switchMethod();
+assert.equal(authRequests[1], "auth.qr");
+console.log("Login method switch passed: scoped QR cancellation, busy guard, phone to QR");
+
 let resets = 0;
 const snapshotApp = { activeAccount: "first", accountRevision: 2,
   resetAccountView() { resets++; } };

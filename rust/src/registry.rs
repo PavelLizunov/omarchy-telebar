@@ -19,7 +19,7 @@ pub const COMMANDS: [(&str, bool); 170] = [
     ("auth.code", false),
     ("auth.password", false),
     ("auth.qr", false),
-    ("auth.logout", true),
+    ("auth.logout", false),
     ("chats.load", true),
     ("chats.list", true),
     ("chat.history", true),

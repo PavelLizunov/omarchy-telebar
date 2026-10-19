@@ -15,17 +15,15 @@ FocusScope {
   readonly property string step: app.auth.state
   property bool busy: false
   property string error: ""
-  property bool phoneInstead: false      // on the QR step: typing a phone number after all
   property bool proxyInstead: false      // pasting a proxy link before signing in
   property var proxy: null               // the proxy in use, as proxies.list said
 
-  readonly property bool askingPhone: !view.proxyInstead && (view.step === "phone" || (view.step === "qr" && view.phoneInstead))
-  readonly property bool showingQr: !view.proxyInstead && view.step === "qr" && !view.phoneInstead
+  readonly property bool askingPhone: !view.proxyInstead && view.step === "phone"
+  readonly property bool showingQr: !view.proxyInstead && view.step === "qr"
 
   onStepChanged: {
     view.error = ""
     view.busy = false
-    view.phoneInstead = false
     view.proxyInstead = false
     field.clear()
     field.forceActiveFocus()
@@ -92,13 +90,10 @@ FocusScope {
   }
 
   function switchMethod() {
-    if (view.step === "phone") {
-      view.send("auth.qr", {})
-    } else {
-      view.phoneInstead = !view.phoneInstead
-      view.error = ""
-      Qt.callLater(function () { field.forceActiveFocus() })
-    }
+    if (view.busy) return
+    // TDLib cannot accept a phone in QR state. Abort this pending login first;
+    // the runtime recreates only its closed client and publishes the phone step.
+    view.send(view.step === "phone" ? "auth.qr" : "auth.logout", {})
   }
 
   function toggleProxy() {
@@ -169,7 +164,7 @@ FocusScope {
         wrapMode: Text.WordWrap
         textFormat: Text.PlainText
         text: app.auth.imagePending ? "Preparing the QR code…"
-          : "The QR code is unavailable. Use your phone number or check that qrencode is installed (sudo pacman -S qrencode)."
+          : qsTr("The QR code could not be generated. Switch to phone sign-in, or check that qrencode is installed.")
         color: "black"
         font.family: app.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -233,8 +228,8 @@ FocusScope {
         id: methodButton
         app: view.app
         visible: !view.proxyInstead && (view.step === "phone" || view.step === "qr")
-        text: view.step === "phone" ? "Use a QR code instead" : (view.phoneInstead ? "Show the QR code" : "Use my phone number")
-        busy: view.busy && view.step === "phone"
+        text: view.step === "phone" ? "Use a QR code instead" : "Use my phone number"
+        busy: view.busy
         KeyNavigation.tab: proxyButton
         onClicked: view.switchMethod()
       }

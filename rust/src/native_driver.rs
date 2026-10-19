@@ -95,6 +95,7 @@ pub struct Driver {
     startup_context: Option<crate::startup::Context>,
     startup_owners: std::collections::HashMap<crate::lifecycle::Token, StartupOwner>,
     startup_serial: u64,
+    qr: crate::qr::Codes,
     startup_queue: std::collections::VecDeque<StartupOwner>,
     sound: Option<(crate::process::Managed, crate::sound_playback::Prepared)>,
     pub notification_transport: Option<crate::notification_bus::Transport>,
@@ -148,6 +149,7 @@ impl Driver {
             startup_context: None,
             startup_owners: std::collections::HashMap::new(),
             startup_serial: 1,
+            qr: Default::default(),
             startup_queue: std::collections::VecDeque::new(),
             sound: None,
             notification_transport: None,
@@ -1857,6 +1859,9 @@ impl Driver {
                 }
             }
         }
+        effects
+            .replies
+            .extend(self.qr.poll(&mut self.runtime).replies);
         // Retire expired user work before the worker cancellation predicate.
         let expired = self.runtime.expire(Instant::now());
         effects.replies.extend(expired.replies);
@@ -2121,6 +2126,7 @@ impl Driver {
     }
     pub fn close(&mut self, timeout: Duration) -> io::Result<Effects> {
         self.runtime.stopping = true;
+        self.qr = Default::default();
         self.player = None;
         self.sound = None;
         if let Some(capture) = self.capture.take() {

@@ -74,6 +74,30 @@ fn hello_switch_and_settings_observe_persisted_state() {
         Application::load(&home).unwrap().settings.value["chatListWidth"],
         230
     );
+    // Switching methods cancels only this account's pending QR authorization.
+    runtime.metadata.get_mut("other").unwrap().auth =
+        json!({"state":"qr","link":"tg://login?token=SYNTHETIC"});
+    let cancelled = app.request(
+        &home,
+        &mut runtime,
+        7,
+        request(30, "auth.logout", json!({})),
+    );
+    assert_eq!(cancelled.native.len(), 1);
+    assert_eq!(cancelled.native[0].client, 2);
+    assert_eq!(cancelled.native[0].query["@type"], "logOut");
+    runtime.metadata.get_mut("other").unwrap().auth = json!({"state":"ready"});
+    let refused = app.request(
+        &home,
+        &mut runtime,
+        7,
+        request(31, "auth.logout", json!({})),
+    );
+    assert!(
+        refused.native.is_empty(),
+        "never log out a ready session through method switch"
+    );
+    assert_eq!(refused.replies[0].1["ok"], false);
     // Explicit target logout retains envelope validation and the target's
     // original request generation; no real native dispatch is performed.
     let logout = app.request(

@@ -198,6 +198,7 @@ impl Application {
                 | "account.list"
                 | "account.switch"
                 | "account.logout"
+                | "auth.logout"
                 | "settings.set"
                 | "shortcuts.apply"
                 | "settings.playback"
@@ -299,6 +300,10 @@ impl Application {
         } else {
             request.account.as_str().unwrap_or("").into()
         };
+        let auth_state = runtime
+            .metadata
+            .get(&account)
+            .map(|m| m.auth["state"].clone());
         let mut diagnostic_status = false;
         let mut mark_window = false;
         let mut open = None;
@@ -321,6 +326,12 @@ impl Application {
                     return Ok(Action::Reply(json!({})));
                 }
                 if command=="diagnostics.status"{diagnostic_status=true;return Ok(Action::Reply(json!({})));}
+                if command == "auth.logout" {
+                    if auth_state.as_ref().is_none_or(|state| state != "qr") {
+                        return Err("only a pending QR sign-in can switch to phone".into());
+                    }
+                    return Ok(Action::Native { query: json!({"@type":"logOut"}), answer: crate::commands::Answer::Empty });
+                }
                 if let Some(logout) = &logout {
                     return logout.clone().map(|account| Action::AccountNative {
                         account,
