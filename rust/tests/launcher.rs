@@ -61,6 +61,17 @@ fn native_launcher_keeps_identity_entries_and_existing_owner() {
         language(&BTreeMap::from([("LANG".into(), "C.UTF-8".into())])),
         "en"
     );
+    let command = context.window_command(std::path::Path::new("/usr/bin/quickshell"));
+    let environment: BTreeMap<_, _> = command.get_envs().collect();
+    assert_eq!(
+        environment
+            .get(std::ffi::OsStr::new("QT_QPA_PLATFORMTHEME"))
+            .unwrap()
+            .unwrap(),
+        "xdgdesktopportal"
+    );
+    assert_eq!(command.get_program(), "/usr/bin/quickshell");
+    assert_eq!(command.get_args().count(), 3);
     let properties =
         telebar_runtime::host_service::properties(&context.binary, "--daemon", &[], None).unwrap();
     assert!(

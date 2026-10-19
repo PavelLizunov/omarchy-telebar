@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Dialogs
 import QtTest
 import qs.Commons
 import "../../app/Model.js" as Model
@@ -262,36 +263,29 @@ TestCase {
     var picker = findChild(view, "quick-file-picker")
     var button = findChild(view, "quick-tool-attach")
     verify(button !== null)
+    picker.options = FileDialog.DontUseNativeDialog
+    compare(picker.fileMode, FileDialog.OpenFiles)
     mouseClick(button, button.width / 2, button.height / 2)
     tryCompare(picker, "visible", true)
-    wait(30)
-    var card = findChild(picker, "file-picker-card")
-    for (var name of ["file-picker-path", "file-picker-list", "file-picker-accept", "file-picker-cancel"]) {
-      var item = findChild(picker, name)
-      var pos = item.mapToItem(card, 0, 0)
-      verify(pos.x >= 0 && pos.x + item.width <= card.width + 1, name + " must fit inside the picker")
-    }
-    verify(String(picker.currentFolder).startsWith("file:///"))
-    keyClick(Qt.Key_Escape)
+    picker.reject()
     tryCompare(picker, "visible", false)
     compare(quick.attachments.length, 0)
     button.forceActiveFocus()
     keyClick(Qt.Key_Return)
     tryCompare(picker, "visible", true)
-    picker.navigate(Qt.resolvedUrl("dialog-files/"))
-    var list = findChild(picker, "file-picker-list")
-    tryCompare(list, "count", 2)
-    picker.toggle(0)
-    picker.toggle(1)
-    picker.accept()
-    compare(quick.attachments.length, 2)
+    picker.reject()
+    picker.selectedFile = Qt.resolvedUrl("dialog-files/first.txt")
+    picker.accepted()
+    compare(quick.attachments.length, 1)
     var input = findChild(view, "quick-composer")
+    input.Window.window.requestActivate()
+    wait(30)
     input.text = "Two files"
     input.forceActiveFocus()
     view.serviceModel.holdSend = true
     keyClick(Qt.Key_Return)
     compare(view.serviceModel.lastRequest.cmd, "message.sendFiles")
-    compare(view.serviceModel.lastRequest.args.paths.length, 2)
+    compare(view.serviceModel.lastRequest.args.paths.length, 1)
     compare(view.serviceModel.lastRequest.args.caption, "Two files")
     view.serviceModel.completeSend()
     compare(quick.attachments.length, 0)

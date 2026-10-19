@@ -432,7 +432,7 @@ Item {
     multiple: true
     title: "Attach photos or files"
     onAccepted: {
-      var paths = selectedFiles.map(function (url) { return decodeURIComponent(String(url).replace(/^file:\/\//, "")) })
+      var paths = Model.toList(selectedFiles).map(function (url) { return decodeURIComponent(String(url).replace(/^file:\/\//, "")) })
       quick.addAttachments(paths, true)
     }
     onRejected: composer.forceActiveFocus()

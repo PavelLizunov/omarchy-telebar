@@ -123,8 +123,10 @@ QtObject {
       result: { messages: found.slice(0, pending.args.limit), nextFromMessageId: found.length > pending.args.limit ? found[pending.args.limit - 1].id : 0 } })
   }
   property var lastRequest: null
+  signal requestObserved(string cmd, var args)
   function request(cmd, args, callback) {
     lastRequest = { cmd: cmd, args: args }
+    requestObserved(cmd, args)
     if (cmd === "messages.search") {
       searchRequests = searchRequests.concat([args])
       var index = pendingSearches.length

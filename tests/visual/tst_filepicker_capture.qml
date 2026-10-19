@@ -2,7 +2,7 @@ import QtQuick
 import QtTest
 import qs.Commons
 
-// Supplemental QtTest captures while MCP wrapper/renderer versions disagree.
+// Captures show caller surfaces only; native dialogs are separate portal windows.
 TestCase {
   id: tests
   name: "FilePickerCapture"

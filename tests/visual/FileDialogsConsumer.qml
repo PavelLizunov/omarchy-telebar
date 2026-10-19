@@ -37,6 +37,6 @@ Rectangle {
     id: settle
     interval: 20
     repeat: true
-    onTriggered: if (fixture.dialog && (!fixture.autoOpen || fixture.dialog.ready)) { fixture.ready = true; stop() }
+    onTriggered: if (fixture.dialog && (!fixture.autoOpen || fixture.dialog.visible)) { fixture.ready = true; stop() }
   }
 }

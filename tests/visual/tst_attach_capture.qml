@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Dialogs
 import QtTest
 import qs.Commons
 import "../../shell" as Shell
@@ -38,20 +39,21 @@ TestCase {
       tryCompare(quick, "ready", true)
       wait(30)
       grabImage(quick).save("/tmp/opencode/omagram-quick-attach-controls-" + radius + ".png")
-      quick.consumer.attach()
       var picker = findChild(quick, "quick-file-picker")
-      picker.navigate(Qt.resolvedUrl("dialog-files/"))
-      tryCompare(picker, "ready", true)
+      picker.options = FileDialog.DontUseNativeDialog
+      picker.currentFolder = Qt.resolvedUrl("dialog-files/")
+      quick.consumer.attach()
+      tryCompare(picker, "visible", true)
       wait(30)
       grabImage(quick).save("/tmp/opencode/omagram-quick-attach-picker-" + radius + ".png")
       quick.destroy()
     }
     var full = createTemporaryObject(fullScene, tests, { autoOpen: false })
     tryCompare(full, "ready", true)
+    full.dialog.options = FileDialog.DontUseNativeDialog
+    full.dialog.currentFolder = Qt.resolvedUrl("dialog-files/")
     full.chat.attach(true)
     tryCompare(full.dialog, "visible", true)
-    full.dialog.navigate(Qt.resolvedUrl("dialog-files/"))
-    tryCompare(full.dialog, "ready", true)
     grabImage(full).save("/tmp/opencode/omagram-full-attach-fixed.png")
     full.destroy()
     var media = createTemporaryObject(mediaScene, tests)

@@ -281,7 +281,7 @@ FocusScope {
     objectName: "profile-photo-file-dialog"
     app: settings.app
     title: "Your new profile photo"
-    nameFilters: ["*.jpg", "*.jpeg", "*.png", "*.webp", "*.gif", "*.bmp"]
+    nameFilters: [qsTr("Images (*.jpg *.jpeg *.png *.webp *.gif *.bmp)")]
     onAccepted: settings.setPhoto(settings.urlToPath(selectedFile))
     onRejected: settings.forceActiveFocus()
   }

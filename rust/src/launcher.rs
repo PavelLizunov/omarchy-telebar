@@ -397,6 +397,31 @@ impl Context {
         home.write(&path, wanted.as_bytes(), 0o644)?;
         Ok("written")
     }
+    pub fn window_command(&self, executable: &Path) -> std::process::Command {
+        let mut command = std::process::Command::new(executable);
+        command
+            .args(["--no-duplicate", "--path"])
+            .arg(self.runtime.join("omagram/app"))
+            .env_clear()
+            .envs(&self.environment)
+            .env("PATH", "/usr/bin")
+            .env("QS_APP_ID", "omagram")
+            // Use the user's FileChooser portal (including custom file managers).
+            .env("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
+            .env(
+                "QT_FFMPEG_DECODING_HW_DEVICE_TYPES",
+                self.environment
+                    .get("QT_FFMPEG_DECODING_HW_DEVICE_TYPES")
+                    .map_or("vaapi,cuda", String::as_str),
+            )
+            .env(
+                "QT_FFMPEG_ENCODING_HW_DEVICE_TYPES",
+                self.environment
+                    .get("QT_FFMPEG_ENCODING_HW_DEVICE_TYPES")
+                    .map_or("vaapi", String::as_str),
+            );
+        command
+    }
     pub fn run(&self, args: &[String], host: bool) -> io::Result<()> {
         let target = parse(args)?;
         if !crate::session::CUTOVER_READY && target != Target::DesktopEntry {
@@ -444,27 +469,7 @@ impl Context {
         }
         self.prepare_root()?;
         let executable = crate::executable::checked(Path::new("/usr/bin/quickshell"))?;
-        let mut command = std::process::Command::new(executable);
-        command
-            .args(["--no-duplicate", "--path"])
-            .arg(self.runtime.join("omagram/app"))
-            .env_clear()
-            .envs(&self.environment)
-            .env("PATH", "/usr/bin")
-            .env("QS_APP_ID", "omagram")
-            .env(
-                "QT_FFMPEG_DECODING_HW_DEVICE_TYPES",
-                self.environment
-                    .get("QT_FFMPEG_DECODING_HW_DEVICE_TYPES")
-                    .map_or("vaapi,cuda", String::as_str),
-            )
-            .env(
-                "QT_FFMPEG_ENCODING_HW_DEVICE_TYPES",
-                self.environment
-                    .get("QT_FFMPEG_ENCODING_HW_DEVICE_TYPES")
-                    .map_or("vaapi", String::as_str),
-            );
-        Err(command.exec())
+        Err(self.window_command(&executable).exec())
     }
 }
 fn plain(path: &Path) -> bool {

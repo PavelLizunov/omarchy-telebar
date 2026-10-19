@@ -72,7 +72,7 @@ Rectangle {
     else if (state === "long-draft") Qt.callLater(function () { quick.focusItem.text = Array(20).fill("Long draft line").join("\n"); quick.focusItem.cursorPosition = quick.focusItem.text.length })
     else if (state === "picker") Qt.callLater(function () {
       quick.attach()
-      for (var object of quick.data) if (object.objectName === "quick-file-picker") object.navigate(Qt.resolvedUrl("dialog-files/"))
+      for (var object of quick.data) if (object.objectName === "quick-file-picker") object.currentFolder = Qt.resolvedUrl("dialog-files/")
     })
   }
   Timer {

@@ -28,6 +28,29 @@ service and pending attachment/send/draft retention. Other suites preserve theme
 radius, mark optical/hit geometry, unread states, sidebar interactions and shared
 composition. `FixtureApp.qml` supplies only synthetic requests/media.
 
+## System file chooser
+
+`app/FilePicker.qml` delegates browsing to QtQuick.Dialogs.FileDialog. The native
+window launcher selects `QT_QPA_PLATFORMTHEME=xdgdesktopportal`, so the desktop's
+FileChooser preference owns the UI (for example Flea), not a Telebar file browser.
+The shared shell retains its own platform theme; no global configuration changes.
+A running old window must reopen to receive the launch environment.
+
+```sh
+node scripts/prepare-preview.mjs action /absolute/new/action-fixture
+bash tests/run-file-portal.sh /absolute/new/action-fixture
+```
+
+The private D-Bus fixture has no activation service directories or compositor
+access. It observes actual Qt portal OpenFile calls and returns temporary local
+files through the real attachment/profile/compact consumers. It covers multiple
+selection, cancellation and no send-on-pick. It does not verify Flea's live window
+appearance or human selection. `tst_file_dialogs.qml` tests caller lifecycle with
+Qt's explicit non-native offscreen option; `tst_quick.qml` verifies focus after
+chooser close and send ownership. Native dialogs are separate windows and are
+not included in the caller's QML subtree PNG. Capture fixtures only show callers;
+do not label them screenshots of the system dialog.
+
 ## Archive refresh regression
 
 `node tests/archive-refresh-test.js` exercises the actual navigation/model logic:
