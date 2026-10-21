@@ -78,7 +78,7 @@ export function prepare(mode, output) {
     if (data.split('import Quickshell.Io\n').length !== 2) throw Error('Commons I/O contract changed');
     return data.replace('import Quickshell.Io\n', 'import "InertIo"\n');
   };
-  for (const name of ['Color.qml', 'Style.qml', 'Util.qml', 'Border.qml', 'BorderGeometry.js', 'qmldir']) admit('imports/qs/Commons/' + name, path.join(host, 'Commons', name), ['Color.qml', 'Style.qml'].includes(name) ? inertIo : undefined);
+  for (const name of ['Color.qml', 'Style.qml', 'Util.qml', 'Border.qml', 'BorderGeometry.js', 'qmldir']) admit('imports/qs/Commons/' + name, path.join(host, 'Commons', name), ['Color.qml', 'Style.qml'].includes(name) ? inertIo : name === 'qmldir' ? text => 'module qs.Commons\n' + text.split('\n').filter(line => /^singleton (Color|Style|Util|Border) /.test(line)).join('\n') + '\n' : undefined);
   for (const name of ['Process.qml', 'FileView.qml', 'StdioCollector.qml']) admit('imports/qs/Commons/InertIo/' + name, path.join(inert, 'Quickshell/Io', name));
   files.set('imports/qs/Commons/InertIo/qmldir', Buffer.from('module InertIo\nProcess 1.0 Process.qml\nFileView 1.0 FileView.qml\nStdioCollector 1.0 StdioCollector.qml\n'));
   function qualified(data) {

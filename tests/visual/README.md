@@ -118,7 +118,21 @@ checks original-destination/recovery ownership without devices.
 
 The bundled [inert imports](imports/README.md) and their provenance remain for
 content-only QtTest. `RoundVideoConsumer.qml` uses an explicitly generated local
-480×480 H.264 test clip, never private media. `tst_round_video.qml` exercises the
+480×480 H.264 test clip, never private media. `tst_video_first_frame.qml` checks
+painted color pixels in both the inline circle and the enlarged viewer on their
+first playback. This must not be replaced by position/video-size assertions.
+Run it with the same fixture imports as the round-video suite. An additional
+`QT_QUICK_BACKEND=rhi QSG_RHI_BACKEND=opengl` offscreen run checks shader rendering
+when an OpenGL context is available; record the actual GPU/backend. Passing this
+synthetic clip does not reproduce an arbitrary user's file or Wayland surface.
+Current Qt 6.12 software rendering fails these painted-pixel assertions despite
+receiving decoded frames; do not count the older decoder-only suite as visual
+acceptance there. OpenGL passes this synthetic case; the reported real first-play
+failure remains unresolved until its exact full-window path/file is identified.
+`prepare-preview.mjs` admits only the copied Commons singletons in its module
+catalog, so new host singletons cannot become missing or active fixture imports.
+
+`tst_round_video.qml` exercises the
 real decoder, inline expand button, zoom, drag, pause, reset and close. Generate
 `round-480.mp4` in the new fixture, not in the repository:
 
