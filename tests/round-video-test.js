@@ -74,5 +74,7 @@ assert(media.includes('app: window.host') && media.includes('message: window.hos
 const viewer = fs.readFileSync(path.join(root, 'app/RoundVideoViewer.qml'), 'utf8');
 assert(viewer.includes('source: viewer.url') && viewer.includes('app.fileState(media.file)'));
 assert(!viewer.includes('miniUrl') && !viewer.includes('file.open'));
-assert(viewer.includes('radius: Style.cornerRadius') && viewer.includes('radius: width / 2'));
+assert(viewer.includes('radius: Style.cornerRadius') && viewer.includes('context.arc(width / 2, height / 2, width / 2'));
+assert(viewer.includes('viewer.surfaceReady') && viewer.includes('function onFrameSwapped()'));
+assert(!viewer.includes('MultiEffect') && !viewer.includes('layer.enabled'), 'Fullscreen video paints directly, without a hidden texture source');
 console.log('Original round-video routes, one decoder/audio owner, stale/refused stop and native circle contracts passed');

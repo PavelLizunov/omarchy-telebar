@@ -1,6 +1,6 @@
 import QtQuick
-import QtQuick.Effects
 import QtQuick.Layouts
+import QtQuick.Window
 import QtMultimedia
 import qs.Commons
 import "Model.js" as Model
@@ -12,6 +12,21 @@ FocusScope {
   property var app: null
   property var message: null
   property bool playbackMuted: false
+  property bool surfaceReady: false
+  property int decodedFrames: 0
+  readonly property bool pictureReady: decodedFrames > 0
+  // Bind the decoder only after this window has presented its first frame.
+  // A newly mapped overlay does not yet own the render resources of a warm one.
+  Connections {
+    target: viewer.Window.window
+    function onFrameSwapped() { viewer.surfaceReady = true }
+  }
+  Connections {
+    target: viewer.player ? viewer.player.videoSink : null
+    function onVideoFrameChanged() {
+      if (viewer.player.videoSink.videoSize.width > 0) viewer.decodedFrames++
+    }
+  }
   property real zoom: 1
   property real panX: 0
   property real panY: 0
@@ -22,7 +37,6 @@ FocusScope {
   readonly property var file: media && app ? app.fileState(media.file) : null
   readonly property string url: file ? Model.fileUrl(file.path) : ""
   readonly property real diameter: Math.max(0, Math.min(width - Style.space(32), height - Style.space(132)))
-  readonly property bool rounded: GraphicsInfo.api !== GraphicsInfo.Software
   readonly property var player: videoLoader.item
   readonly property real panLimit: diameter * (zoom - 1) / 2
   readonly property string fontFamily: app && app.fontFamily ? app.fontFamily : Style.font.family
@@ -53,7 +67,12 @@ FocusScope {
   onFileChanged: fetch()
   onDiameterChanged: setZoom(zoom)
   Component.onCompleted: { fetch(); forceActiveFocus() }
-  onVisibleChanged: if (!visible && player) player.stop()
+  onVisibleChanged: if (!visible) {
+    surfaceReady = false
+    decodedFrames = 0
+    if (player) player.stop()
+  }
+  onUrlChanged: { decodedFrames = 0; if (url !== "") downloadError = "" }
 
   Keys.onPressed: function(event) {
     if (event.key === Qt.Key_Escape || event.key === Qt.Key_Q) viewer.closed()
@@ -95,8 +114,6 @@ FocusScope {
       id: videoSurface
       anchors.fill: parent
       clip: true
-      visible: !viewer.rounded
-      layer.enabled: viewer.rounded
       Loader {
         id: videoLoader
         objectName: "round-video-player-loader"
@@ -105,33 +122,22 @@ FocusScope {
         anchors.verticalCenterOffset: viewer.panY
         width: parent.width * viewer.zoom
         height: width
-        active: viewer.visible && viewer.url !== ""
+        active: viewer.visible && viewer.surfaceReady && viewer.diameter > 0 && viewer.url !== ""
         sourceComponent: FollowingVideo {
           objectName: "round-video-player"
           source: viewer.url
           autoPlay: true
-          muted: viewer.playbackMuted
+          muted: viewer.playbackMuted || !viewer.pictureReady
           playbackRate: Model.playbackRate(viewer.app ? viewer.app.playbackRate : 1)
           fillMode: VideoOutput.PreserveAspectCrop
           endOfStreamPolicy: VideoOutput.KeepLastFrame
         }
       }
     }
-    Rectangle { id: mask; anchors.fill: parent; radius: width / 2; visible: false; layer.enabled: true }
-    MultiEffect {
-      anchors.fill: parent
-      visible: viewer.rounded
-      source: videoSurface
-      maskEnabled: true
-      maskSource: mask
-      maskThresholdMin: 0.5
-      maskSpreadAtMin: 1.0
-    }
-    // Shader effects are unavailable on Qt's software renderer; paint only the
-    // static outer corners so that this fallback retains the same circular crop.
+    // Render video directly into its window, not an invisible shader-source
+    // texture. Static outer corners preserve the circle without an extra target.
     Canvas {
       anchors.fill: parent
-      visible: !viewer.rounded
       onWidthChanged: requestPaint()
       onHeightChanged: requestPaint()
       onPaint: {
@@ -176,7 +182,7 @@ FocusScope {
       width: parent.width * 0.8
       horizontalAlignment: Text.AlignHCenter
       wrapMode: Text.Wrap
-      visible: !viewer.url || (viewer.player && viewer.player.error !== MediaPlayer.NoError)
+      visible: !viewer.url || !viewer.pictureReady || (viewer.player && viewer.player.error !== MediaPlayer.NoError)
       text: viewer.downloadError !== "" ? viewer.downloadError
           : viewer.player && viewer.player.error !== MediaPlayer.NoError ? "Could not play this round video"
           : "Loading round video… " + Math.round(Model.progress(viewer.file) * 100) + "%"

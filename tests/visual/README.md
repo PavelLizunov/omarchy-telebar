@@ -127,8 +127,15 @@ when an OpenGL context is available; record the actual GPU/backend. Passing this
 synthetic clip does not reproduce an arbitrary user's file or Wayland surface.
 Current Qt 6.12 software rendering fails these painted-pixel assertions despite
 receiving decoded frames; do not count the older decoder-only suite as visual
-acceptance there. OpenGL passes this synthetic case; the reported real first-play
-failure remains unresolved until its exact full-window path/file is identified.
+acceptance there. Native OpenGL/Wayland evidence is required for playback.
+`tst_round_startup.qml` additionally creates a cold hidden window: no decoder may
+start before the surface's first presented frame. Once shown, the actual viewer
+must paint video, retain its circular crop, and release on hide. The old viewer
+fails the pre-surface decoder assertion. Fullscreen now paints VideoOutput
+directly, with static corner masking rather than an invisible shader texture.
+Audio is held until the video sink receives its first nonempty frame; painted
+pixels remain a separate assertion, not inferred from that readiness flag.
+VM107 has no physical audio output, so audio-device acceptance is separate.
 `prepare-preview.mjs` admits only the copied Commons singletons in its module
 catalog, so new host singletons cannot become missing or active fixture imports.
 
