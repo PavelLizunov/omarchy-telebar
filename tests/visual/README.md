@@ -136,6 +136,13 @@ directly, with static corner masking rather than an invisible shader texture.
 Audio is held until the video sink receives its first nonempty frame; painted
 pixels remain a separate assertion, not inferred from that readiness flag.
 VM107 has no physical audio output, so audio-device acceptance is separate.
+`NativeRoundCaller.qml` is a VM-only native entry: complete Main with blank
+transport, actual MediaView.enlarge handler, Main-owned PanelWindow/Loader and
+actual viewer close signal. It opens a generated local clip cold and reopens it,
+saves both overlay PNGs, logs bounded technical samples and exits. Verify painted
+pixels in both PNGs separately; its log marker alone is not visual acceptance.
+Provide `round-480.mp4` beside the fixture, root Commons/Ui imports from the installed
+host, and run in a finite task-owned service on the guest, not the workstation.
 `prepare-preview.mjs` admits only the copied Commons singletons in its module
 catalog, so new host singletons cannot become missing or active fixture imports.
 
