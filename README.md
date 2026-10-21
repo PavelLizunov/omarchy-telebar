@@ -113,6 +113,11 @@ Theme radius zero stays zero; avatars and round video remain semantic circles.
 
 ## Checks
 
+[Testing workflow](TESTING.md) owns the dedicated `omarchy-test` guest access,
+upstream reference selection and actual-consumer acceptance. Verify the guest
+with `bash scripts/test-host-preflight.sh`; run builds and exploratory desktop
+checks there. The workstation is the editing/control and final acceptance host.
+
 ```sh
 cargo fmt --manifest-path rust/Cargo.toml --check
 cargo test --manifest-path rust/Cargo.toml --locked

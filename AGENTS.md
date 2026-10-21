@@ -1,3 +1,16 @@
+# Telebar development
+
+- Read [TESTING.md](TESTING.md) before choosing a test host or reference implementation.
+- Default runtime target: dedicated `omarchy-test` VM107, reached through the
+  existing DSH SSH route. Run `bash scripts/test-host-preflight.sh` to verify it.
+- Use the workstation for editing/control and final installed-consumer checks;
+  use the VM for exploratory windows, pointer input, captures and shell lifecycle.
+- Read upstream behavior before inventing a workaround. TDLib owns protocol/auth;
+  Telegram Desktop is a behavioral reference, not a drop-in QML player.
+- A defect task includes diagnosis, the smallest justified repair and consumer
+  verification. Routine tests/activation are part of the request, not new approvals.
+  Report exact technical limits; a failed branch does not stop independent work.
+
 # Native UI contract
 
 - Inherit Omarchy surface geometry from `qs.Commons.Style.cornerRadius`.
