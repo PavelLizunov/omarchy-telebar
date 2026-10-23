@@ -14,12 +14,34 @@ FocusScope {
   property bool playbackMuted: false
   property bool surfaceReady: false
   property int decodedFrames: 0
+  property int presentationSwaps: 0
+  // Bounded incident observation: technical counters only, no media identity.
+  Timer {
+    id: presentationSample
+    interval: 1000
+    repeat: true
+    running: viewer.visible && samples < 12
+    property int samples: 0
+    property int lastFrames: 0
+    property int lastSwaps: 0
+    property real sampledAt: Date.now()
+    onTriggered: {
+      var now = Date.now(), p = viewer.player
+      console.info("Telebar round presentation", JSON.stringify({ sample: ++samples,
+        elapsedMs: now - sampledAt, decoded: viewer.decodedFrames - lastFrames,
+        swaps: viewer.presentationSwaps - lastSwaps, surfaceReady: viewer.surfaceReady,
+        position: p ? p.position : 0, error: p ? p.error : 0, api: viewer.GraphicsInfo.api }))
+      sampledAt = now
+      lastFrames = viewer.decodedFrames
+      lastSwaps = viewer.presentationSwaps
+    }
+  }
   readonly property bool pictureReady: decodedFrames > 0
   // Bind the decoder only after this window has presented its first frame.
   // A newly mapped overlay does not yet own the render resources of a warm one.
   Connections {
     target: viewer.Window.window
-    function onFrameSwapped() { viewer.surfaceReady = true }
+    function onFrameSwapped() { viewer.surfaceReady = true; viewer.presentationSwaps++ }
   }
   Connections {
     target: viewer.player ? viewer.player.videoSink : null

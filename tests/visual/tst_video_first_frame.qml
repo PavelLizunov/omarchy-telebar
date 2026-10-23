@@ -35,6 +35,34 @@ TestCase {
       "Decoded frames must paint on the first fullscreen open")
   }
 
+  function test_fullscreen_continuing_painted_motion_cold_and_reopen() {
+    for (var trial = 0; trial < 2; trial++) {
+      var item = createTemporaryObject(roundScene, tests)
+      tryCompare(item, "ready", true, 5000)
+      item.viewer.player.position = 0
+      item.viewer.player.play()
+      var signatures = {}, started = Date.now(), samples = 0
+      for (var frame = 0; frame < 15; frame++) {
+        wait(100)
+        var image = grabImage(item), signature = ""
+        for (var y = 240; y < 480; y += 24) {
+          for (var x = 340; x < 580; x += 24) {
+            var c = image.pixel(x, y)
+            signature += Math.round(c.r * 15) + ":" + Math.round(c.g * 15) + ":" + Math.round(c.b * 15) + ";"
+          }
+        }
+        signatures[signature] = true
+        samples++
+      }
+      var unique = Object.keys(signatures).length, elapsed = Date.now() - started
+      console.info("PAINTED_MOTION", JSON.stringify({ trial: trial, unique: unique, samples: samples, elapsedMs: elapsed }))
+      verify(unique >= 10, "Continuing painted changes are required, not a single decoded still")
+      verify(elapsed < 4000, "An overloaded renderer cannot establish smooth playback")
+      item.destroy()
+      wait(0)
+    }
+  }
+
   function test_first_inline_picture() {
     var path = decodeURIComponent(Qt.resolvedUrl("round-480.mp4").toString().replace("file://", ""))
     var media = createTemporaryObject(inlineScene, tests, {

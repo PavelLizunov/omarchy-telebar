@@ -12,7 +12,7 @@ TestCase {
   when: windowShown
   Component { id: scene; RoundVideoConsumer {} }
   Component { id: inlineScene; App.MediaView { width: implicitWidth; height: implicitHeight; animationsEnabled: false } }
-  FixtureApp { id: inlineModel; signal roundVideoOpening(); property var openedNote: null; function openPhoto(message) { openedNote = message } }
+  FixtureApp { id: inlineModel; signal roundVideoOpening(); property real viewerMessageId: 0; property var openedNote: null; function openPhoto(message) { openedNote = message } }
   SignalSpy { id: closedSpy; signalName: "closed" }
 
   function test_original_video_zoom_pan_pause_and_keyboard_close() {
@@ -101,9 +101,56 @@ TestCase {
       var player = media.playback
       tryCompare(player, "playbackState", MediaPlayer.PlayingState)
       inlineModel.roundVideoOpening()
-      tryCompare(player, "playbackState", MediaPlayer.PausedState)
+      tryVerify(function() { return media.playback === null }, 2000,
+        "Expansion must destroy the inline decoder, not retain its paused hardware buffers")
       media.togglePlay()
-      tryCompare(player, "playbackState", MediaPlayer.PlayingState)
+      tryVerify(function() { return media.playback !== null }, 2000)
+      tryCompare(media.playback, "playbackState", MediaPlayer.PlayingState)
+      media.releasePlayback()
+    }
+  }
+
+  function videoOutputs(item) {
+    var count = typeof item.videoSink !== "undefined" ? 1 : 0
+    for (var child of item.children || []) count += videoOutputs(child)
+    return count
+  }
+
+  function test_overlay_suspends_background_decoders_and_close_resumes() {
+    var item = createTemporaryObject(scene, tests)
+    tryCompare(item, "ready", true, 5000)
+    for (var kind of ["videoNote", "gif"]) {
+      var message = Object.assign({}, item.sample, { content: Object.assign({}, item.sample.content, { kind: kind }) })
+      var media = createTemporaryObject(inlineScene, tests, { app: inlineModel, message: message, animationsEnabled: true })
+      tryVerify(function() { return videoOutputs(media) > 0 }, 2000)
+      inlineModel.viewerMessageId = 701
+      tryCompare(media, "playbackSuspended", true)
+      tryVerify(function() { return videoOutputs(media) === 0 }, 2000)
+      inlineModel.viewerMessageId = 0
+      tryCompare(media, "playbackSuspended", false)
+      tryVerify(function() { return videoOutputs(media) > 0 }, 2000)
+      media.releasePlayback()
+    }
+  }
+
+  function test_photo_dismissal_does_not_restart_audible_video() {
+    var item = createTemporaryObject(scene, tests)
+    tryCompare(item, "ready", true, 5000)
+    for (var paused of [false, true]) {
+      var message = Object.assign({}, item.sample, { content: Object.assign({}, item.sample.content, { kind: "video" }) })
+      var media = createTemporaryObject(inlineScene, tests, { app: inlineModel, message: message })
+      media.togglePlay()
+      tryVerify(function() { return media.playback !== null }, 2000)
+      tryCompare(media.playback, "playbackState", MediaPlayer.PlayingState)
+      if (paused) { media.togglePlay(); tryCompare(media.playback, "playbackState", MediaPlayer.PausedState) }
+      inlineModel.viewerMessageId = 900
+      tryVerify(function() { return media.playback === null }, 2000)
+      inlineModel.viewerMessageId = 0
+      wait(100)
+      compare(media.playback, null, "Closing a photo must not autoplay a previously playing or paused video")
+      media.togglePlay()
+      tryVerify(function() { return media.playback !== null }, 2000)
+      tryCompare(media.playback, "playbackState", MediaPlayer.PlayingState)
       media.releasePlayback()
     }
   }

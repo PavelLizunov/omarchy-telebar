@@ -121,7 +121,11 @@ content-only QtTest. `RoundVideoConsumer.qml` uses an explicitly generated local
 480×480 H.264 test clip, never private media. `tst_video_first_frame.qml` checks
 painted color pixels in both the inline circle and the enlarged viewer on their
 first playback. This must not be replaced by position/video-size assertions.
-Run it with the same fixture imports as the round-video suite. An additional
+It also samples 15 painted images at 100ms intervals on cold/reopen, requires
+at least 10 distinct signatures and refuses a run exceeding 4s. This detects a
+frozen still or 2–3 FPS in that actual viewer, not the native inline handoff or
+physical audio sync. Run it with the same fixture imports as the round-video
+suite. An additional
 `QT_QUICK_BACKEND=rhi QSG_RHI_BACKEND=opengl` offscreen run checks shader rendering
 when an OpenGL context is available; record the actual GPU/backend. Passing this
 synthetic clip does not reproduce an arbitrary user's file or Wayland surface.
@@ -133,6 +137,10 @@ start before the surface's first presented frame. Once shown, the actual viewer
 must paint video, retain its circular crop, and release on hide. The old viewer
 fails the pre-surface decoder assertion. Fullscreen now paints VideoOutput
 directly, with static corner masking rather than an invisible shader texture.
+For this incident the viewer logs at most 12 one-second numeric samples per
+instance (decoded frames, window swaps, timing and decoder status), without
+media paths or content. The log is under the owning Quickshell instance; it is
+not a permanent observer and a sample does not imply visible pixels.
 Audio is held until the video sink receives its first nonempty frame; painted
 pixels remain a separate assertion, not inferred from that readiness flag.
 VM107 has no physical audio output, so audio-device acceptance is separate.
@@ -143,6 +151,19 @@ saves both overlay PNGs, logs bounded technical samples and exits. Verify painte
 pixels in both PNGs separately; its log marker alone is not visual acceptance.
 Provide `round-480.mp4` beside the fixture, root Commons/Ui imports from the installed
 host, and run in a finite task-owned service on the guest, not the workstation.
+That older fixture starts with animations disabled and proves only isolated
+painted frames, not the already-playing handoff or sustained playback.
+`NativeRoundCadence.qml` starts audible inline playback with two background GIF
+players enabled, expands through actual Main, checks decoder release, measures
+sink notifications and window swaps in three intervals, then closes and repeats.
+Supply a >=12s, 30fps synthetic audio/video `round-cadence.mp4` beside it. A
+`CADENCE_FAIL` or missing finish marker fails the scenario. Even its scheduling
+PASS is not painted-motion or audio-sync acceptance. Record changing compositor
+pixels separately. Compare a video-free animation baseline when the guest uses
+llvmpipe: the 2026-10-23 loaded guest rendered even a rotating rectangle below
+1 FPS, so its video cadence cannot identify a workstation-specific defect.
+`tst_round_video.qml` also asserts destruction (not pause) of the old decoder
+and resumption of background animations after dismissal.
 `prepare-preview.mjs` admits only the copied Commons singletons in its module
 catalog, so new host singletons cannot become missing or active fixture imports.
 

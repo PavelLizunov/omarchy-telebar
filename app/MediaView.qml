@@ -23,6 +23,13 @@ Item {
   property bool still: false
   property bool interactive: true
   property bool animationsEnabled: true
+  property bool playbackReleased: false
+  readonly property bool overlayOpen: !!app && (app.viewerMessageId || 0) > 0
+  readonly property bool playbackSuspended: playbackReleased || overlayOpen
+  onOverlayOpenChanged: {
+    if (overlayOpen) releasePlayback()
+    else playbackReleased = false
+  }
   // Spoiler media stays covered, and does not play behind the cover, until you choose to see it.
   property bool spoiler: false
   property bool revealed: false
@@ -71,7 +78,10 @@ Item {
     togglePlay()
   }
 
-  function releasePlayback() { if (loader.item && loader.item.release) loader.item.release() }
+  function releasePlayback() {
+    if (loader.item && loader.item.release) loader.item.release()
+    playbackReleased = true
+  }
   Connections {
     target: view.app
     ignoreUnknownSignals: true
@@ -81,11 +91,13 @@ Item {
   function enlarge() {
     if (covered) { revealRequested(); return }
     if (kind !== "videoNote" || !media || !app) return
-    if (loader.item && loader.item.release) loader.item.release()
+    view.releasePlayback()
     app.openPhoto(message)
   }
 
   function togglePlay() {
+    if (overlayOpen) return
+    playbackReleased = false
     if (covered) { revealRequested(); return }
     if (kind === "file") return   // a document has nothing to play: activate() opens it
     if (loader.item && loader.item.toggle) loader.item.toggle()
@@ -258,7 +270,7 @@ Item {
       }
       Loader {
         anchors.fill: parent
-        active: format === "tgs" && sticker.lottie !== "" && !view.still && view.animationsEnabled
+        active: !view.playbackSuspended && format === "tgs" && sticker.lottie !== "" && !view.still && view.animationsEnabled
         sourceComponent: LottieAnimation {
           source: Model.fileUrl(sticker.lottie)
           autoPlay: true
@@ -267,7 +279,7 @@ Item {
       }
       Loader {
         anchors.fill: parent
-        active: format === "webm" && view.ready && !view.still && view.animationsEnabled
+        active: !view.playbackSuspended && format === "webm" && view.ready && !view.still && view.animationsEnabled
         sourceComponent: FollowingVideo {
           source: view.url
           autoPlay: true
@@ -287,7 +299,7 @@ Item {
       Placeholder { visible: !view.ready }
       Loader {
         anchors.fill: parent
-        active: view.ready && !view.covered && view.animationsEnabled
+        active: !view.playbackSuspended && view.ready && !view.covered && view.animationsEnabled
         sourceComponent: FollowingVideo {
           source: view.url
           autoPlay: true
@@ -317,7 +329,7 @@ Item {
       id: videoItem
       clip: true
       property bool started: false
-      function release() { if (videoLoader.item) videoLoader.item.pause() }
+      function release() { if (videoLoader.item) videoLoader.item.pause(); started = false }
       readonly property var playback: videoLoader.item
 
       function toggle() {
@@ -333,7 +345,7 @@ Item {
       Loader {
         id: videoLoader
         anchors.fill: parent
-        active: videoItem.started && view.ready
+        active: !view.playbackSuspended && videoItem.started && view.ready
         sourceComponent: FollowingVideo {
           source: view.url
           autoPlay: true
@@ -382,7 +394,7 @@ Item {
 
       function toggle() {
         if (!view.ready) { view.download(32); return }
-        if (!noteVideo.item) return
+        if (!noteVideo.item) { sound = true; return }
         if (!sound) {
           sound = true
           noteVideo.item.position = 0
@@ -403,7 +415,7 @@ Item {
         Loader {
           id: noteVideo
           anchors.fill: parent
-          active: view.ready && (view.animationsEnabled || note.sound)
+          active: !view.playbackSuspended && view.ready && (view.animationsEnabled || note.sound)
           sourceComponent: FollowingVideo {
             source: view.url
             autoPlay: true
