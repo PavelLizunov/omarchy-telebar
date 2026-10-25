@@ -8,7 +8,7 @@ commands are Rust; the interface is QML/JavaScript with Quickshell and official 
  · [Architecture](ARCHITECTURE.md) · [Runtime contract](rust/PARITY.md)
 
 Main contains the native source, tests and tooling. It is not an installation
-package until built. The current release is 1.3.0-rc.4, not stable-release
+package until built. The current release is 1.3.0-rc.5, not stable-release
 certification. Reported sent-video playback, forum-parent unread state and a
 historical disappearing window remain unresolved. Full command, perceived media
 quality, working-account reverse rollback and independent security acceptance are
@@ -89,10 +89,15 @@ Do not run Telebar and Omagram together against the same session directories.
 
 ## Use
 
-Create your API ID/hash at [my.telegram.org](https://my.telegram.org). Open Telebar
-from the app launcher or the bar menu, then sign in by phone or QR. Credentials
-and database encryption keys use the session keyring. Existing `omagram` paths,
-command names, window class, desktop entry and account keys remain compatible.
+Open Telebar and choose **Continue to Telegram** on first run, then sign in by
+phone or QR. The built-in connection uses the public API profile shipped in
+[Telegram Android](https://github.com/DrKLO/Telegram/blob/aac1efcb83d6575efb0c819c6ddc4ea6c8cf64e1/TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java),
+not Telegram Desktop's restricted test credentials. Telegram may limit shared
+profiles; this is not a guarantee of login availability. **Use my own API**
+retains optional credentials from [my.telegram.org/apps](https://my.telegram.org/apps).
+The selected credentials and database encryption keys use the session keyring.
+Existing configured accounts are not reset or switched to the built-in profile.
+Existing `omagram` paths, command names, window class and account keys remain compatible.
 
 Left-click the plane to open the quick view; right-click for Open Telebar, mute
 notifications or quit. Its Open Telebar label/mark opens the native window.

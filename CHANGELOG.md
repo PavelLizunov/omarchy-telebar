@@ -1,5 +1,17 @@
 # Changes
 
+## 1.3.0-rc.5 (2026-10-26)
+
+Urgent first-run hotfix: **Continue to Telegram** uses a built-in public API
+profile instead of requiring every new device to register API credentials.
+**Use my own API** reveals the optional custom form. Failed custom credential
+saves retain the entered hash for retry. Existing configured accounts are unchanged.
+
+The built-in profile comes from Telegram Android's public source, not the
+restricted Telegram Desktop test API. Shared-profile server limits remain
+possible. This UI-only package reuses the exact rc.4 Rust binary. No new tests,
+visual checks or real Telegram login were run for this urgent publication.
+
 ## 1.3.0-rc.4 (2026-10-25)
 
 Follow-up to the requested implementation/security review. The rc.3 release
