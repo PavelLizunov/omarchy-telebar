@@ -1,5 +1,22 @@
 # Changes
 
+## 1.3.0-rc.3 (2026-10-25)
+
+- Fix inline round videos that decode without naturally repainting: keep the
+  video source in the scene graph and apply the circle through its layer effect.
+- Package one content-bound UI generation for service, bar and overlay; verify
+  all selected visual files, not only the base app directory.
+- Require natural presentation before image grabs in playback regressions;
+  image capture itself could previously hide stalled rendering.
+- Retain the direct-output original-video viewer, zoom, pan, pause and reopen.
+
+[Release and native archive](https://github.com/PavelLizunov/omarchy-telebar/releases/tag/v1.3.0-rc.3)
+provide the prebuilt x86-64 plugin and checksums. Prior scoped checks include
+native VM and Radeon playback, old/fixed controls, changing painted frames and
+virtual audio. Original private-clip and physical audio/synchronization acceptance
+remain pending. This is a prerelease, not whole-client or security certification.
+Existing release tags and assets remain unchanged.
+
 ## 1.3.0-rc.2 (2026-10-14)
 
 Corrected native prerelease with the compact emoji layout fix, confirmed working

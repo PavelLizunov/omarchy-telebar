@@ -8,7 +8,7 @@ commands are Rust; the interface is QML/JavaScript with Quickshell and official 
  · [Architecture](ARCHITECTURE.md) · [Runtime contract](rust/PARITY.md)
 
 Main contains the native source, tests and tooling. It is not an installation
-package until built. The current release is 1.3.0-rc.2, not stable-release
+package until built. The current release is 1.3.0-rc.3, not stable-release
 certification. Reported sent-video playback, forum-parent unread state and a
 historical disappearing window remain unresolved. Full command, perceived media
 quality, working-account reverse rollback and independent security acceptance are
