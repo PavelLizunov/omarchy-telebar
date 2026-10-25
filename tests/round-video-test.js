@@ -81,4 +81,8 @@ const inline = fs.readFileSync(path.join(root, 'app/MediaView.qml'), 'utf8');
 const noteSource = inline.split('id: noteSource')[1].split('Placeholder')[0];
 assert(noteSource.includes('layer.effect: MultiEffect') && !noteSource.includes('visible: false'),
   'Inline video stays visible to the scene graph; its layer effect owns circular masking');
-console.log('Original round-video routes, live inline layer, one decoder/audio owner and stale/refused stop contracts passed');
+const recorder = fs.readFileSync(path.join(root, 'app/VideoNoteRecorder.qml'), 'utf8');
+const preview = recorder.split('id: previewSource')[1].split('id: circleMask')[0];
+assert(preview.includes('layer.effect: MultiEffect') && !preview.includes('visible: false'),
+  'Recorder preview also needs natural scene-graph updates, not a hidden source');
+console.log('Original round-video routes, live inline/recorder layers, one decoder/audio owner and stale/refused stop contracts passed');

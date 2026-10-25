@@ -1,5 +1,24 @@
 # Changes
 
+## 1.3.0-rc.4 (2026-10-25)
+
+Follow-up to the requested implementation/security review. The rc.3 release
+and its assets remain unchanged.
+
+- Fix the same hidden-source repaint defect in the recording preview. Synthetic
+  native Radeon checks reproduce zero natural swaps before the repair and
+  sustained presentation after it; hardware capture acceptance remains separate.
+- Pin every upload path ancestor without following replacement symlinks. A
+  directory swap after canonicalization could otherwise bypass the database
+  exclusion. A deterministic synthetic interleaving fails before and passes
+  after the repair; this is not a claim of observed real-world exploitation.
+- Retain ordinary chosen-file and resolved-symlink behavior, plus the existing
+  descriptor/inode checks. Add a bounded concurrent directory-swap regression.
+
+[Release and native archive](https://github.com/PavelLizunov/omarchy-telebar/releases/tag/v1.3.0-rc.4)
+contain the follow-up fixes. The scope is rendering and upload admission, not
+whole-client security certification or physical device acceptance.
+
 ## 1.3.0-rc.3 (2026-10-25)
 
 - Fix inline round videos that decode without naturally repainting: keep the

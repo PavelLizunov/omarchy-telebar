@@ -138,11 +138,21 @@ FocusScope {
       width: Math.round(Math.min(noteRecorder.width, noteRecorder.height) * 0.55)
       height: width
 
+      Rectangle {
+        anchors.fill: parent
+        radius: width / 2
+        color: Qt.rgba(1, 1, 1, 0.06)
+      }
       Item {
         id: previewSource
         anchors.fill: parent
-        visible: false
         layer.enabled: true
+        layer.effect: MultiEffect {
+          maskEnabled: true
+          maskSource: circleMask
+          maskThresholdMin: 0.5
+          maskSpreadAtMin: 1.0
+        }
         VideoOutput {
           id: preview
           anchors.fill: parent
@@ -155,19 +165,6 @@ FocusScope {
         radius: width / 2
         visible: false
         layer.enabled: true
-      }
-      Rectangle {
-        anchors.fill: parent
-        radius: width / 2
-        color: Qt.rgba(1, 1, 1, 0.06)
-      }
-      MultiEffect {
-        anchors.fill: parent
-        source: previewSource
-        maskEnabled: true
-        maskSource: circleMask
-        maskThresholdMin: 0.5
-        maskSpreadAtMin: 1.0
       }
       Rectangle {
         anchors.fill: parent

@@ -186,6 +186,16 @@ Use the same clip/output setup. Native lifecycle counters still do not replace
 separate PNG inspection. A captured virtual sink can establish non-silent audio output, not physical
 audibility or audiovisual synchronization. Keep those acceptance limits explicit.
 
+`NativeRecorderCadence.qml` feeds synthetic video to the actual VideoNoteRecorder
+preview with its hardware Loader disabled before opening. No camera, microphone,
+recording or send is used. It requires natural cadence before a circle capture on
+three openings and closes through the recorder's actual cancel handler. On
+Qt 6.12/Radeon the old preview decoded 96 frames with zero swaps in 1.6s; the
+visible layer-effect preview produced 98 swaps/96 frames. The old implementation
+can pass on Qt 6.11/llvmpipe, so retain the workstation GPU negative control rather
+than generalizing the VM result. This is not physical capture or recording acceptance.
+Use the same clip/output/import setup as NativeInlineCadence.
+
 `tst_round_video.qml` also asserts destruction (not pause) of the old decoder
 and resumption of background animations after dismissal.
 `prepare-preview.mjs` admits only the copied Commons singletons in its module
