@@ -45,7 +45,10 @@ fn directory_swap_cannot_bypass_database_exclusion() {
     let mut private = false;
     while attempts < 20_000 && Instant::now() < deadline {
         attempts += 1;
-        if let Ok(mut upload) = admit(&json!(chosen.join("payload")), &[database.clone()]) {
+        if let Ok(mut upload) = admit(
+            &json!(chosen.join("payload")),
+            std::slice::from_ref(&database),
+        ) {
             let mut bytes = Vec::new();
             upload.file.read_to_end(&mut bytes).unwrap();
             admitted += 1;
