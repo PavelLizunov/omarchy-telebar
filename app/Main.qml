@@ -18,7 +18,7 @@ import "MainNavigation.js" as MainNavigation
 Scope {
   id: omagram
 
-  readonly property int implementationRevision: 20261023
+  readonly property int implementationRevision: 20261025
   readonly property string binDir: decodeURIComponent(String(Qt.resolvedUrl("../bin/")).replace("file://", ""))
   // Explicit consumer context keeps offscreen acceptance away from live IPC.
   // Normal launch retains the same socket and service-start behavior.

@@ -25,6 +25,7 @@ ShellRoot {
   property int initialSwaps: 0
   property int images: 0
   property bool grabbing: false
+  property bool naturalChecked: false
   property var viewer: null
   property var surface: null
   property int pausedPosition: 0
@@ -109,11 +110,23 @@ ShellRoot {
         console.log("ROUND_OPEN", JSON.stringify({route: test.route, trial: test.trial, firstMs: now - test.started,
           api: test.viewer.GraphicsInfo.api, width: test.viewer.width, height: test.viewer.height,
           frame: {x: frame.x, y: frame.y, diameter: frame.width}, muted: p.muted, source: String(p.source)}))
-        test.images = 0; test.initialSwaps = test.swaps; test.sampleStarted = now
+        test.images = 0; test.naturalChecked = false; test.initialSwaps = test.swaps; test.sampleStarted = now
         test.phase = 2
         return
       }
       if (test.phase === 2) {
+        // A grab forces rendering and can conceal a hidden video that never repaints.
+        if (!test.naturalChecked) {
+          var naturalElapsed = now - test.sampleStarted
+          if (naturalElapsed < 1600) return
+          var naturalSwaps = test.swaps - test.initialSwaps
+          console.log("ROUND_NATURAL", JSON.stringify({route: test.route, trial: test.trial,
+            elapsedMs: naturalElapsed, swaps: naturalSwaps}))
+          if (!test.require(naturalElapsed < 4000 && naturalSwaps * 1000 / naturalElapsed >= 10,
+              "natural presentation without forced image grabs")) return
+          test.naturalChecked = true; test.initialSwaps = test.swaps; test.sampleStarted = now
+          return
+        }
         if (test.images < 15) { test.capture("motion-" + test.images++, test.viewer); return }
         var elapsed = now - test.sampleStarted, swaps = test.swaps - test.initialSwaps
         console.log("ROUND_MOTION", JSON.stringify({route: test.route, trial: test.trial, images: test.images, elapsedMs: elapsed, swaps: swaps}))

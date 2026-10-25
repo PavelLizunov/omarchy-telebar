@@ -142,7 +142,7 @@ Item {
   property real viewingFileId: 0
   property var viewingBlock: null
   property int mediaOpenSerial: 0
-  readonly property string roundVideoRevision: "direct-surface-v2"
+  readonly property string roundVideoRevision: "live-layer-v3"
   readonly property var mediaItems: {
     var items = Model.mediaMessages(quick.history)
     if (quick.viewingBlock && !items.some(function (m) { return m.id === quick.viewingBlock.id && m.content.media.file.id === quick.viewingFileId }))

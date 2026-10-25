@@ -409,8 +409,13 @@ Item {
       Item {
         id: noteSource
         anchors.fill: parent
-        visible: false
+        // Keep the video visible to the scene graph so new frames schedule repaints.
+        // The layer effect replaces its output without showing the square source.
         layer.enabled: true
+        layer.effect: MultiEffect {
+          maskEnabled: true
+          maskSource: noteMask
+        }
         Placeholder { visible: !view.ready }
         Loader {
           id: noteVideo
@@ -433,12 +438,6 @@ Item {
         radius: width / 2
         visible: false
         layer.enabled: true
-      }
-      MultiEffect {
-        anchors.fill: parent
-        source: noteSource
-        maskEnabled: true
-        maskSource: noteMask
       }
       Rectangle {
         anchors.fill: parent

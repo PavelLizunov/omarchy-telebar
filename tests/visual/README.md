@@ -169,10 +169,21 @@ close-time decoder release and muted background resumption. Set
 It uses the same synthetic `round-cadence.mp4` (14s, 480×480, audio-first H.264/AAC)
 and native Commons/Ui imports; complete Main also requires `Qt.labs.lottieqt`.
 Run its task-owned native entry on the guest, not through the offscreen reparenting
-adapter. Its 15 half-resolution `grabToImage` PNGs per opening must independently
-show changing video pixels and black corners inside the logged frame bounds.
-The lifecycle marker, sink notifications and window swaps alone are not a visual
-PASS. A captured virtual sink can establish non-silent audio output, not physical
+adapter. Each opening first requires 1.6s of natural window updates, with no image
+grabs. Only then do 15 half-resolution `grabToImage` PNGs independently check
+changing video pixels and black corners inside the logged frame bounds. Grabs
+force rendering: the old hidden-video player passed repeated PNG checks while
+producing zero natural swaps on Qt 6.12/OpenGL. Neither that instrumented motion
+nor sink notifications alone establish unassisted playback.
+
+`NativeInlineCadence.qml` isolates the actual inline MediaView in a window with
+no other animation. It checks three audible opens and decoder release, requiring
+natural swaps before each circle capture. The old hidden source decoded 102
+frames over 1.7s but produced zero swaps on Radeon 610M. A visible source with
+`layer.effect: MultiEffect` produced 97 swaps/96 decoded frames over 1.6s and
+retained transparent circular corners; no forced repaint timer is needed.
+Use the same clip/output setup. Native lifecycle counters still do not replace
+separate PNG inspection. A captured virtual sink can establish non-silent audio output, not physical
 audibility or audiovisual synchronization. Keep those acceptance limits explicit.
 
 `tst_round_video.qml` also asserts destruction (not pause) of the old decoder

@@ -77,4 +77,8 @@ assert(!viewer.includes('miniUrl') && !viewer.includes('file.open'));
 assert(viewer.includes('radius: Style.cornerRadius') && viewer.includes('context.arc(width / 2, height / 2, width / 2'));
 assert(viewer.includes('viewer.surfaceReady') && viewer.includes('function onFrameSwapped()'));
 assert(!viewer.includes('MultiEffect') && !viewer.includes('layer.enabled'), 'Fullscreen video paints directly, without a hidden texture source');
-console.log('Original round-video routes, one decoder/audio owner, stale/refused stop and native circle contracts passed');
+const inline = fs.readFileSync(path.join(root, 'app/MediaView.qml'), 'utf8');
+const noteSource = inline.split('id: noteSource')[1].split('Placeholder')[0];
+assert(noteSource.includes('layer.effect: MultiEffect') && !noteSource.includes('visible: false'),
+  'Inline video stays visible to the scene graph; its layer effect owns circular masking');
+console.log('Original round-video routes, live inline layer, one decoder/audio owner and stale/refused stop contracts passed');
