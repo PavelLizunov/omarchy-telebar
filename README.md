@@ -40,6 +40,7 @@ export CARGO_TARGET_DIR="$HOME/.cache/telebar-native-build"
 cargo build --manifest-path rust/Cargo.toml --release --locked
 "$CARGO_TARGET_DIR/release/telebar-runtime" --package "$PWD" "$HOME/telebar-native-base"
 node scripts/native-ui-generation.mjs "$HOME/telebar-native-base" "$HOME/telebar-native-package"
+node scripts/native-ui-generation.mjs --verify "$HOME/telebar-native-package"
 omarchy plugin validate "$HOME/telebar-native-package"
 ```
 
@@ -48,6 +49,11 @@ Content-bound QML entry points avoid relying on same-URL cache freshness. The
 package manifest records exact input hashes. Building or validating does not
 install, enable or restart anything. Downloaded x86-64 native release archives
 are already built; GitHub Source code archives are source, not plugin packages.
+
+`--verify /absolute/installed-plugin` also detects base-only UI updates, stale
+generated players and split service/bar/overlay generations. It checks the paths
+the manifest selects, not just `app/`. Coherent bytes do not prove activation;
+check the loaded action status separately after applying the complete generation.
 
 For a fresh installation with no Telebar or Omagram owner:
 

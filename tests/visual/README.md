@@ -162,6 +162,19 @@ PASS is not painted-motion or audio-sync acceptance. Record changing compositor
 pixels separately. Compare a video-free animation baseline when the guest uses
 llvmpipe: the 2026-10-23 loaded guest rendered even a rotating rectangle below
 1 FPS, so its video cadence cannot identify a workstation-specific defect.
+`NativeRoundPlayback.qml` exercises the actual compact delegate or complete Main
+with a playing inline circle, three cold/reopen handoffs, pause/resume, zoom/pan,
+close-time decoder release and muted background resumption. Set
+`TELEBAR_TEST_ROUTE=quick|main` and a new absolute `TELEBAR_TEST_OUTPUT` directory.
+It uses the same synthetic `round-cadence.mp4` (14s, 480×480, audio-first H.264/AAC)
+and native Commons/Ui imports; complete Main also requires `Qt.labs.lottieqt`.
+Run its task-owned native entry on the guest, not through the offscreen reparenting
+adapter. Its 15 half-resolution `grabToImage` PNGs per opening must independently
+show changing video pixels and black corners inside the logged frame bounds.
+The lifecycle marker, sink notifications and window swaps alone are not a visual
+PASS. A captured virtual sink can establish non-silent audio output, not physical
+audibility or audiovisual synchronization. Keep those acceptance limits explicit.
+
 `tst_round_video.qml` also asserts destruction (not pause) of the old decoder
 and resumption of background animations after dismissal.
 `prepare-preview.mjs` admits only the copied Commons singletons in its module

@@ -66,7 +66,7 @@ Rectangle {
       if (!surface) return
       if (fixture.mode === "main") {
         require(consumer.app.viewerMessageId === 701 && consumer.app.viewerFileId === 71, "Main preserves original message/file identity")
-        require(consumer.inlineMedia.playback && consumer.inlineMedia.playback.playbackState !== MediaPlayer.PlayingState, "Main retires inline audio before fullscreen")
+        require(!consumer.inlineMedia.playback, "Main destroys the inline decoder before fullscreen")
       }
       if (!viewer) viewer = fixture.find(surface.contentItem, "round-video-viewer")
       if (!viewer || !viewer.player) return

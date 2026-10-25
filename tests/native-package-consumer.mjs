@@ -6,7 +6,7 @@ import path from 'node:path';
 import net from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { sha } from '../scripts/native-ui-generation.mjs';
+import { sha, verify } from '../scripts/native-ui-generation.mjs';
 
 function lines(stream) {
   const queue = []; let buffer = '', waiting = null, ended = false;
@@ -41,6 +41,7 @@ const env = { PATH: '/usr/bin', HOME: root, LANG: 'C.UTF-8' }; let proxy, runtim
 try {
   const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, 'runtime-candidate.json')));
   assert(manifest.runtime === 'rust' && manifest.cutoverReady === true);
+  if (manifest.uiGeneration) assert.equal(verify(packageRoot).uiGeneration, manifest.uiGeneration);
   for (const [name, digest] of Object.entries(manifest.sourceHashes)) assert.equal(sha(fs.readFileSync(path.join(packageRoot, name))), digest);
   const marker = path.join(root, 'unexpected-startup'), poison = path.join(root, 'bash-env');
   fs.writeFileSync(poison, `touch ${marker}\nexit 71\n`);
