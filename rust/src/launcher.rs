@@ -452,11 +452,13 @@ impl Context {
             .envs(&self.environment)
             .env("PATH", "/usr/bin")
             .env("QS_APP_ID", "omagram")
+            // Qt's empty device list avoids driver waits that block the render
+            // thread and, in turn, the entire UI (observed with NVIDIA VA-API).
             .env(
                 "QT_FFMPEG_DECODING_HW_DEVICE_TYPES",
                 self.environment
                     .get("QT_FFMPEG_DECODING_HW_DEVICE_TYPES")
-                    .map_or("vaapi,cuda", String::as_str),
+                    .map_or(",", String::as_str),
             )
             .env(
                 "QT_FFMPEG_ENCODING_HW_DEVICE_TYPES",
