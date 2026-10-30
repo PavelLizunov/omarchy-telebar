@@ -13,12 +13,29 @@ use telebar_runtime::{
 };
 #[test]
 fn opener_validates_native_identity_and_pins_the_selected_inode() {
-    let root = std::env::temp_dir().join(format!("telebar-opener-{}", std::process::id()));
+    exercise_opener(0);
+}
+
+#[test]
+#[ignore = "takes 62 seconds to cross the former viewing deadline"]
+fn opener_allows_viewing_past_sixty_seconds() {
+    exercise_opener(62);
+}
+
+fn exercise_opener(seconds: u64) {
+    let root = std::env::temp_dir().join(format!("telebar-opener-{}-{seconds}", std::process::id()));
     fs::create_dir(&root).unwrap();
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
     let apps = root.join("share/applications");
     fs::create_dir_all(&apps).unwrap();
-    fs::write(apps.join("inert.desktop"),"[Desktop Entry]\nType=Application\nName=Inert read\nExec=/usr/bin/cat %f\nMimeType=text/plain;\n").unwrap();
+    let handler = root.join("handler");
+    fs::write(
+        &handler,
+        format!("#!/bin/sh\ncat \"$1\"\nsleep {seconds}\n"),
+    )
+    .unwrap();
+    fs::set_permissions(&handler, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(apps.join("inert.desktop"), format!("[Desktop Entry]\nType=Application\nName=Inert read\nExec={} %f\nMimeType=text/plain;\n", handler.display())).unwrap();
     let config = root.join("config");
     fs::create_dir(&config).unwrap();
     fs::write(
@@ -81,7 +98,8 @@ fn opener_validates_native_identity_and_pins_the_selected_inode() {
     let pid = helper.pid();
     fs::rename(&path, root.join("original.txt")).unwrap();
     fs::write(&path, b"replacement bytes\n").unwrap();
-    let until = Instant::now() + Duration::from_secs(5);
+    let started = Instant::now();
+    let until = started + Duration::from_secs(seconds + 5);
     let out = loop {
         if let Some(out) = helper.poll().unwrap() {
             break out;
@@ -95,6 +113,7 @@ fn opener_validates_native_identity_and_pins_the_selected_inode() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert_eq!(out.stdout, b"original selected bytes\n");
+    assert!(started.elapsed() >= Duration::from_secs(seconds));
     assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
     fs::remove_dir_all(root).unwrap();
 }

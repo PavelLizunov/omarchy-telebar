@@ -6,7 +6,7 @@ use crate::{
     state::State,
 };
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, path::Path, time::Duration};
+use std::{collections::BTreeMap, path::Path};
 #[derive(Clone, Debug)]
 pub struct Selection {
     file: i128,
@@ -59,7 +59,9 @@ impl Start {
             .and_then(|s| s.open_read(&self.path[root.trim_end_matches('/').len() + 1..]))
             .map_err(|_| "that file is not one of Telebar's")?;
         use std::os::fd::AsRawFd;
-        Managed::start(
+        // xdg-open can wait for the player to close. Keep ownership and the
+        // pinned input until it exits, without imposing a viewing deadline.
+        Managed::start_owned(
             "/usr/bin/xdg-open",
             &[&format!(
                 "/proc/{}/fd/{}",
@@ -68,7 +70,6 @@ impl Start {
             )],
             &self.environment,
             &[],
-            Duration::from_secs(60),
             4096,
         )
         .map(|helper| (helper, file))
