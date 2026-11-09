@@ -70,6 +70,27 @@ fn native_launcher_keeps_identity_entries_and_existing_owner() {
             .unwrap(),
         "xdgdesktopportal"
     );
+    assert_eq!(
+        environment
+            .get(std::ffi::OsStr::new("QT_FFMPEG_DECODING_HW_DEVICE_TYPES"))
+            .unwrap()
+            .unwrap(),
+        ","
+    );
+    let mut explicit = context.clone();
+    explicit
+        .environment
+        .insert("QT_FFMPEG_DECODING_HW_DEVICE_TYPES".into(), "cuda".into());
+    let explicit_command = explicit.window_command(std::path::Path::new("/usr/bin/quickshell"));
+    assert_eq!(
+        explicit_command
+            .get_envs()
+            .find(|(key, _)| *key == "QT_FFMPEG_DECODING_HW_DEVICE_TYPES")
+            .unwrap()
+            .1
+            .unwrap(),
+        "cuda"
+    );
     assert_eq!(command.get_program(), "/usr/bin/quickshell");
     assert_eq!(command.get_args().count(), 3);
     let properties =

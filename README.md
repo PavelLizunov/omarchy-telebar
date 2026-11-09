@@ -89,6 +89,10 @@ Do not run Telebar and Omagram together against the same session directories.
 
 ## Use
 
+Native windows use software video decoding by default to avoid VA-API driver
+stalls. An explicit `QT_FFMPEG_DECODING_HW_DEVICE_TYPES` launch environment
+setting overrides this default.
+
 Open Telebar and choose **Continue to Telegram** on first run, then sign in by
 phone or QR. The built-in connection uses the public API profile shipped in
 [Telegram Android](https://github.com/DrKLO/Telegram/blob/aac1efcb83d6575efb0c819c6ddc4ea6c8cf64e1/TMessagesProj/src/main/java/org/telegram/messenger/BuildVars.java),

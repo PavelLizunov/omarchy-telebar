@@ -23,7 +23,8 @@ fn opener_allows_viewing_past_sixty_seconds() {
 }
 
 fn exercise_opener(seconds: u64) {
-    let root = std::env::temp_dir().join(format!("telebar-opener-{}-{seconds}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("telebar-opener-{}-{seconds}", std::process::id()));
     fs::create_dir(&root).unwrap();
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
     let apps = root.join("share/applications");
