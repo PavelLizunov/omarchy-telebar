@@ -8,7 +8,7 @@ commands are Rust; the interface is QML/JavaScript with Quickshell and official 
  · [Architecture](ARCHITECTURE.md) · [Runtime contract](rust/PARITY.md)
 
 Main contains the native source, tests and tooling. It is not an installation
-package until built. The current release is 1.3.0-rc.5, not stable-release
+package until built. The current release is 1.3.0-rc.6, not stable-release
 certification. Reported sent-video playback, forum-parent unread state and a
 historical disappearing window remain unresolved. Full command, perceived media
 quality, working-account reverse rollback and independent security acceptance are
@@ -32,8 +32,8 @@ local Qt 6.12 host recovery are not certified by repository checks.
 
 ## Build and install
 
-From main, select new output directories outside this checkout and the watched
-plugin tree:
+Build from the matching release tag; main can lag the packaged prerelease.
+Select new output directories outside this checkout and the watched plugin tree:
 
 ```sh
 export CARGO_TARGET_DIR="$HOME/.cache/telebar-native-build"

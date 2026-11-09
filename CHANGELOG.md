@@ -1,5 +1,21 @@
 # Changes
 
+## 1.3.0-rc.6 (2026-11-09)
+
+- Use software video decoding by default in native windows to avoid VA-API
+  driver stalls. Explicit `QT_FFMPEG_DECODING_HW_DEVICE_TYPES` settings still
+  override the default; the file chooser portal remains enabled.
+- Keep externally opened media and its pinned input alive until the viewer exits,
+  removing the former 60-second viewing deadline.
+- Package the same native binary verified in the local installation, retaining
+  the rc.5 UI generation and the earlier recorder/upload fixes.
+
+Scoped checks cover decoder defaults and overrides, the native file opener,
+viewing beyond 60 seconds, package/shim/socket behavior and actual bar-icon
+consumers with theme radius 0 and 8. The local installation retained three
+accounts and reopened a connected window using software decoding. These checks
+do not establish that every previously reported media issue is resolved.
+
 ## 1.3.0-rc.5 (2026-10-26)
 
 Urgent first-run hotfix: **Continue to Telegram** uses a built-in public API
