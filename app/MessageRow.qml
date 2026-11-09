@@ -26,7 +26,16 @@ Item {
   readonly property var found: Model.rowMessage(row.messages, row.index, row.mid)
   property var kept: null
   onFoundChanged: if (row.found) row.kept = row.found
-  Component.onCompleted: row.kept = row.found
+  Component.onCompleted: {
+    row.kept = row.found
+    // ListView needs the album's final height during delegate creation. If it
+    // sees the Flow's provisional one-column height, it can discard and recreate
+    // the same tall row forever before the positioners get their polish pass.
+    if (row.album.length > 1) {
+      albumFlow.forceLayout()
+      column.forceLayout()
+    }
+  }
   readonly property var message: row.found || row.kept || Model.NO_MESSAGE
   readonly property var content: row.message && row.message.content ? row.message.content : ({})
   readonly property var previous: row.index > 0 ? row.messages[row.index - 1] : null

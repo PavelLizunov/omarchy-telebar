@@ -1,5 +1,14 @@
 # Changes
 
+## 1.3.0-rc.7 (2026-11-09)
+
+- Finish album Flow and Column layout before ListView measures a new message
+  delegate. The provisional one-column height could make large-channel opening
+  repeatedly recreate tall album rows, freezing the UI and consuming memory.
+- Retain the existing native binary and media playback behavior. The focused
+  album-construction regression checks settled height immediately after creation
+  with theme radius 0 and 8.
+
 ## 1.3.0-rc.6 (2026-11-09)
 
 - Use software video decoding by default in native windows to avoid VA-API
